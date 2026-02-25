@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base styles */
+body {
+  font-family: 'Noto Sans JP', sans-serif;
+  background-color: #1a1a2e;
+  color: #ffffff;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #2d2d52;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D4A853;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #C49A3C;
+}
+
+/* Component classes */
+@layer components {
+  .btn-primary {
+    @apply bg-gold text-dark-800 px-6 py-3 rounded-lg font-medium
+           hover:bg-gold-300 transition-colors duration-200
+           focus:outline-none focus:ring-2 focus:ring-gold focus:ring-offset-2 focus:ring-offset-dark;
+  }
+
+  .btn-secondary {
+    @apply bg-dark-600 text-white px-6 py-3 rounded-lg font-medium
+           border border-dark-400 hover:bg-dark-500 transition-colors duration-200
+           focus:outline-none focus:ring-2 focus:ring-gold focus:ring-offset-2 focus:ring-offset-dark;
+  }
+
+  .card {
+    @apply bg-dark-700 rounded-xl p-6 border border-dark-500;
+  }
+
+  .card-hover {
+    @apply card cursor-pointer hover:border-gold transition-colors duration-200;
+  }
+
+  .input {
+    @apply w-full bg-dark-600 border border-dark-400 rounded-lg px-4 py-3
+           text-white placeholder-gray-400
+           focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-gray-300 mb-2;
+  }
+
+  .step-indicator {
+    @apply flex items-center justify-center w-8 h-8 rounded-full
+           text-sm font-medium transition-colors duration-200;
+  }
+
+  .step-indicator-active {
+    @apply step-indicator bg-gold text-dark-800;
+  }
+
+  .step-indicator-completed {
+    @apply step-indicator bg-green-500 text-white;
+  }
+
+  .step-indicator-inactive {
+    @apply step-indicator bg-dark-600 text-gray-400;
+  }
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Loading spinner */
+.spinner {
+  border: 3px solid #2d2d52;
+  border-top: 3px solid #D4A853;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
