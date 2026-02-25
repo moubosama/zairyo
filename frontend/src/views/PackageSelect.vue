@@ -57,7 +57,7 @@
         <input
           v-model="projectName"
           type="text"
-          placeholder="例: 朝日パリオ北千住 305号室"
+          placeholder="例: ○○マンション 101号室"
           class="input flex-1"
           @keyup.enter="createProject"
         />
