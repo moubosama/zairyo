@@ -2,48 +2,134 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import fs from 'fs';
 import path from 'path';
 
-const SYSTEM_PROMPT = `あなたは建築図面を解析する専門家です。アップロードされた計画平面図から、以下の情報をJSON形式で抽出してください。
+/**
+ * 図面解析用AIプロンプト
+ * 5現場の実績データに基づいて最適化
+ */
+const SYSTEM_PROMPT = `あなたは建築図面を解析する専門家です。アップロードされたリノベーション計画平面図から、資材計算に必要な情報をJSON形式で抽出してください。
 
-必ず以下の形式でJSONのみを返してください（説明文は不要）：
+【重要な解析ポイント】
+1. 各部屋の面積（畳数・㎡）と寸法（mm単位）を正確に読み取る
+2. UBサイズ（1216、1317、1418等）を確認
+3. キッチンサイズ（I型2100、2550等）を確認
+4. 洗面台の幅（W750、W900等）を確認
+5. 収納（クローゼット）の幅と枕棚+ハンガーパイプの有無
+6. 室内窓、床暖房などの特殊仕様
+
+【面積の換算】
+- 1畳 = 約1.65㎡（中京間）
+- 畳数が記載されている場合はそのまま使用
+- 寸法のみの場合は面積を計算
+
+必ず以下のJSON形式のみを返してください（説明文は不要）：
+
 {
-  "property_name": "物件名",
+  "property_name": "物件名（図面タイトルから）",
   "layout_type": "2LDK",
-  "total_dimensions": { "width_mm": 10000, "depth_mm": 8000 },
+  "total_dimensions": {
+    "width_mm": 10000,
+    "depth_mm": 8000
+  },
   "ceiling_height_mm": 2400,
   "rooms": [
     {
-      "name": "リビング",
-      "area_tsubo": 8.5,
-      "area_sqm": 28.1,
+      "name": "LDK",
+      "area_tsubo": 8.1,
+      "area_sqm": 26.8,
       "width_mm": 5000,
-      "depth_mm": 5620,
+      "depth_mm": 5360,
+      "floor_type": "flooring",
+      "wall_type": "partition"
+    },
+    {
+      "name": "洋室",
+      "area_tsubo": 4.1,
+      "area_sqm": 13.5,
+      "width_mm": 2800,
+      "depth_mm": 4830,
+      "floor_type": "flooring",
+      "wall_type": "partition"
+    },
+    {
+      "name": "洗面室",
+      "area_tsubo": 1.5,
+      "area_sqm": 5.0,
+      "width_mm": 1650,
+      "depth_mm": 3000,
+      "floor_type": "cf",
+      "wall_type": "partition"
+    },
+    {
+      "name": "トイレ",
+      "area_tsubo": 0.5,
+      "area_sqm": 1.65,
+      "width_mm": 1200,
+      "depth_mm": 1400,
+      "floor_type": "cf",
+      "wall_type": "partition"
+    },
+    {
+      "name": "玄関",
+      "area_tsubo": 1.0,
+      "area_sqm": 3.3,
+      "width_mm": 1200,
+      "depth_mm": 2700,
+      "floor_type": "tile",
+      "wall_type": "partition"
+    },
+    {
+      "name": "ホール",
+      "area_tsubo": 1.0,
+      "area_sqm": 3.3,
+      "width_mm": 1200,
+      "depth_mm": 2700,
       "floor_type": "flooring",
       "wall_type": "partition"
     }
   ],
   "openings": [
-    { "type": "door", "width_mm": 800, "height_mm": 2000, "room": "リビング" }
+    { "type": "開き戸", "width_mm": 800, "height_mm": 2035, "room": "LDK" },
+    { "type": "引戸", "width_mm": 1600, "height_mm": 2035, "room": "洋室" },
+    { "type": "折戸", "width_mm": 900, "height_mm": 2035, "room": "クローゼット" },
+    { "type": "開き戸", "width_mm": 700, "height_mm": 2035, "room": "トイレ" },
+    { "type": "開き戸", "width_mm": 700, "height_mm": 2035, "room": "洗面室" },
+    { "type": "窓", "width_mm": 1800, "height_mm": 1200, "room": "LDK" }
   ],
   "equipment": {
-    "ub_size": "1317",
+    "ub_size": "1216",
+    "ub_spec": "TOTO WT",
     "kitchen": "I型 2550",
-    "washstand": "W750"
+    "kitchen_spec": "LIXIL ES 食洗機あり",
+    "washstand": "W750",
+    "washstand_spec": "LIXIL CLINE 三面鏡LED"
   },
   "storage": [
-    { "type": "closet", "width_mm": 1800, "has_makuradana": true }
+    { "type": "closet", "name": "クローゼット", "width_mm": 1800, "depth_mm": 600, "has_makuradana": true, "has_hanger_pipe": true },
+    { "type": "closet", "name": "物入", "width_mm": 900, "depth_mm": 450, "has_makuradana": false, "has_hanger_pipe": false }
   ],
   "special": [
-    { "type": "floor_heating", "details": "リビング" }
+    { "type": "室内窓", "details": "LDK-洋室間", "size": "W1596×H778" },
+    { "type": "床暖房", "details": "リビング", "area_sqm": 2.7 }
   ]
 }
 
-注意事項：
-- floor_typeは "flooring"（フローリング）または "cf"（クッションフロア）を指定
-- wall_typeは "partition"（間仕切壁）または "structural"（躯体壁）を指定
-- 面積が読み取れない場合は、寸法から計算
-- 水回り（洗面室、トイレ、浴室）は通常 floor_type: "cf"
-- 居室は通常 floor_type: "flooring"
-- JSONのみを返し、説明文は含めないでください`;
+【floor_type の判定基準】
+- "flooring": 居室（LDK、洋室、廊下、ホール等）
+- "cf": 水回り（洗面室、トイレ、脱衣室等）※CFはクッションフロアの略
+- "tile": 玄関土間
+
+【wall_type の判定基準】
+- "partition": 間仕切壁（新設の軽量下地壁）
+- "structural": 躯体壁（既存RC壁・外周壁）
+
+【建具種類】
+- "開き戸": ドアノブ付きの一般的なドア
+- "引戸": スライドするドア（片引き、引き込み等）
+- "折戸": 折り畳みドア（主にクローゼット）
+- "窓": 外部に面する窓
+- "室内窓": 室内の間仕切りに設置された窓
+
+JSONのみを返してください。説明文やマークダウンは含めないでください。`;
 
 export async function analyzeDrawing(filePath) {
   const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
@@ -82,102 +168,118 @@ export async function analyzeDrawing(filePath) {
   const response = await result.response;
   const text = response.text();
 
-  // JSONを抽出
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  // JSONを抽出（```json ブロックにも対応）
+  let jsonText = text;
 
-  if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[0]);
-    } catch (e) {
-      console.error('JSON parse error:', e);
-      console.error('Raw text:', text);
-      throw new Error('Failed to parse JSON from Gemini response');
+  // ```json ... ``` ブロックがある場合は抽出
+  const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+  if (codeBlockMatch) {
+    jsonText = codeBlockMatch[1];
+  } else {
+    // 直接JSONオブジェクトを抽出
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonText = jsonMatch[0];
     }
   }
 
-  throw new Error('Failed to extract JSON from Gemini response');
+  try {
+    return JSON.parse(jsonText);
+  } catch (e) {
+    console.error('JSON parse error:', e);
+    console.error('Raw text:', text);
+    throw new Error('Failed to parse JSON from Gemini response');
+  }
 }
 
+/**
+ * デモ用モックデータ
+ * マンションフロイント麻布309号室の図面を参考に作成
+ */
 function getMockAnalysisResult() {
   return {
-    property_name: "サンプルマンション 101号室",
-    layout_type: "2LDK",
-    total_dimensions: { width_mm: 10000, depth_mm: 8000 },
+    property_name: "マンションフロイント麻布 309号室",
+    layout_type: "1LDK",
+    total_dimensions: { width_mm: 6325, depth_mm: 7500 },
     ceiling_height_mm: 2400,
     rooms: [
       {
-        name: "リビング・ダイニング",
-        area_tsubo: 10.0,
-        area_sqm: 33.0,
-        width_mm: 6000,
-        depth_mm: 5500,
+        name: "LDK",
+        area_tsubo: 8.1,
+        area_sqm: 26.8,
+        width_mm: 3525,
+        depth_mm: 7500,
         floor_type: "flooring",
         wall_type: "partition"
       },
       {
-        name: "洋室1",
-        area_tsubo: 6.0,
-        area_sqm: 19.8,
-        width_mm: 3600,
-        depth_mm: 5500,
+        name: "洋室",
+        area_tsubo: 4.1,
+        area_sqm: 13.5,
+        width_mm: 2800,
+        depth_mm: 4830,
         floor_type: "flooring",
-        wall_type: "partition"
-      },
-      {
-        name: "洋室2",
-        area_tsubo: 5.0,
-        area_sqm: 16.5,
-        width_mm: 3300,
-        depth_mm: 5000,
-        floor_type: "flooring",
-        wall_type: "partition"
-      },
-      {
-        name: "キッチン",
-        area_tsubo: 3.0,
-        area_sqm: 9.9,
-        width_mm: 3000,
-        depth_mm: 3300,
-        floor_type: "cf",
         wall_type: "partition"
       },
       {
         name: "洗面室",
         area_tsubo: 1.5,
         area_sqm: 5.0,
-        width_mm: 1800,
-        depth_mm: 2700,
+        width_mm: 1650,
+        depth_mm: 3000,
         floor_type: "cf",
         wall_type: "partition"
       },
       {
         name: "トイレ",
-        area_tsubo: 0.8,
-        area_sqm: 2.6,
+        area_tsubo: 0.5,
+        area_sqm: 1.65,
         width_mm: 1200,
-        depth_mm: 2200,
+        depth_mm: 1400,
         floor_type: "cf",
+        wall_type: "partition"
+      },
+      {
+        name: "玄関",
+        area_tsubo: 1.0,
+        area_sqm: 3.3,
+        width_mm: 1200,
+        depth_mm: 2700,
+        floor_type: "tile",
+        wall_type: "partition"
+      },
+      {
+        name: "ホール",
+        area_tsubo: 1.0,
+        area_sqm: 3.3,
+        width_mm: 1200,
+        depth_mm: 2700,
+        floor_type: "flooring",
         wall_type: "partition"
       }
     ],
     openings: [
-      { type: "door", width_mm: 800, height_mm: 2000, room: "リビング・ダイニング" },
-      { type: "door", width_mm: 800, height_mm: 2000, room: "洋室1" },
-      { type: "door", width_mm: 800, height_mm: 2000, room: "洋室2" },
-      { type: "door", width_mm: 700, height_mm: 2000, room: "洗面室" },
-      { type: "door", width_mm: 700, height_mm: 2000, room: "トイレ" },
-      { type: "window", width_mm: 1800, height_mm: 1200, room: "リビング・ダイニング" },
-      { type: "window", width_mm: 1200, height_mm: 1200, room: "洋室1" },
-      { type: "window", width_mm: 1200, height_mm: 1200, room: "洋室2" }
+      { type: "開き戸", width_mm: 800, height_mm: 2035, room: "LDK" },
+      { type: "引戸", width_mm: 1600, height_mm: 2035, room: "洋室" },
+      { type: "折戸", width_mm: 900, height_mm: 2035, room: "クローゼット1" },
+      { type: "折戸", width_mm: 900, height_mm: 2035, room: "クローゼット2" },
+      { type: "開き戸", width_mm: 700, height_mm: 2035, room: "トイレ" },
+      { type: "開き戸", width_mm: 700, height_mm: 2035, room: "洗面室" },
+      { type: "開き戸", width_mm: 800, height_mm: 2035, room: "玄関" },
+      { type: "窓", width_mm: 1800, height_mm: 1200, room: "LDK" },
+      { type: "窓", width_mm: 1200, height_mm: 1200, room: "洋室" }
     ],
     equipment: {
-      ub_size: "1317",
+      ub_size: "1216",
+      ub_spec: "TOTO WT 浴室乾燥機あり",
       kitchen: "I型 2550",
-      washstand: "W750"
+      kitchen_spec: "LIXIL ES 2550 スライド・食洗機あり",
+      washstand: "W750",
+      washstand_spec: "LIXIL EV 三面鏡LED"
     },
     storage: [
-      { type: "closet", width_mm: 1800, has_makuradana: true },
-      { type: "closet", width_mm: 900, has_makuradana: false }
+      { type: "closet", name: "クローゼット", width_mm: 1800, depth_mm: 600, has_makuradana: true, has_hanger_pipe: true },
+      { type: "closet", name: "物入", width_mm: 900, depth_mm: 450, has_makuradana: false, has_hanger_pipe: false }
     ],
     special: []
   };
