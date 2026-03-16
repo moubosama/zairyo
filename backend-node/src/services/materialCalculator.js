@@ -115,9 +115,10 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // 壁面積 = (間仕切壁延長 × 天井高 × 2) + (躯体壁延長 × 天井高 × 係数) − 開口部面積
   // 躯体壁処理: GL工法=片面のみ、木軸ふかし=両面、既存利用=0
   let structuralWallMultiplier = 1; // デフォルトGL工法
-  if (overrides.structural_wall_treatment === 'fukashi') {
+  const exteriorWall = overrides.exterior_wall || '';
+  if (exteriorWall.includes('木軸ふかし')) {
     structuralWallMultiplier = 2;
-  } else if (overrides.structural_wall_treatment === 'existing') {
+  } else if (exteriorWall.includes('既存利用')) {
     structuralWallMultiplier = 0;
   }
 
