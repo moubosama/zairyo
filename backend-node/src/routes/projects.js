@@ -308,7 +308,8 @@ router.get('/:id/export', async (req, res) => {
     // ヘッダー
     worksheet.columns = [
       { header: 'カテゴリ', key: 'category', width: 15 },
-      { header: '資材名', key: 'name', width: 25 },
+      { header: '資材名', key: 'name', width: 30 },
+      { header: '仕様', key: 'spec', width: 35 },
       { header: '数量', key: 'quantity', width: 10 },
       { header: '単位', key: 'unit', width: 10 },
       { header: '計算根拠', key: 'calculation', width: 40 }
@@ -317,20 +318,28 @@ router.get('/:id/export', async (req, res) => {
     // データ追加
     materials.forEach(m => {
       worksheet.addRow({
-        category: m.category,
-        name: m.name,
-        quantity: m.quantity,
-        unit: m.unit,
-        calculation: m.calculation
+        category: m.category || '',
+        name: m.name || '',
+        spec: m.spec || '',
+        quantity: m.quantity || 0,
+        unit: m.unit || '',
+        calculation: m.calculation || ''
       });
     });
 
     // スタイル
     worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFD4A853' } // ゴールド
+    };
 
     // レスポンス
+    // ファイル名をURLエンコードして日本語対応
+    const fileName = encodeURIComponent(`${project.name}_材料リスト.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${project.name}_材料リスト.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
 
     await workbook.xlsx.write(res);
     res.end();
