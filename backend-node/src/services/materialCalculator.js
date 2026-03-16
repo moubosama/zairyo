@@ -22,7 +22,15 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   const materials = [];
 
   // 天井高 (デフォルト2400mm)
-  const ceilingHeight = (overrides.ceiling_height || data.ceiling_height_mm || 2400) / 1000;
+  // フロントエンドから "2400mm" 形式で送られるため、数値部分を抽出
+  let ceilingHeightMm = data.ceiling_height_mm || 2400;
+  if (overrides.ceiling_height) {
+    const parsed = parseInt(overrides.ceiling_height.replace(/[^0-9]/g, ''));
+    if (!isNaN(parsed) && parsed > 0) {
+      ceilingHeightMm = parsed;
+    }
+  }
+  const ceilingHeight = ceilingHeightMm / 1000;
 
   // 部屋データを集計
   const rooms = data.rooms || [];
@@ -209,7 +217,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // CF (クッションフロア) または フロアタイル
   // 7現場実績: 水回りフロアタイル貼り 1式
-  const waterproofFloorType = overrides.waterproof_floor || 'tile';
+  const waterFloorFinish = overrides.water_floor_finish || 'CF';
+  const waterproofFloorType = waterFloorFinish.includes('タイル') ? 'tile' : 'cf';
   materials.push({
     category: '床材',
     name: waterproofFloorType === 'tile' ? '水回りフロアタイル貼り' : 'クッションフロア貼り',
@@ -551,7 +560,10 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   });
 
   // 床暖房（オプション）
-  if (overrides.floor_heating === 'あり' || data.special?.some(s => s.type === 'floor_heating' || s.type === '床暖房')) {
+  // フロントエンドから 'あり（1箇所）' や 'あり（2箇所以上）' で送られる
+  const hasFloorHeating = (overrides.floor_heating && overrides.floor_heating.includes('あり')) ||
+    data.special?.some(s => s.type === 'floor_heating' || s.type === '床暖房');
+  if (hasFloorHeating) {
     const floorHeatingArea = overrides.floor_heating_area || 2.7;
     const floorHeatingType = packageSpecs?.floor_heating || '電気式';
     materials.push({
