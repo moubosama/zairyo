@@ -338,14 +338,14 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   });
 
   // アクセントクロス（1000番）
-  // 7現場実績: 10～20㎡
+  // 7現場実績: 10㎡が標準
   materials.push({
     category: '仕上材',
     name: 'アクセントクロス貼り',
     spec: '1000番',
     unit: '㎡',
-    quantity: 20,
-    calculation: '標準20㎡'
+    quantity: 10,
+    calculation: '標準10㎡'
   });
 
   // クロス新規下地処理
@@ -664,10 +664,81 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     calculation: '標準3個'
   });
 
+  // 電気工事
+  // 7現場実績: 照明器具が各現場で必須
+
+  // ダウンライト（間取りから推定）
+  let downlightCount = 20; // デフォルト2LDK
+  const layoutType = data.layout_type || '';
+  if (layoutType.includes('3LDK') || layoutType.includes('4LDK')) {
+    downlightCount = 30;
+  } else if (layoutType.includes('1LDK') || totalFloorArea < 40) {
+    downlightCount = 15;
+  }
+  materials.push({
+    category: '電気工事',
+    name: 'ダウンライト',
+    spec: '非調光 100W 電球色',
+    unit: '台',
+    quantity: downlightCount,
+    calculation: `間取り ${layoutType} から推定`
+  });
+
+  // シーリングライト（部屋数+1）
+  const ceilingLightCount = Math.max(rooms.length > 0 ? rooms.length + 1 : 4, 3);
+  materials.push({
+    category: '電気工事',
+    name: 'シーリングライト',
+    spec: 'ODELIC 調光調色 6～8畳',
+    unit: '台',
+    quantity: ceilingLightCount,
+    calculation: `部屋数 ${rooms.length}室 + 共用部1台`
+  });
+
+  // 照明器具取付工事
+  materials.push({
+    category: '電気工事',
+    name: '照明器具取付',
+    spec: 'ダウンライト・シーリング含む',
+    unit: '式',
+    quantity: 1,
+    calculation: '全照明取付工事'
+  });
+
+  // スイッチ・コンセント工事
+  materials.push({
+    category: '電気工事',
+    name: 'スイッチ・コンセント工事',
+    spec: '配線器具一式',
+    unit: '式',
+    quantity: 1,
+    calculation: '全室配線器具'
+  });
+
+  // 単室換気扇（水回り用）
+  materials.push({
+    category: '電気工事',
+    name: '単室換気扇',
+    spec: '水回り用 三菱 VD-10ZC14',
+    unit: '台',
+    quantity: 1,
+    calculation: '標準1台'
+  });
+
   // ルームクリーニング
   materials.push({
     category: '諸経費',
     name: 'ルームクリーニング',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  // 検査費
+  materials.push({
+    category: '諸経費',
+    name: '検査費',
     spec: '',
     unit: '式',
     quantity: 1,
