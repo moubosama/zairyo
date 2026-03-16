@@ -18,7 +18,33 @@ const WINDOW_OPENING_AREA = 1.5 * 1.2; // 1.8㎡
 const TARUKI_PER_BUNDLE = 12; // 垂木1束=12本
 
 export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
-  const data = typeof aiReading === 'string' ? JSON.parse(aiReading) : aiReading;
+  // aiReadingがnull/undefined/空の場合のガード
+  if (!aiReading) {
+    return {
+      materials: [],
+      summary: {
+        totalFloorArea: 0,
+        flooringArea: 0,
+        cfArea: 0,
+        tileArea: 0,
+        wallArea: 0,
+        ceilingArea: 0,
+        doorCount: 0,
+        windowCount: 0,
+        partitionWallLength: 0,
+        structuralWallLength: 0
+      }
+    };
+  }
+
+  let data;
+  try {
+    data = typeof aiReading === 'string' ? JSON.parse(aiReading) : aiReading;
+  } catch (e) {
+    console.error('Failed to parse aiReading:', e);
+    data = {};
+  }
+
   const materials = [];
 
   // 天井高 (デフォルト2400mm)
@@ -60,7 +86,11 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // 天井面積 (UB・CLを除く)
   const ubArea = rooms.filter(r => r.name?.includes('UB') || r.name?.includes('浴室')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
   const closetArea = rooms.filter(r => r.name?.includes('クローゼット') || r.name?.includes('CL') || r.name?.includes('収納') || r.name?.includes('物入')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
-  const ceilingArea = totalFloorArea - ubArea - closetArea;
+  let ceilingArea = totalFloorArea - ubArea - closetArea;
+  // 天井面積が0以下の場合、床面積の90%として推定（最低50㎡）
+  if (ceilingArea <= 0) {
+    ceilingArea = totalFloorArea > 0 ? totalFloorArea * 0.9 : 50;
+  }
 
   // 壁延長の計算
   let partitionWallLength = 0; // 間仕切壁
@@ -137,7 +167,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // 壁面積が計算できない場合、床面積から推定
   // 7現場実績: 壁クロス187～270㎡ → 床面積の約3.5～4倍
   if (wallArea <= 0 || isNaN(wallArea)) {
-    wallArea = totalFloorArea * 3.8;
+    wallArea = totalFloorArea > 0 ? totalFloorArea * 3.8 : 200; // 最低200㎡
   }
 
   // --- 資材計算 ---
@@ -180,8 +210,14 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // 垂木 (赤松KD 30×40 L3000 入数12)
   // 7現場実績: 20～30束（平均25束）
   // 計算式: (間仕切壁延長÷0.303×2 + 天井面積÷0.303) ÷ 12
-  const tarukiCount = ((partitionWallLength / 0.303 * 2) + (ceilingArea / 0.303)) / TARUKI_PER_BUNDLE;
-  const tarukiBundles = Math.ceil(tarukiCount);
+  let tarukiBundles = 20; // デフォルト20束
+  if (partitionWallLength > 0 || ceilingArea > 0) {
+    const tarukiCount = ((partitionWallLength / 0.303 * 2) + (ceilingArea / 0.303)) / TARUKI_PER_BUNDLE;
+    tarukiBundles = Math.ceil(tarukiCount);
+    if (isNaN(tarukiBundles) || tarukiBundles <= 0) {
+      tarukiBundles = 20;
+    }
+  }
   materials.push({
     category: '下地材',
     name: '垂木 赤松KD 30×40 L3000',
