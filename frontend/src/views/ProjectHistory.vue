@@ -121,6 +121,10 @@ async function viewProject(project) {
 
     if (data.materialLists && data.materialLists.length > 0) {
       store.materials = data.materialLists[0].materials
+      // summaryからareasをセット
+      if (data.materialLists[0].summary) {
+        store.areas = data.materialLists[0].summary
+      }
     }
 
     // ステータスに応じて遷移

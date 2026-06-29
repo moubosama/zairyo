@@ -59,6 +59,7 @@ model MaterialList {
   projectId   Int
   project     Project  @relation(fields: [projectId], references: [id])
   materials   String   // JSON string
+  summary     String?  // JSON string (areas summary)
   totalAmount Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

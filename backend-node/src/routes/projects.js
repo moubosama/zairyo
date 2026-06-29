@@ -127,7 +127,8 @@ router.get('/:id', async (req, res) => {
       })),
       materialLists: project.materialLists.map(m => ({
         ...m,
-        materials: JSON.parse(m.materials)
+        materials: JSON.parse(m.materials),
+        summary: m.summary ? JSON.parse(m.summary) : null
       }))
     });
   } catch (error) {
@@ -332,6 +333,7 @@ router.post('/:id/calculate', optionalAuth, async (req, res) => {
       data: {
         projectId,
         materials: JSON.stringify(materialsWithPrice),
+        summary: JSON.stringify(result.summary),
         totalAmount
       }
     });
