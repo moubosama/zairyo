@@ -102,8 +102,7 @@
     </div>
 
     <!-- Navigation -->
-    <div class="flex justify-between mt-8">
-      <button @click="goBack" class="btn-secondary">仕様を変更</button>
+    <div class="flex justify-end mt-8">
       <button @click="startNew" class="btn-primary">新規作成</button>
     </div>
 
@@ -178,10 +177,6 @@ const exportExcel = async () => {
   } catch (e) {
     console.error(e)
   }
-}
-
-const goBack = () => {
-  router.push('/confirm')
 }
 
 const startNew = () => {
