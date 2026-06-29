@@ -129,7 +129,7 @@ async function viewProject(project) {
 
     // ステータスに応じて遷移
     if (project.hasMaterials) {
-      router.push('/result')
+      router.push('/result?from=history')
     } else if (project.status === 'analyzed') {
       router.push('/confirm')
     } else {

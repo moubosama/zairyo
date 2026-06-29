@@ -1,7 +1,10 @@
 <template>
   <div class="fade-in">
     <div class="text-center mb-8">
-      <h2 class="text-2xl font-bold mb-2">資材リスト</h2>
+      <div class="flex items-center justify-center gap-2 mb-2">
+        <span v-if="isFromHistory" class="px-2 py-1 text-xs rounded bg-blue-600 text-white">履歴</span>
+        <h2 class="text-2xl font-bold">資材リスト</h2>
+      </div>
       <p class="text-gray-400">{{ store.currentProject?.name }}</p>
     </div>
 
@@ -118,14 +121,20 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 
 const router = useRouter()
+const route = useRoute()
 const store = useProjectStore()
 
 const showToast = ref(false)
 const toastMessage = ref('')
+
+// 履歴から来たかどうか（referrerまたはstoreの状態で判定）
+const isFromHistory = computed(() => {
+  return route.query.from === 'history' || (store.currentProject && !store.aiReading)
+})
 
 // Group materials by category
 const groupedMaterials = computed(() => {
