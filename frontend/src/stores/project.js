@@ -39,16 +39,11 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   async function createProject(name) {
-    if (!selectedPackage.value) {
-      throw new Error('パッケージを選択してください')
-    }
-
     loading.value = true
     error.value = null
     try {
       const response = await api.createProject({
-        name,
-        packageId: selectedPackage.value.id,
+        name
       })
       currentProject.value = response.data
       return currentProject.value

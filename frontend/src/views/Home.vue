@@ -2,21 +2,18 @@
   <div class="fade-in">
     <div class="text-center mb-8">
       <h2 class="text-2xl font-bold mb-2">図面をアップロード</h2>
-      <p class="text-gray-400">計画平面図（PDF/PNG/JPG）をアップロードしてください</p>
+      <p class="text-gray-400">計画平面図（PDF/PNG/JPG）をアップロードして資材を自動計算</p>
     </div>
 
-    <!-- Project Info -->
+    <!-- Project Name Input -->
     <div class="card mb-6">
-      <div class="flex items-center justify-between">
-        <div>
-          <span class="text-sm text-gray-400">現場名</span>
-          <h3 class="text-lg font-medium">{{ store.currentProject?.name }}</h3>
-        </div>
-        <div class="text-right">
-          <span class="text-sm text-gray-400">パッケージ</span>
-          <h3 class="text-lg font-medium text-gold">{{ store.selectedPackage?.name }}</h3>
-        </div>
-      </div>
+      <label class="block text-sm text-gray-400 mb-2">現場名</label>
+      <input
+        v-model="projectName"
+        type="text"
+        placeholder="例: 朝日パリオ北千住305号室"
+        class="w-full bg-dark-600 border border-dark-500 rounded-lg px-4 py-3 focus:border-gold focus:outline-none"
+      />
     </div>
 
     <!-- Upload Area -->
@@ -27,7 +24,7 @@
       :class="[
         'card border-2 border-dashed transition-colors duration-200 text-center py-12',
         isDragging ? 'border-gold bg-dark-600' : 'border-dark-400',
-        store.loading ? 'pointer-events-none opacity-50' : 'cursor-pointer'
+        loading ? 'pointer-events-none opacity-50' : 'cursor-pointer'
       ]"
       @click="triggerFileInput"
     >
@@ -40,7 +37,7 @@
       />
 
       <!-- Loading State -->
-      <div v-if="store.loading" class="flex flex-col items-center">
+      <div v-if="loading" class="flex flex-col items-center">
         <div class="spinner mb-4"></div>
         <p class="text-gold">AI が図面を解析中...</p>
         <p class="text-sm text-gray-400 mt-2">Gemini 2.5 Flash で処理しています</p>
@@ -61,62 +58,26 @@
       </div>
     </div>
 
-    <!-- AI Reading Preview -->
-    <div v-if="store.aiReading" class="card mt-6 fade-in">
-      <h3 class="text-lg font-medium mb-4 text-gold">AI 解析結果</h3>
-
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
-          <span class="text-sm text-gray-400">物件名</span>
-          <p>{{ store.aiReading.property_name || '-' }}</p>
-        </div>
-        <div>
-          <span class="text-sm text-gray-400">間取り</span>
-          <p>{{ store.aiReading.layout_type || '-' }}</p>
-        </div>
-      </div>
-
-      <div class="mt-4">
-        <span class="text-sm text-gray-400">部屋一覧</span>
-        <div class="grid md:grid-cols-3 gap-2 mt-2">
-          <div
-            v-for="room in store.aiReading.rooms"
-            :key="room.name"
-            class="bg-dark-600 rounded p-2 text-sm"
-          >
-            <div class="font-medium">{{ room.name }}</div>
-            <div class="text-gray-400">{{ room.area_sqm }}㎡ ({{ room.area_tsubo }}畳)</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="mt-4">
-        <span class="text-sm text-gray-400">開口部</span>
-        <p>ドア: {{ getDoorCount() }}枚 / 窓: {{ getWindowCount() }}枚</p>
-      </div>
-    </div>
-
     <!-- Error -->
     <div v-if="store.error" class="card mt-6 text-red-400">
       <p>{{ store.error }}</p>
     </div>
 
     <!-- Navigation -->
-    <div class="flex justify-between mt-8">
-      <button @click="goBack" class="btn-secondary">戻る</button>
+    <div class="flex justify-end mt-8">
       <button
         @click="goNext"
-        :disabled="!store.hasAiReading"
+        :disabled="!selectedFile || loading"
         class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        次へ進む
+        資材リストを計算
       </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 
@@ -126,9 +87,15 @@ const store = useProjectStore()
 const fileInput = ref(null)
 const selectedFile = ref(null)
 const isDragging = ref(false)
+const projectName = ref('')
+const loading = ref(false)
+
+onMounted(() => {
+  store.reset()
+})
 
 const triggerFileInput = () => {
-  if (!store.loading) {
+  if (!loading.value) {
     fileInput.value.click()
   }
 }
@@ -148,7 +115,9 @@ const handleDrop = (event) => {
   }
 }
 
-const processFile = async (file) => {
+const processFile = (file) => {
+  console.log('processFile called:', file.name, file.type)
+
   // Validate file type
   const validTypes = ['application/pdf', 'image/png', 'image/jpeg']
   if (!validTypes.includes(file.type)) {
@@ -162,14 +131,8 @@ const processFile = async (file) => {
     return
   }
 
+  // ファイルを保存（現場名は後で入力可能）
   selectedFile.value = file
-
-  try {
-    await store.uploadPlan(file)
-  } catch (e) {
-    console.error(e)
-    selectedFile.value = null
-  }
 }
 
 const formatFileSize = (bytes) => {
@@ -178,25 +141,32 @@ const formatFileSize = (bytes) => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-const getDoorCount = () => {
-  if (!store.aiReading?.openings) return 0
-  return store.aiReading.openings.filter(o =>
-    ['door', 'sliding_door', 'folding_door'].includes(o.type)
-  ).length
-}
+const goNext = async () => {
+  // 現場名チェック
+  if (!projectName.value.trim()) {
+    alert('現場名を入力してください')
+    return
+  }
 
-const getWindowCount = () => {
-  if (!store.aiReading?.openings) return 0
-  return store.aiReading.openings.filter(o => o.type === 'window').length
-}
+  // ファイルチェック
+  if (!selectedFile.value) {
+    alert('図面ファイルをアップロードしてください')
+    return
+  }
 
-const goBack = () => {
-  router.push('/')
-}
-
-const goNext = () => {
-  if (store.hasAiReading) {
-    router.push('/confirm')
+  loading.value = true
+  try {
+    // プロジェクト作成
+    await store.createProject(projectName.value.trim())
+    // アップロード
+    await store.uploadPlan(selectedFile.value)
+    // 計算
+    await store.calculateMaterials()
+    router.push('/result')
+  } catch (e) {
+    console.error('Error:', e)
+  } finally {
+    loading.value = false
   }
 }
 </script>

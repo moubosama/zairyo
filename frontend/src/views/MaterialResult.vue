@@ -5,22 +5,35 @@
       <p class="text-gray-400">{{ store.currentProject?.name }}</p>
     </div>
 
+    <!-- Total Amount -->
+    <div class="card mb-6 bg-gradient-to-r from-dark-700 to-dark-600 border-gold">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-sm text-gray-400">概算合計金額</div>
+          <div class="text-3xl font-bold text-gold">¥{{ totalAmount.toLocaleString() }}</div>
+        </div>
+        <div class="text-sm text-gray-400">
+          ※ 単価設定に基づく参考値です
+        </div>
+      </div>
+    </div>
+
     <!-- Area Summary -->
     <div class="grid md:grid-cols-4 gap-4 mb-8">
       <div class="card text-center">
-        <div class="text-3xl font-bold text-gold">{{ store.areas?.wall_area || 0 }}</div>
+        <div class="text-3xl font-bold text-gold">{{ formatArea(store.areas?.wall_area) }}</div>
         <div class="text-sm text-gray-400">壁面積（㎡）</div>
       </div>
       <div class="card text-center">
-        <div class="text-3xl font-bold text-gold">{{ store.areas?.ceiling_area || 0 }}</div>
+        <div class="text-3xl font-bold text-gold">{{ formatArea(store.areas?.ceiling_area) }}</div>
         <div class="text-sm text-gray-400">天井面積（㎡）</div>
       </div>
       <div class="card text-center">
-        <div class="text-3xl font-bold text-gold">{{ store.areas?.floor_area || 0 }}</div>
+        <div class="text-3xl font-bold text-gold">{{ formatArea(store.areas?.floor_area) }}</div>
         <div class="text-sm text-gray-400">居室床面積（㎡）</div>
       </div>
       <div class="card text-center">
-        <div class="text-3xl font-bold text-gold">{{ store.areas?.water_floor_area || 0 }}</div>
+        <div class="text-3xl font-bold text-gold">{{ formatArea(store.areas?.water_floor_area) }}</div>
         <div class="text-sm text-gray-400">水回り床面積（㎡）</div>
       </div>
     </div>
@@ -48,7 +61,8 @@
               <th class="py-3 px-4 text-sm font-medium text-gray-400">規格</th>
               <th class="py-3 px-4 text-sm font-medium text-gray-400 text-right">数量</th>
               <th class="py-3 px-4 text-sm font-medium text-gray-400">単位</th>
-              <th class="py-3 px-4 text-sm font-medium text-gray-400">備考</th>
+              <th class="py-3 px-4 text-sm font-medium text-gray-400 text-right">単価</th>
+              <th class="py-3 px-4 text-sm font-medium text-gray-400 text-right">金額</th>
             </tr>
           </thead>
           <tbody>
@@ -65,7 +79,12 @@
                 <td class="py-3 px-4 text-gray-400">{{ item.spec }}</td>
                 <td class="py-3 px-4 text-right font-mono text-gold">{{ item.quantity }}</td>
                 <td class="py-3 px-4 text-gray-400">{{ item.unit }}</td>
-                <td class="py-3 px-4 text-sm text-gray-400">{{ item.notes }}</td>
+                <td class="py-3 px-4 text-right font-mono text-gray-400">
+                  {{ item.unitPrice ? '¥' + item.unitPrice.toLocaleString() : '-' }}
+                </td>
+                <td class="py-3 px-4 text-right font-mono text-gold">
+                  {{ item.amount ? '¥' + item.amount.toLocaleString() : '-' }}
+                </td>
               </tr>
             </template>
           </tbody>
@@ -120,6 +139,16 @@ const groupedMaterials = computed(() => {
   }
   return grouped
 })
+
+// 合計金額
+const totalAmount = computed(() => {
+  return store.materials.reduce((sum, item) => sum + (item.amount || 0), 0)
+})
+
+const formatArea = (value) => {
+  if (value === null || value === undefined) return 0
+  return Number(value).toFixed(1)
+}
 
 const showToastMessage = (message) => {
   toastMessage.value = message

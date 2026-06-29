@@ -22,8 +22,8 @@ model Package {
 model Project {
   id           Int            @id @default(autoincrement())
   name         String
-  packageId    Int
-  package      Package        @relation(fields: [packageId], references: [id])
+  packageId    Int?
+  package      Package?       @relation(fields: [packageId], references: [id])
   status       String         @default("draft")
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -62,4 +62,87 @@ model MaterialList {
   totalAmount Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// 会社（ユーザー）
+model Company {
+  id                Int                       @id @default(autoincrement())
+  name              String
+  email             String                    @unique
+  passwordHash      String
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  unitPrices        UnitPrice[]
+  projects          CompanyProject[]
+  productSelections CompanyProductSelection[]
+}
+
+// 会社とプロジェクトの紐付け
+model CompanyProject {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  company   Company  @relation(fields: [companyId], references: [id])
+  projectId Int
+  createdAt DateTime @default(now())
+}
+
+// 単価マスタ（会社ごと）
+model UnitPrice {
+  id           Int      @id @default(autoincrement())
+  companyId    Int
+  company      Company  @relation(fields: [companyId], references: [id])
+  materialName String   // 資材名（例: PB 12.5mm 吉野 3×6）
+  spec         String?  // 規格（例: 910×1820mm）
+  category     String?  // カテゴリ（例: 下地材）
+  unitPrice    Int      // 単価（円）
+  unit         String   // 単位（例: 枚、㎡、m）
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([companyId, materialName, spec])
+}
+
+// 標準単価マスタ（全社共通の初期値）
+model DefaultUnitPrice {
+  id           Int      @id @default(autoincrement())
+  materialName String   // 資材名
+  spec         String?  // 規格
+  category     String?  // カテゴリ
+  unitPrice    Int      // 標準単価（円）
+  unit         String   // 単位
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([materialName, spec])
+}
+
+// 商品カタログ（マスタ）
+model ProductCatalog {
+  id           Int      @id @default(autoincrement())
+  category     String   // カテゴリ（例: トイレ、ユニットバス、キッチン、洗面台、フローリング、建具）
+  manufacturer String   // メーカー（例: TOTO、LIXIL、Panasonic）
+  productName  String   // 商品名（例: ZJ2、アプリコット、リノビオP）
+  modelNumber  String?  // 型番
+  spec         String?  // 仕様（例: 1216、2550mm）
+  unitPrice    Int      // 標準単価（円）
+  unit         String   // 単位（例: 台、セット）
+  description  String?  // 説明
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([category, manufacturer, productName, spec])
+}
+
+// 会社の商品選択（会社ごとに使う商品を設定）
+model CompanyProductSelection {
+  id              Int      @id @default(autoincrement())
+  companyId       Int
+  company         Company  @relation(fields: [companyId], references: [id])
+  category        String   // カテゴリ（例: トイレ）
+  productCatalogId Int     // 選択した商品
+  customPrice     Int?     // 会社独自の単価（nullなら標準単価）
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([companyId, category])
 }

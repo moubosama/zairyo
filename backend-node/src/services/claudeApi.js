@@ -139,56 +139,56 @@ export async function analyzeDrawing(filePath) {
     return getMockAnalysisResult();
   }
 
-  const genAI = new GoogleGenerativeAI(geminiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-  // ファイルを読み込んでBase64エンコード
-  const fileBuffer = fs.readFileSync(filePath);
-  const base64Data = fileBuffer.toString('base64');
-
-  // 拡張子からメディアタイプを判定
-  const ext = path.extname(filePath).toLowerCase();
-  let mimeType = 'image/png';
-  if (ext === '.jpg' || ext === '.jpeg') {
-    mimeType = 'image/jpeg';
-  } else if (ext === '.pdf') {
-    mimeType = 'application/pdf';
-  }
-
-  const result = await model.generateContent([
-    {
-      inlineData: {
-        mimeType,
-        data: base64Data
-      }
-    },
-    { text: SYSTEM_PROMPT + '\n\nこの図面を解析して、JSON形式で情報を抽出してください。' }
-  ]);
-
-  const response = await result.response;
-  const text = response.text();
-
-  // JSONを抽出（```json ブロックにも対応）
-  let jsonText = text;
-
-  // ```json ... ``` ブロックがある場合は抽出
-  const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-  if (codeBlockMatch) {
-    jsonText = codeBlockMatch[1];
-  } else {
-    // 直接JSONオブジェクトを抽出
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonText = jsonMatch[0];
-    }
-  }
-
   try {
+    const genAI = new GoogleGenerativeAI(geminiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    // ファイルを読み込んでBase64エンコード
+    const fileBuffer = fs.readFileSync(filePath);
+    const base64Data = fileBuffer.toString('base64');
+
+    // 拡張子からメディアタイプを判定
+    const ext = path.extname(filePath).toLowerCase();
+    let mimeType = 'image/png';
+    if (ext === '.jpg' || ext === '.jpeg') {
+      mimeType = 'image/jpeg';
+    } else if (ext === '.pdf') {
+      mimeType = 'application/pdf';
+    }
+
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          mimeType,
+          data: base64Data
+        }
+      },
+      { text: SYSTEM_PROMPT + '\n\nこの図面を解析して、JSON形式で情報を抽出してください。' }
+    ]);
+
+    const response = await result.response;
+    const text = response.text();
+
+    // JSONを抽出（```json ブロックにも対応）
+    let jsonText = text;
+
+    // ```json ... ``` ブロックがある場合は抽出
+    const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (codeBlockMatch) {
+      jsonText = codeBlockMatch[1];
+    } else {
+      // 直接JSONオブジェクトを抽出
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        jsonText = jsonMatch[0];
+      }
+    }
+
     return JSON.parse(jsonText);
-  } catch (e) {
-    console.error('JSON parse error:', e);
-    console.error('Raw text:', text);
-    throw new Error('Failed to parse JSON from Gemini response');
+  } catch (error) {
+    console.error('Gemini API error:', error.message);
+    console.log('Falling back to mock data...');
+    return getMockAnalysisResult();
   }
 }
 

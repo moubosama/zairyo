@@ -1,15 +1,15 @@
 <template>
   <div class="min-h-screen bg-dark">
-    <!-- Header -->
-    <header class="border-b border-dark-500">
+    <!-- Header (ログイン画面以外) -->
+    <header v-if="!isLoginPage" class="border-b border-dark-500">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between h-16">
-          <div class="flex items-center">
+          <router-link to="/" class="flex items-center">
             <h1 class="text-2xl font-bold">
               <span class="text-gold">ZAIRYO</span>
             </h1>
             <span class="ml-3 text-sm text-gray-400">資材拾いアシスタント</span>
-          </div>
+          </router-link>
           <div class="flex items-center gap-4">
             <router-link
               to="/history"
@@ -17,7 +17,12 @@
             >
               履歴
             </router-link>
-            <span class="text-sm text-gray-500 font-mono">v1.1</span>
+            <router-link
+              to="/mypage"
+              class="text-sm text-gray-400 hover:text-gold transition-colors"
+            >
+              {{ companyName || 'マイページ' }}
+            </router-link>
           </div>
         </div>
       </div>
@@ -64,18 +69,30 @@ import { useRoute } from 'vue-router'
 
 const route = useRoute()
 
-const steps = ['パッケージ選択', '図面アップロード', '仕様確認', '資材リスト']
+const steps = ['図面アップロード', '資材リスト']
+
+const isLoginPage = computed(() => route.path === '/login')
+
+const companyName = computed(() => {
+  const company = localStorage.getItem('company')
+  if (company) {
+    try {
+      return JSON.parse(company).name
+    } catch {
+      return null
+    }
+  }
+  return null
+})
 
 const showSteps = computed(() => {
-  return route.path !== '/history'
+  return !isLoginPage.value && route.path !== '/history' && route.path !== '/mypage' && route.path !== '/unit-prices' && route.path !== '/product-catalog'
 })
 
 const currentStep = computed(() => {
   const stepMap = {
     '/': 1,
-    '/upload': 2,
-    '/confirm': 3,
-    '/result': 4,
+    '/result': 2,
   }
   return stepMap[route.path] || 1
 })

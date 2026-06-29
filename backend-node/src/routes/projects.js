@@ -2,9 +2,27 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import jwt from 'jsonwebtoken';
 import { analyzeDrawing } from '../services/claudeApi.js';
 import { calculateMaterials } from '../services/materialCalculator.js';
 import ExcelJS from 'exceljs';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'zairyo-secret-key-change-in-production';
+
+// オプショナル認証ミドルウェア（トークンがあれば検証、なくても通す）
+function optionalAuth(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (token) {
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+      if (!err) {
+        req.companyId = decoded.companyId;
+      }
+    });
+  }
+  next();
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -38,7 +56,6 @@ router.get('/', async (req, res) => {
     const projects = await prisma.project.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
-        package: true,
         aiReadings: { orderBy: { createdAt: 'desc' }, take: 1 },
         materialLists: { orderBy: { createdAt: 'desc' }, take: 1 }
       }
@@ -48,9 +65,9 @@ router.get('/', async (req, res) => {
       id: p.id,
       name: p.name,
       status: p.status,
-      packageName: p.package.name,
       layoutType: p.aiReadings[0] ? JSON.parse(p.aiReadings[0].parsedData).layout_type : null,
       hasMaterials: p.materialLists.length > 0,
+      totalAmount: p.materialLists[0]?.totalAmount || null,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt
     }));
@@ -65,26 +82,16 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
-    const { name, packageId } = req.body;
+    const { name } = req.body;
 
     const project = await prisma.project.create({
       data: {
         name,
-        packageId: parseInt(packageId),
         status: 'draft'
-      },
-      include: {
-        package: true
       }
     });
 
-    res.json({
-      ...project,
-      package: {
-        ...project.package,
-        specs: JSON.parse(project.package.specs)
-      }
-    });
+    res.json(project);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -110,10 +117,10 @@ router.get('/:id', async (req, res) => {
 
     res.json({
       ...project,
-      package: {
+      package: project.package ? {
         ...project.package,
         specs: JSON.parse(project.package.specs)
-      },
+      } : null,
       aiReadings: project.aiReadings.map(r => ({
         ...r,
         parsedData: JSON.parse(r.parsedData)
@@ -133,13 +140,17 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
     const projectId = parseInt(req.params.id);
+    console.log('Upload request for project:', projectId);
 
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
+    console.log('File uploaded:', req.file.path);
 
     // Claude APIで解析
+    console.log('Starting AI analysis...');
     const analysisResult = await analyzeDrawing(req.file.path);
+    console.log('AI analysis complete');
 
     // 解析結果を保存
     const aiReading = await prisma.aiReading.create({
@@ -163,6 +174,7 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
       parsedData: analysisResult
     });
   } catch (error) {
+    console.error('Upload error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -197,7 +209,7 @@ router.post('/:id/overrides', async (req, res) => {
 });
 
 // POST /api/projects/:id/calculate - 資材計算実行
-router.post('/:id/calculate', async (req, res) => {
+router.post('/:id/calculate', optionalAuth, async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
     const projectId = parseInt(req.params.id);
@@ -226,18 +238,101 @@ router.post('/:id/calculate', async (req, res) => {
       overridesObj[o.itemKey] = o.value;
     });
 
-    // 資材計算
+    // 資材計算（パッケージは空のオブジェクトで代用）
+    const packageSpecs = project.package ? JSON.parse(project.package.specs) : {};
+    console.log('Calculating materials with aiReading:', project.aiReadings[0].parsedData);
     const result = calculateMaterials(
       project.aiReadings[0].parsedData,
-      JSON.parse(project.package.specs),
+      packageSpecs,
       overridesObj
     );
+    console.log('Calculation result:', JSON.stringify(result.summary));
+
+    // 単価を適用（ログインユーザーの単価、なければ標準単価）
+    const companyId = req.companyId; // 認証ミドルウェアから取得
+    let unitPrices = [];
+    let productSelections = [];
+
+    if (companyId) {
+      unitPrices = await prisma.unitPrice.findMany({
+        where: { companyId }
+      });
+
+      // 会社の商品選択を取得
+      productSelections = await prisma.companyProductSelection.findMany({
+        where: { companyId }
+      });
+    }
+
+    // 単価がない場合は標準単価を使用
+    if (unitPrices.length === 0) {
+      unitPrices = await prisma.defaultUnitPrice.findMany();
+    }
+
+    // 選択商品のカタログ情報を取得
+    const selectedProducts = {};
+    for (const sel of productSelections) {
+      const product = await prisma.productCatalog.findUnique({
+        where: { id: sel.productCatalogId }
+      });
+      if (product) {
+        selectedProducts[sel.category] = {
+          ...product,
+          customPrice: sel.customPrice
+        };
+      }
+    }
+
+    // 資材に単価と金額を追加（選択商品があればそれを優先）
+    let totalAmount = 0;
+    const materialsWithPrice = result.materials.map(material => {
+      // 設備カテゴリの場合、選択商品をチェック
+      const categoryMap = {
+        'トイレ': '設備',
+        'ユニットバス': '設備',
+        'キッチン': '設備',
+        '洗面台': '設備',
+        'フローリング': '床材',
+        '建具': '建具'
+      };
+
+      let unitPrice = 0;
+      let productName = material.name;
+      let productSpec = material.spec;
+
+      // 選択商品があるかチェック
+      const selectedProduct = selectedProducts[material.category];
+      if (selectedProduct) {
+        // 選択商品の情報で置き換え
+        productName = `${selectedProduct.manufacturer} ${selectedProduct.productName}`;
+        productSpec = selectedProduct.spec;
+        unitPrice = selectedProduct.customPrice || selectedProduct.unitPrice;
+      } else {
+        // 通常の単価マッチング
+        const priceInfo = unitPrices.find(p =>
+          p.materialName === material.name &&
+          (p.spec === material.spec || !p.spec || !material.spec)
+        );
+        unitPrice = priceInfo?.unitPrice || 0;
+      }
+
+      const amount = unitPrice * material.quantity;
+      totalAmount += amount;
+      return {
+        ...material,
+        name: selectedProduct ? productName : material.name,
+        spec: selectedProduct ? productSpec : material.spec,
+        unitPrice,
+        amount
+      };
+    });
 
     // 結果を保存
     const materialList = await prisma.materialList.create({
       data: {
         projectId,
-        materials: JSON.stringify(result.materials)
+        materials: JSON.stringify(materialsWithPrice),
+        totalAmount
       }
     });
 
@@ -249,8 +344,9 @@ router.post('/:id/calculate', async (req, res) => {
 
     res.json({
       ...materialList,
-      materials: result.materials,
-      summary: result.summary
+      materials: materialsWithPrice,
+      summary: result.summary,
+      totalAmount
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

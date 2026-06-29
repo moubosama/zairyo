@@ -4,6 +4,9 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import packagesRouter from './routes/packages.js';
 import projectsRouter from './routes/projects.js';
+import authRouter from './routes/auth.js';
+import unitPricesRouter from './routes/unitPrices.js';
+import productsRouter from './routes/products.js';
 
 dotenv.config();
 
@@ -19,8 +22,11 @@ app.use(express.json());
 app.set('prisma', prisma);
 
 // Routes
+app.use('/api/auth', authRouter);
 app.use('/api/packages', packagesRouter);
 app.use('/api/projects', projectsRouter);
+app.use('/api/unit-prices', unitPricesRouter);
+app.use('/api/products', productsRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -748,16 +748,16 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   return {
     materials,
     summary: {
-      totalFloorArea,
-      flooringArea,
-      cfArea,
-      tileArea,
-      wallArea,
-      ceilingArea,
-      doorCount,
-      windowCount,
-      partitionWallLength,
-      structuralWallLength
+      total_floor_area: totalFloorArea,
+      floor_area: flooringArea,
+      water_floor_area: cfArea,
+      tile_area: tileArea,
+      wall_area: wallArea,
+      ceiling_area: ceilingArea,
+      door_count: doorCount,
+      window_count: windowCount,
+      partition_wall_length: partitionWallLength,
+      structural_wall_length: structuralWallLength
     }
   };
 }
