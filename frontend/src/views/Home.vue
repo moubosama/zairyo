@@ -40,7 +40,7 @@
       <div v-if="loading" class="flex flex-col items-center">
         <div class="spinner mb-4"></div>
         <p class="text-gold">AI が図面を解析中...</p>
-        <p class="text-sm text-gray-400 mt-2">Gemini 2.5 Flash で処理しています</p>
+        <p class="text-sm text-gray-400 mt-2">Gemini 2.5 Pro で解析中</p>
       </div>
 
       <!-- Default State -->
