@@ -93,28 +93,14 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   }
 
   // 壁延長の計算
-  let partitionWallLength = 0; // 間仕切壁
-  let structuralWallLength = 0; // 躯体壁（外周壁）
+  // AIが直接出力した間仕切壁延長を優先使用
+  let partitionWallLength = data.partition_wall_length_m || 0;
+  let structuralWallLength = 0; // 躯体壁（リノベでは通常ボード不要）
 
-  rooms.forEach(room => {
-    const width = (room.width_mm || 0) / 1000;
-    const depth = (room.depth_mm || 0) / 1000;
-    const perimeter = (width + depth) * 2;
-
-    if (room.wall_type === 'structural' || room.wall_type === 'external') {
-      structuralWallLength += perimeter;
-    } else {
-      partitionWallLength += perimeter;
-    }
-  });
-
-  // 総寸法から壁延長を推定（部屋データが不完全な場合）
-  if (partitionWallLength === 0 && structuralWallLength === 0 && data.total_dimensions) {
-    const totalWidth = (data.total_dimensions.width_mm || 0) / 1000;
-    const totalDepth = (data.total_dimensions.depth_mm || 0) / 1000;
-    structuralWallLength = (totalWidth + totalDepth) * 2;
-    // 間仕切壁は床面積から推定（実績: 50㎡で約20m程度）
-    partitionWallLength = totalFloorArea * 0.4;
+  // AIから壁延長が取得できない場合、床面積から推定
+  // 実績データ: 2LDK(50㎡)=約20m, 3LDK(70㎡)=約30m
+  if (partitionWallLength === 0) {
+    partitionWallLength = totalFloorArea * 0.4; // 床面積の0.4倍が目安
   }
 
   // 開口部の面積と幅を計算
@@ -150,24 +136,21 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   const openingArea = doorCount * DOOR_OPENING_AREA + windowCount * WINDOW_OPENING_AREA;
 
   // 壁面積の計算
-  // 壁面積 = (間仕切壁延長 × 天井高 × 2) + (躯体壁延長 × 天井高 × 係数) − 開口部面積
-  // 躯体壁処理: GL工法=片面のみ、木軸ふかし=両面、既存利用=0
-  let structuralWallMultiplier = 1; // デフォルトGL工法
-  const exteriorWall = overrides.exterior_wall || '';
-  if (exteriorWall.includes('木軸ふかし')) {
-    structuralWallMultiplier = 2;
-  } else if (exteriorWall.includes('既存利用')) {
-    structuralWallMultiplier = 0;
-  }
+  // 間仕切壁のみ両面にボードを貼る（躯体壁はリノベでは通常GL工法で片面、または既存利用）
+  // 壁面積 = 間仕切壁延長 × 天井高 × 2 − 開口部面積
 
-  let wallArea = (partitionWallLength * ceilingHeight * 2) +
-    (structuralWallLength * ceilingHeight * structuralWallMultiplier) -
-    openingArea;
+  let wallArea = (partitionWallLength * ceilingHeight * 2) - openingArea;
 
   // 壁面積が計算できない場合、床面積から推定
-  // 7現場実績: 壁クロス187～270㎡ → 床面積の約3.5～4倍
+  // 7現場実績: 壁クロス187～270㎡ → 床面積の約4倍
   if (wallArea <= 0 || isNaN(wallArea)) {
-    wallArea = totalFloorArea > 0 ? totalFloorArea * 3.8 : 200; // 最低200㎡
+    wallArea = totalFloorArea > 0 ? totalFloorArea * 4 : 200;
+  }
+
+  // 実績上限チェック: 2LDK(50㎡)で壁面積は最大270㎡程度
+  const maxWallArea = totalFloorArea * 5.5;
+  if (wallArea > maxWallArea && totalFloorArea > 0) {
+    wallArea = maxWallArea;
   }
 
   // --- 資材計算 ---
