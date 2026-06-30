@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs';
 import path from 'path';
 
@@ -108,30 +109,16 @@ const SYSTEM_PROMPT = `あなたは建築図面を解析する専門家です。
 
 JSONのみを返してください。説明文やマークダウンは含めないでください。`;
 
-export async function analyzeDrawing(filePath) {
+/**
+ * Gemini APIで図面解析
+ */
+async function analyzeWithGemini(filePath, base64Data, mimeType) {
   const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
-
-  if (!geminiKey) {
-    // デモ用のモックデータを返す
-    return getMockAnalysisResult();
-  }
+  if (!geminiKey) return null;
 
   try {
     const genAI = new GoogleGenerativeAI(geminiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
-
-    // ファイルを読み込んでBase64エンコード
-    const fileBuffer = fs.readFileSync(filePath);
-    const base64Data = fileBuffer.toString('base64');
-
-    // 拡張子からメディアタイプを判定
-    const ext = path.extname(filePath).toLowerCase();
-    let mimeType = 'image/png';
-    if (ext === '.jpg' || ext === '.jpeg') {
-      mimeType = 'image/jpeg';
-    } else if (ext === '.pdf') {
-      mimeType = 'application/pdf';
-    }
 
     const result = await model.generateContent([
       {
@@ -145,28 +132,174 @@ export async function analyzeDrawing(filePath) {
 
     const response = await result.response;
     const text = response.text();
-
-    // JSONを抽出（```json ブロックにも対応）
-    let jsonText = text;
-
-    // ```json ... ``` ブロックがある場合は抽出
-    const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-    if (codeBlockMatch) {
-      jsonText = codeBlockMatch[1];
-    } else {
-      // 直接JSONオブジェクトを抽出
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonText = jsonMatch[0];
-      }
-    }
-
-    return JSON.parse(jsonText);
+    return parseJsonResponse(text);
   } catch (error) {
     console.error('Gemini API error:', error.message);
-    console.log('Falling back to mock data...');
+    return null;
+  }
+}
+
+/**
+ * Claude APIで図面解析
+ */
+async function analyzeWithClaude(filePath, base64Data, mimeType) {
+  const claudeKey = process.env.ANTHROPIC_API_KEY;
+  if (!claudeKey) return null;
+
+  // ClaudeはPDFを直接サポートしていないので、画像のみ
+  if (mimeType === 'application/pdf') {
+    console.log('Claude does not support PDF directly, skipping...');
+    return null;
+  }
+
+  try {
+    const anthropic = new Anthropic({ apiKey: claudeKey });
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mimeType,
+                data: base64Data
+              }
+            },
+            {
+              type: 'text',
+              text: SYSTEM_PROMPT + '\n\nこの図面を解析して、JSON形式で情報を抽出してください。'
+            }
+          ]
+        }
+      ]
+    });
+
+    const text = response.content[0].text;
+    return parseJsonResponse(text);
+  } catch (error) {
+    console.error('Claude API error:', error.message);
+    return null;
+  }
+}
+
+/**
+ * JSONレスポンスをパース
+ */
+function parseJsonResponse(text) {
+  let jsonText = text;
+
+  // ```json ... ``` ブロックがある場合は抽出
+  const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+  if (codeBlockMatch) {
+    jsonText = codeBlockMatch[1];
+  } else {
+    // 直接JSONオブジェクトを抽出
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonText = jsonMatch[0];
+    }
+  }
+
+  return JSON.parse(jsonText);
+}
+
+/**
+ * 複数のAI結果をマージ（平均化）
+ */
+function mergeResults(results) {
+  if (results.length === 0) return null;
+  if (results.length === 1) return results[0];
+
+  // 基本構造は最初の結果を使用
+  const merged = JSON.parse(JSON.stringify(results[0]));
+
+  // 数値フィールドを平均化
+  const numericFields = ['total_floor_area_sqm', 'partition_wall_length_m', 'ceiling_height_mm'];
+  numericFields.forEach(field => {
+    const values = results.map(r => r[field]).filter(v => v !== undefined && v !== null);
+    if (values.length > 0) {
+      merged[field] = Math.round(values.reduce((a, b) => a + b, 0) / values.length * 10) / 10;
+    }
+  });
+
+  // 部屋の面積を平均化
+  if (merged.rooms && merged.rooms.length > 0) {
+    merged.rooms.forEach((room, i) => {
+      const areas = results
+        .map(r => r.rooms && r.rooms[i] ? r.rooms[i].area_sqm : null)
+        .filter(v => v !== null);
+      if (areas.length > 0) {
+        room.area_sqm = Math.round(areas.reduce((a, b) => a + b, 0) / areas.length * 10) / 10;
+      }
+    });
+  }
+
+  // 建具数は最大値を採用（見落としを防ぐ）
+  if (merged.openings) {
+    const maxOpenings = Math.max(...results.map(r => (r.openings || []).length));
+    // 最も多くの建具を検出した結果を採用
+    const bestResult = results.find(r => (r.openings || []).length === maxOpenings);
+    if (bestResult && bestResult.openings) {
+      merged.openings = bestResult.openings;
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * メイン解析関数
+ * Gemini と Claude の両方で解析し、結果をマージ
+ */
+export async function analyzeDrawing(filePath) {
+  const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
+  const claudeKey = process.env.ANTHROPIC_API_KEY;
+
+  if (!geminiKey && !claudeKey) {
+    console.log('No API keys found, using mock data...');
     return getMockAnalysisResult();
   }
+
+  // ファイルを読み込んでBase64エンコード
+  const fileBuffer = fs.readFileSync(filePath);
+  const base64Data = fileBuffer.toString('base64');
+
+  // 拡張子からメディアタイプを判定
+  const ext = path.extname(filePath).toLowerCase();
+  let mimeType = 'image/png';
+  if (ext === '.jpg' || ext === '.jpeg') {
+    mimeType = 'image/jpeg';
+  } else if (ext === '.pdf') {
+    mimeType = 'application/pdf';
+  }
+
+  // 両方のAPIを並行して呼び出し
+  const [geminiResult, claudeResult] = await Promise.all([
+    analyzeWithGemini(filePath, base64Data, mimeType),
+    analyzeWithClaude(filePath, base64Data, mimeType)
+  ]);
+
+  console.log('Gemini result:', geminiResult ? 'OK' : 'Failed');
+  console.log('Claude result:', claudeResult ? 'OK' : 'Failed');
+
+  // 成功した結果を集める
+  const results = [geminiResult, claudeResult].filter(r => r !== null);
+
+  if (results.length === 0) {
+    console.log('All APIs failed, using mock data...');
+    return getMockAnalysisResult();
+  }
+
+  // 結果をマージ
+  const merged = mergeResults(results);
+  console.log('Merged result - partition_wall_length_m:', merged.partition_wall_length_m);
+
+  return merged;
 }
 
 /**
