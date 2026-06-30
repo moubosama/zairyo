@@ -1,7 +1,7 @@
 <template>
   <div class="min-h-screen bg-dark">
-    <!-- Header (ログイン画面以外) -->
-    <header v-if="!isLoginPage" class="border-b border-dark-500">
+    <!-- Header -->
+    <header class="border-b border-dark-500">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between h-16">
           <router-link to="/" class="flex items-center">
@@ -16,12 +16,6 @@
               class="text-sm text-gray-400 hover:text-gold transition-colors"
             >
               履歴
-            </router-link>
-            <router-link
-              to="/mypage"
-              class="text-sm text-gray-400 hover:text-gold transition-colors"
-            >
-              {{ companyName || 'マイページ' }}
             </router-link>
           </div>
         </div>
@@ -71,22 +65,8 @@ const route = useRoute()
 
 const steps = ['図面アップロード', '資材リスト']
 
-const isLoginPage = computed(() => route.path === '/login')
-
-const companyName = computed(() => {
-  const company = localStorage.getItem('company')
-  if (company) {
-    try {
-      return JSON.parse(company).name
-    } catch {
-      return null
-    }
-  }
-  return null
-})
-
 const showSteps = computed(() => {
-  return !isLoginPage.value && route.path !== '/history' && route.path !== '/mypage' && route.path !== '/unit-prices' && route.path !== '/product-catalog'
+  return route.path !== '/history'
 })
 
 const currentStep = computed(() => {
