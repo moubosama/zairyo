@@ -144,7 +144,13 @@ async function analyzeWithGemini(filePath, base64Data, mimeType) {
  */
 async function analyzeWithClaude(filePath, base64Data, mimeType) {
   const claudeKey = process.env.ANTHROPIC_API_KEY;
-  if (!claudeKey) return null;
+  console.log('Claude API key exists:', !!claudeKey);
+  console.log('Claude API key length:', claudeKey ? claudeKey.length : 0);
+
+  if (!claudeKey) {
+    console.log('Claude API key not found, skipping...');
+    return null;
+  }
 
   // ClaudeはPDFを直接サポートしていないので、画像のみ
   if (mimeType === 'application/pdf') {
@@ -153,6 +159,7 @@ async function analyzeWithClaude(filePath, base64Data, mimeType) {
   }
 
   try {
+    console.log('Calling Claude API with model: claude-sonnet-4-20250514');
     const anthropic = new Anthropic({ apiKey: claudeKey });
 
     const response = await anthropic.messages.create({
@@ -179,10 +186,12 @@ async function analyzeWithClaude(filePath, base64Data, mimeType) {
       ]
     });
 
+    console.log('Claude API response received');
     const text = response.content[0].text;
     return parseJsonResponse(text);
   } catch (error) {
     console.error('Claude API error:', error.message);
+    console.error('Claude API error details:', JSON.stringify(error, null, 2));
     return null;
   }
 }
