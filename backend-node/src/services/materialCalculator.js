@@ -95,13 +95,18 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // 壁延長の計算
   // AIが直接出力した間仕切壁延長を優先使用
   let partitionWallLength = data.partition_wall_length_m || 0;
-  let structuralWallLength = 0; // 躯体壁（リノベでは通常ボード不要）
 
   // AIから壁延長が取得できない場合、床面積から推定
   // 実績データ: 2LDK(50㎡)=約20m, 3LDK(70㎡)=約30m
   if (partitionWallLength === 0) {
     partitionWallLength = totalFloorArea * 0.4; // 床面積の0.4倍が目安
   }
+
+  // 躯体壁（外周壁）の延長を推定
+  // リノベでは躯体壁にもクロスを貼る（GL工法で片面のみ）
+  // マンションの外周 ≒ sqrt(床面積) × 4.5 として推定（長方形の部屋が多いため補正）
+  // 7現場実績: 壁クロス187～270㎡を満たすよう調整
+  let structuralWallLength = Math.sqrt(totalFloorArea) * 4.5;
 
   // 開口部の面積と幅を計算
   let doorCount = 0;
@@ -136,10 +141,11 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   const openingArea = doorCount * DOOR_OPENING_AREA + windowCount * WINDOW_OPENING_AREA;
 
   // 壁面積の計算
-  // 間仕切壁のみ両面にボードを貼る（躯体壁はリノベでは通常GL工法で片面、または既存利用）
-  // 壁面積 = 間仕切壁延長 × 天井高 × 2 − 開口部面積
+  // 間仕切壁: 両面にボードを貼る（係数2）
+  // 躯体壁: GL工法で片面のみ（係数1）
+  // 壁面積 = (間仕切壁延長 × 天井高 × 2) + (躯体壁延長 × 天井高 × 1) − 開口部面積
 
-  let wallArea = (partitionWallLength * ceilingHeight * 2) - openingArea;
+  let wallArea = (partitionWallLength * ceilingHeight * 2) + (structuralWallLength * ceilingHeight * 1) - openingArea;
 
   // 壁面積が計算できない場合、床面積から推定
   // 7現場実績: 壁クロス187～270㎡ → 床面積の約4倍
@@ -147,8 +153,15 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     wallArea = totalFloorArea > 0 ? totalFloorArea * 4 : 200;
   }
 
-  // 実績上限チェック: 2LDK(50㎡)で壁面積は最大270㎡程度
+  // 7現場実績に基づく範囲チェック
+  // 最小: 床面積の3.5倍（50㎡なら175㎡）
+  // 最大: 床面積の5.5倍（50㎡なら275㎡）
+  const minWallArea = totalFloorArea * 3.5;
   const maxWallArea = totalFloorArea * 5.5;
+
+  if (wallArea < minWallArea && totalFloorArea > 0) {
+    wallArea = minWallArea;
+  }
   if (wallArea > maxWallArea && totalFloorArea > 0) {
     wallArea = maxWallArea;
   }
