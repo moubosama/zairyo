@@ -1,15 +1,30 @@
 /**
  * 資材計算サービス
- * 7現場の実績データに基づいて最適化された計算ロジック
+ * 54ファイルの実績データに基づいて最適化された計算ロジック
  *
- * 実績データ参照:
- * - 朝日パリオ北千住305号室 (2LDK, 620万) - PB12.5:40枚, PB9.5:30枚, 垂木:20束
- * - 新物件ミドル (2LDK, 665万) - PB12.5:50枚, PB9.5:35枚, 垂木:25束
- * - 寿マンション401号室 (2LDK, 840万)
- * - ハイグレード物件 (3LDK, 682万) - PB12.5:30枚, PB9.5:40枚, 垂木:20束
- * - ハイグレード物件2 (2LDK, 735万) - PB12.5:30枚, PB9.5:30枚, 垂木:20束
- * - 目白テラスドハウス3A (722万) - PB12.5:40枚, PB9.5:35枚, 垂木:27束, 天井CL:75㎡, 壁CL:270㎡
- * - 別現場 (660万/713万) - PB12.5:40-60枚, PB9.5:30-40枚, 垂木:29-30束
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * 【実績データサマリー（けいとさんの資料より）】
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ *
+ * | 項目 | 実績範囲 | 固定/変動 | 備考 |
+ * |------|----------|-----------|------|
+ * | PB 12.5mm | 8〜60枚 | 変動 | 壁面積による |
+ * | PB 9.5mm | 8〜40枚 | 変動 | 天井面積による |
+ * | Mクロス | 2〜7枚 | 変動 | 水回り面積による |
+ * | 垂木 | 10〜30束 | 変動 | 間取りによる |
+ * | ラワンベニヤ | 4〜19枚 | 変動 | 水回り+床下地 |
+ * | 天井クロス | 52〜75㎡ | 変動 | 天井面積 |
+ * | 壁クロス | 187〜270㎡ | 変動 | 壁面積 |
+ * | 巾木 | 10〜40m | 変動 | 壁延長−開口部 |
+ * | フローリング | 50〜70㎡ | 変動 | 居室床面積 |
+ *
+ * 物件別実績:
+ * - 朝日パリオ305 (2LDK, 620万): PB12.5=40枚, PB9.5=30枚, Mクロス=7枚, 垂木=25束
+ * - 別物件ミドル (2LDK, 665万): PB12.5=50枚, PB9.5=35枚, Mクロス=7枚, 垂木=25束
+ * - 寿401 HG (2LDK, 735万): PB9.5=30枚, Mクロス=7枚, 垂木=20束
+ * - 3LDK 70㎡ (535万): PB12.5=35枚, PB9.5=30枚, Mクロス=7枚, 垂木=20束
+ * - 目白テラスドハウス3A (722万): 天井CL=75㎡, 壁CL=270㎡, 巾木=15m
+ * - 大型物件: PB12.5=60枚, PB9.5=40枚, 垂木=30束
  */
 
 const PB_SHEET_SIZE = 1.6562; // ㎡ (910mm × 1820mm = 3×6)
@@ -102,6 +117,23 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     partitionWallLength = totalFloorArea * 0.4; // 床面積の0.4倍が目安
   }
 
+  // 間仕切壁延長の妥当性チェック
+  // AIが躯体壁（外周壁）を含めて計算している場合、値が大きすぎる
+  // 実績: 2LDK(50㎡)=15-25m, 3LDK(70㎡)=20-30m
+  // 上限: 床面積の0.45倍 (70㎡なら31.5m)
+  // 下限: 床面積の0.25倍 (50㎡なら12.5m)
+  const maxPartitionWallLength = totalFloorArea * 0.45;
+  const minPartitionWallLength = totalFloorArea * 0.25;
+
+  if (partitionWallLength > maxPartitionWallLength && totalFloorArea > 0) {
+    console.log(`間仕切壁延長を補正: ${partitionWallLength}m → ${maxPartitionWallLength}m (AIが躯体壁を含めた可能性)`);
+    partitionWallLength = maxPartitionWallLength;
+  }
+  if (partitionWallLength < minPartitionWallLength && totalFloorArea > 0) {
+    console.log(`間仕切壁延長を補正: ${partitionWallLength}m → ${minPartitionWallLength}m (最小値)`);
+    partitionWallLength = minPartitionWallLength;
+  }
+
   // 躯体壁（外周壁）の延長を推定
   // リノベでは躯体壁にもクロスを貼る（GL工法で片面のみ）
   // マンションの外周 ≒ sqrt(床面積) × 4.5 として推定（長方形の部屋が多いため補正）
@@ -169,43 +201,64 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // --- 資材計算 ---
 
   // PB 12.5mm (壁用) - ロス率+5%
-  // 7現場実績: 30～60枚（平均40枚）
-  const pb125Sheets = Math.ceil((wallArea / PB_SHEET_SIZE) * 1.05);
+  // 54ファイル実績: 8〜60枚（壁面積による）
+  // - 小型物件: 8〜15枚
+  // - 2LDK: 30〜50枚
+  // - 3LDK: 40〜60枚
+  let pb125Sheets = Math.ceil((wallArea / PB_SHEET_SIZE) * 1.05);
+  // 実績に基づく範囲制限: 8〜60枚
+  pb125Sheets = Math.min(Math.max(pb125Sheets, 8), 60);
   materials.push({
     category: '下地材',
     name: 'PB 12.5mm 吉野 3×6',
     spec: '910×1820mm',
     unit: '枚',
     quantity: pb125Sheets,
-    calculation: `壁面積 ${wallArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE}㎡ × 1.05`
+    calculation: `壁面積 ${wallArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE}㎡ × 1.05（8〜60枚）`
   });
 
   // PB 9.5mm (天井用) - ロス率+5%
-  // 7現場実績: 30～40枚（天井面積に依存）
-  const pb95Sheets = Math.ceil((ceilingArea / PB_SHEET_SIZE) * 1.05);
+  // 54ファイル実績: 8〜40枚（天井面積に依存）
+  // - 小型物件: 8〜15枚
+  // - 2LDK: 20〜35枚
+  // - 3LDK: 30〜40枚
+  let pb95Sheets = Math.ceil((ceilingArea / PB_SHEET_SIZE) * 1.05);
+  // 実績に基づく範囲制限: 8〜40枚
+  pb95Sheets = Math.min(Math.max(pb95Sheets, 8), 40);
   materials.push({
     category: '下地材',
     name: 'PB 9.5mm 吉野 3×6',
     spec: '910×1820mm',
     unit: '枚',
     quantity: pb95Sheets,
-    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE}㎡ × 1.05`
+    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE}㎡ × 1.05（8〜40枚）`
   });
 
   // Mクロス (水回りボード)
-  // 7現場実績: 全て7枚固定
+  // 54ファイル実績: 2〜7枚（水回り面積による）
+  // 計算式: 水回り壁面積から算出
+  // 水回り = 洗面室(約2㎡) + トイレ(約1㎡) + 脱衣室(約1.5㎡)
+  // 壁面積 ≒ 水回り床面積 × 周囲長係数(3) × 天井高(2.4) ÷ ボードサイズ
+  let mCrossSheets = 7; // デフォルト最大値
+  if (cfArea > 0) {
+    // 水回り床面積が小さい場合は枚数を減らす
+    const waterWallArea = cfArea * 3 * ceilingHeight;
+    mCrossSheets = Math.ceil((waterWallArea / PB_SHEET_SIZE) * 1.05);
+    mCrossSheets = Math.min(Math.max(mCrossSheets, 2), 7); // 2〜7枚の範囲
+  }
   materials.push({
     category: '下地材',
     name: 'Mクロス 12.5mm 3×6',
     spec: '耐水ボード',
     unit: '枚',
-    quantity: 7,
-    calculation: '固定値（洗面室+トイレ）'
+    quantity: mCrossSheets,
+    calculation: `水回り面積 ${cfArea.toFixed(1)}㎡から算出（2〜7枚）`
   });
 
   // 垂木 (赤松KD 30×40 L3000 入数12)
-  // 7現場実績: 20～30束（平均25束）
+  // 54ファイル実績: 10〜30束
   // 計算式: (間仕切壁延長÷0.303×2 + 天井面積÷0.303) ÷ 12
+  // 間取り別目安: 1LDK=10-15束, 2LDK=20-25束, 3LDK=25-30束
   let tarukiBundles = 20; // デフォルト20束
   if (partitionWallLength > 0 || ceilingArea > 0) {
     const tarukiCount = ((partitionWallLength / 0.303 * 2) + (ceilingArea / 0.303)) / TARUKI_PER_BUNDLE;
@@ -213,19 +266,25 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     if (isNaN(tarukiBundles) || tarukiBundles <= 0) {
       tarukiBundles = 20;
     }
+    // 実績に基づく範囲制限: 10〜30束
+    tarukiBundles = Math.min(Math.max(tarukiBundles, 10), 30);
   }
   materials.push({
     category: '下地材',
     name: '垂木 赤松KD 30×40 L3000',
     spec: '入数12本/束',
     unit: '束',
-    quantity: Math.max(tarukiBundles, 10), // 最低10束
-    calculation: `壁下地 + 天井下地 @303ピッチ`
+    quantity: tarukiBundles,
+    calculation: `壁下地 + 天井下地 @303ピッチ（10〜30束）`
   });
 
   // フローリング - ロス率+10%
-  // 7現場実績: 22～70㎡（間取りによる）
-  const flooringQty = Math.ceil(flooringArea * 1.1 * 10) / 10;
+  // 54ファイル実績: 50〜70㎡（間取りによる）
+  // - 1LDK: 約40㎡
+  // - 2LDK: 50〜55㎡
+  // - 3LDK: 60〜70㎡
+  let flooringQty = Math.ceil(flooringArea * 1.1 * 10) / 10;
+  // 最低50㎡、最大70㎡（ロス込み）
   if (flooringQty > 0) {
     materials.push({
       category: '床材',
@@ -272,16 +331,31 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     });
   }
 
-  // ラワンベニヤ 9mm 3×6 (水回りフロアタイル下地)
-  // 7現場実績: 4～12枚
-  const rawanSheets = Math.max(Math.ceil((cfArea / PB_SHEET_SIZE) * 1.1), 4);
+  // ラワンベニヤ 9mm 3×6 (水回りフロアタイル下地 + 床暖房下地 + フローリング下地更新)
+  // 54ファイル実績: 4〜19枚（用途により変動）
+  // - 水回りリフロアタイル下地: 4〜5枚
+  // - 床暖房新規導入下地: 3〜4枚
+  // - フローリング下地更新: 5〜12枚
+  let rawanSheets = Math.max(Math.ceil((cfArea / PB_SHEET_SIZE) * 1.1), 4);
+  // 床暖房がある場合は追加
+  const hasFloorHeatingForRawan = (overrides.floor_heating && overrides.floor_heating.includes('あり')) ||
+    data.special?.some(s => s.type === 'floor_heating' || s.type === '床暖房');
+  if (hasFloorHeatingForRawan) {
+    rawanSheets += 3; // 床暖房下地用
+  }
+  // 大型物件（70㎡以上）はフローリング下地更新分を追加
+  if (totalFloorArea >= 70) {
+    rawanSheets += 5;
+  }
+  // 実績に基づく範囲制限: 4〜19枚
+  rawanSheets = Math.min(Math.max(rawanSheets, 4), 19);
   materials.push({
     category: '下地材',
     name: 'ラワンベニヤ 9mm 3×6',
     spec: '水回りフロアタイル下地',
     unit: '枚',
     quantity: rawanSheets,
-    calculation: `水回り床面積から算出（最低4枚）`
+    calculation: `水回り+床暖房+下地更新（4〜19枚）`
   });
 
   // ラワンランバー 24mm 3×8（フローリング下地用）
@@ -296,41 +370,63 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   });
 
   // 巾木 - 壁延長から開口部幅を引く
-  // 7現場実績: 10～40m（ソフト巾木または木製巾木）
+  // 54ファイル実績: 10〜40m（ソフト巾木または木製巾木）
+  // 注意: 30m固定ではなく、間取りにより大きく変動
+  // - 1LDK: 10〜15m
+  // - 2LDK: 20〜30m
+  // - 3LDK: 30〜40m
   const totalWallLength = partitionWallLength + structuralWallLength;
   let habakiLength = Math.ceil(totalWallLength - totalOpeningWidth);
+  const layoutTypeForHabaki = data.layout_type || '';
   if (habakiLength <= 0 || isNaN(habakiLength)) {
-    habakiLength = 30; // デフォルト30m
+    // 間取りから推定
+    if (layoutTypeForHabaki.includes('3LDK') || layoutTypeForHabaki.includes('4LDK')) {
+      habakiLength = 35;
+    } else if (layoutTypeForHabaki.includes('2LDK')) {
+      habakiLength = 25;
+    } else if (layoutTypeForHabaki.includes('1LDK')) {
+      habakiLength = 15;
+    } else {
+      habakiLength = 25; // デフォルト
+    }
   }
+  // 実績に基づく範囲制限: 10〜40m
+  habakiLength = Math.min(Math.max(habakiLength, 10), 40);
   materials.push({
     category: '造作材',
     name: '巾木',
     spec: packageSpecs?.habaki || 'ソフト巾木',
     unit: 'm',
-    quantity: Math.max(habakiLength, 10),
-    calculation: `壁延長 ${totalWallLength.toFixed(1)}m − 開口部幅 ${totalOpeningWidth.toFixed(1)}m`
+    quantity: habakiLength,
+    calculation: `壁延長 ${totalWallLength.toFixed(1)}m − 開口部幅 ${totalOpeningWidth.toFixed(1)}m（10〜40m）`
   });
 
   // 天井クロス（量産品番）
-  // 7現場実績: 52～75㎡
+  // 54ファイル実績: 52〜75㎡
+  // 範囲制限を適用
+  let ceilingClothArea = Math.ceil(ceilingArea);
+  ceilingClothArea = Math.min(Math.max(ceilingClothArea, 52), 75);
   materials.push({
     category: '仕上材',
     name: '天井クロス貼り',
     spec: '量産品番',
     unit: '㎡',
-    quantity: Math.ceil(ceilingArea),
-    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡`
+    quantity: ceilingClothArea,
+    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡（52〜75㎡）`
   });
 
   // 壁クロス（量産品番）
-  // 7現場実績: 187～270㎡
+  // 54ファイル実績: 187〜270㎡
+  // 範囲制限を適用
+  let wallClothArea = Math.ceil(wallArea);
+  wallClothArea = Math.min(Math.max(wallClothArea, 187), 270);
   materials.push({
     category: '仕上材',
     name: '壁クロス貼り',
     spec: '量産品番',
     unit: '㎡',
-    quantity: Math.ceil(wallArea),
-    calculation: `壁面積 ${wallArea.toFixed(1)}㎡`
+    quantity: wallClothArea,
+    calculation: `壁面積 ${wallArea.toFixed(1)}㎡（187〜270㎡）`
   });
 
   // アクセントクロス（1000番）
@@ -400,12 +496,19 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   const equipment = data.equipment || {};
 
   // UB（ユニットバス）
+  // 54ファイル実績: 1216, 1317, 1416, 1418 の4サイズが多い
   const ubSize = equipment.ub_size || '1216';
   let ubSpec = packageSpecs?.ub || 'TOTO WT';
   if (ubSize.includes('1616') || ubSize.includes('1618')) {
-    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1616';
-  } else if (ubSize.includes('1317') || ubSize.includes('1418')) {
+    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1616 電気式浴室乾燥機あり 1面アクセントパネル';
+  } else if (ubSize.includes('1418')) {
+    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1418';
+  } else if (ubSize.includes('1416')) {
+    ubSpec = packageSpecs?.ub || 'TOTO WT 1416';
+  } else if (ubSize.includes('1317')) {
     ubSpec = packageSpecs?.ub || 'TOTO WT 1317';
+  } else {
+    ubSpec = packageSpecs?.ub || 'TOTO WT 1216';
   }
   materials.push({
     category: '設備',
@@ -719,6 +822,484 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     unit: '台',
     quantity: 1,
     calculation: '標準1台'
+  });
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 【追加項目】54ファイル実績から確認された必須項目
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // === 解体工事 ===
+  materials.push({
+    category: '解体工事',
+    name: '解体工事 表層 設備・建具',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '1式'
+  });
+
+  materials.push({
+    category: '解体工事',
+    name: '解体工事 表層 フローリング・カーペット',
+    spec: '',
+    unit: '式',
+    quantity: 1.5,
+    calculation: '1.5式'
+  });
+
+  materials.push({
+    category: '解体工事',
+    name: '解体廃材処分 表層 設備・建具',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '1式'
+  });
+
+  materials.push({
+    category: '解体工事',
+    name: '解体廃材処分 表層 フローリング・カーペット',
+    spec: '',
+    unit: '式',
+    quantity: 1.5,
+    calculation: '1.5式'
+  });
+
+  // === 仮設工事 ===
+  materials.push({
+    category: '仮設工事',
+    name: '養生費',
+    spec: '',
+    unit: '基',
+    quantity: 2,
+    calculation: '標準2基'
+  });
+
+  // === 左官・タイル工事 ===
+  materials.push({
+    category: '左官工事',
+    name: '玄関土間左官補修',
+    spec: '',
+    unit: '箇所',
+    quantity: 1,
+    calculation: '標準1箇所'
+  });
+
+  materials.push({
+    category: '左官工事',
+    name: '床左官補修',
+    spec: 'レベラー無し',
+    unit: '箇所',
+    quantity: 1,
+    calculation: '標準1箇所'
+  });
+
+  // === 大工工事（単価項目） ===
+  // 天井下地工事
+  materials.push({
+    category: '大工工事',
+    name: '天井下地',
+    spec: 'PB9.5mm',
+    unit: '㎡',
+    quantity: Math.ceil(ceilingArea),
+    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡`
+  });
+
+  // 壁下地工事
+  materials.push({
+    category: '大工工事',
+    name: '壁下地',
+    spec: 'PB12.5mm ※外周壁は既存下地',
+    unit: '㎡',
+    quantity: Math.ceil(wallArea * 0.3), // 間仕切壁部分のみ（約30%）
+    calculation: `間仕切壁部分 約${(wallArea * 0.3).toFixed(1)}㎡`
+  });
+
+  // 玄関上がり框取付
+  materials.push({
+    category: '大工工事',
+    name: '玄関上がり框取付',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  // 壁下地補強ベニヤ・合板貼り
+  materials.push({
+    category: '大工工事',
+    name: '壁下地補強ベニヤ・合板貼り',
+    spec: '',
+    unit: '㎡',
+    quantity: 10,
+    calculation: '標準10㎡'
+  });
+
+  // 窓枠交換
+  materials.push({
+    category: '大工工事',
+    name: '窓枠交換',
+    spec: '',
+    unit: '㎡',
+    quantity: 1,
+    calculation: '標準1㎡'
+  });
+
+  // === 設備工事 ===
+  materials.push({
+    category: '設備工事',
+    name: '給排水配管部分更新',
+    spec: '間仕切り残し同位置廻給排水',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: 'UB接続',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: '給湯器取付',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: 'トイレ取付',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: '洗面化粧台取付',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: '洗面所アクセサリー取付',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: '洗濯機パン取付',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: 'キッチンダクト配管工事',
+    spec: '銀フレキ',
+    unit: 'm',
+    quantity: 3,
+    calculation: '標準3m'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: 'トイレ・洗面・浴室ダクト配管工事',
+    spec: 'アルミフレキ',
+    unit: 'm',
+    quantity: 2,
+    calculation: '標準2m'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: '水回り用単室換気扇交換',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '設備工事',
+    name: 'エアコンスリーブキャップ取付',
+    spec: '',
+    unit: '箇所',
+    quantity: 3,
+    calculation: '標準3箇所'
+  });
+
+  // === ガス工事 ===
+  materials.push({
+    category: 'ガス工事',
+    name: '既存ガス管撤去',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: 'ガス工事',
+    name: '新規ガス管基本工事費',
+    spec: 'コック20A付',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: 'ガス工事',
+    name: 'ガス新規配管',
+    spec: '白ガス、フレキ対',
+    unit: 'm',
+    quantity: 3,
+    calculation: '標準3m'
+  });
+
+  materials.push({
+    category: 'ガス工事',
+    name: 'ガスコンロ繋ぎ',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: 'ガス工事',
+    name: '給湯器繋ぎ',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  // === 電気工事（追加項目） ===
+  materials.push({
+    category: '電気工事',
+    name: '電気部分新規配線',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: '分電盤交換',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: 'ダウンライト追加配線',
+    spec: '',
+    unit: '箇所',
+    quantity: 6,
+    calculation: '標準6箇所'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: '食洗機用専用回路追加',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: '浴室換気乾燥機専用回路追加',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: '人感センサー・DL連光器設置',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: 'モニターホン取付',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: '給湯器リモコン取付',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: 'レジスタ取付',
+    spec: '',
+    unit: '箇所',
+    quantity: 3,
+    calculation: '標準3箇所'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: '照明器具付け',
+    spec: '開梱姿図',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電気工事',
+    name: '火災報知器取付',
+    spec: '電池式',
+    unit: '個',
+    quantity: 4,
+    calculation: '標準4個'
+  });
+
+  // === 電材 ===
+  materials.push({
+    category: '電材',
+    name: '配線器具一式',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '電材',
+    name: 'TV端子',
+    spec: '',
+    unit: '個',
+    quantity: 4,
+    calculation: '標準4個'
+  });
+
+  materials.push({
+    category: '電材',
+    name: '人感スイッチ',
+    spec: 'コスモ WTK1811WK',
+    unit: '個',
+    quantity: 1,
+    calculation: '標準1個'
+  });
+
+  materials.push({
+    category: '電材',
+    name: '両切スイッチダウンライト 100W 電球色',
+    spec: 'OD261898',
+    unit: '台',
+    quantity: 20,
+    calculation: '標準20台'
+  });
+
+  materials.push({
+    category: '電材',
+    name: '調光器',
+    spec: 'OL291216R 2700K電球色 L600',
+    unit: '台',
+    quantity: 1,
+    calculation: '標準1台'
+  });
+
+  materials.push({
+    category: '電材',
+    name: 'テレビドアホン',
+    spec: 'Panasonic VL-SE30XL',
+    unit: '台',
+    quantity: 1,
+    calculation: '標準1台'
+  });
+
+  materials.push({
+    category: '電材',
+    name: '分電盤',
+    spec: 'テンパール MAG35122 住宅用分電盤(2ケ付、横三列タイプ、単3、12+2、50A)',
+    unit: '台',
+    quantity: 1,
+    calculation: '標準1台'
+  });
+
+  materials.push({
+    category: '電材',
+    name: '火災報知器（熱）',
+    spec: 'SHK48455K',
+    unit: '個',
+    quantity: 3,
+    calculation: '標準3個'
+  });
+
+  materials.push({
+    category: '電材',
+    name: '火災報知器（煙）',
+    spec: 'SHK48155K',
+    unit: '個',
+    quantity: 2,
+    calculation: '標準2個'
+  });
+
+  // === サッシ工事 ===
+  materials.push({
+    category: 'サッシ工事',
+    name: '網戸張替え',
+    spec: '',
+    unit: '枚',
+    quantity: 4,
+    calculation: '標準4枚'
+  });
+
+  // === 現場管理 ===
+  materials.push({
+    category: '現場管理',
+    name: '施工管理費（工程管理）',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
+  });
+
+  materials.push({
+    category: '現場管理',
+    name: '現場諸経費',
+    spec: '',
+    unit: '式',
+    quantity: 1,
+    calculation: '標準1式'
   });
 
   // ルームクリーニング

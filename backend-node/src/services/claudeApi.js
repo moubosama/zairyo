@@ -7,13 +7,55 @@ import path from 'path';
  * 図面解析用AIプロンプト
  * 5現場の実績データに基づいて最適化
  */
-const SYSTEM_PROMPT = `あなたは建築図面を解析する専門家です。アップロードされたリノベーション計画平面図から、資材計算に必要な情報をJSON形式で抽出してください。
+const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の建築士です。計画平面図から資材計算に必要な情報をJSON形式で抽出してください。
 
-【重要】リノベーション工事では既存躯体壁（外周のRC壁）にはボードを貼りません。新設する間仕切壁のみに下地材が必要です。
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【図面の線種ルール（実際の図面凡例に基づく）】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-【重要な解析ポイント】
+■ 躯体壁（外周壁・RC壁）= 間仕切壁に含めない！
+  - 濃紺または黒で塗りつぶされた太い壁
+  - 図面の最も外側（バルコニー側、窓側、玄関側）
+  - PS（パイプスペース）、MB（メーターボックス）も同様に塗りつぶし
+
+■ 間仕切壁（LGS壁）= これだけをpartition_wall_length_mに含める！
+  - 青色または水色の細い線で描かれた壁
+  - 室内を仕切る壁（部屋と部屋の間）
+  - 躯体壁より明らかに薄い
+
+■ 見分け方のポイント:
+  1. 濃紺/黒の塗りつぶし壁 → 躯体壁 → 含めない
+  2. 青/水色の細線壁 → 間仕切壁 → 含める
+  3. 外周の壁は全て躯体壁 → 含めない
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【間仕切壁延長の計算方法】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+計算対象（含める）:
+  - LDKと洋室を仕切る壁
+  - 洋室と洋室を仕切る壁
+  - 廊下と各部屋を仕切る壁
+  - 水回り（洗面室・トイレ・脱衣室）の壁
+  - クローゼット・収納の壁
+
+計算対象外（含めない）:
+  - 外周壁（バルコニー側、窓側、玄関側）
+  - PS（パイプスペース）周囲の躯体壁
+  - MB（メーターボックス）周囲の壁
+
+実績目安（重要！この範囲内であるべき）:
+  - 1LDK（40〜50㎡）: 12〜18m
+  - 2LDK（50〜65㎡）: 15〜25m
+  - 3LDK（65〜80㎡）: 20〜30m
+  ※ 30mを超える場合は躯体壁を含めている可能性が高い！
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【解析ポイント】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 1. 各部屋の面積（畳数・㎡）と寸法（mm単位）を正確に読み取る
-2. 間仕切壁の総延長（m）を計算する ← 重要！
+2. 間仕切壁の総延長（m）を計算 ← 最重要！躯体壁は絶対に含めない
 3. UBサイズ（1216、1317、1418等）を確認
 4. キッチンサイズ（I型2100、2550等）を確認
 5. 洗面台の幅（W750、W900等）を確認
@@ -24,11 +66,6 @@ const SYSTEM_PROMPT = `あなたは建築図面を解析する専門家です。
 - 1畳 = 約1.65㎡（中京間）
 - 畳数が記載されている場合はそのまま使用
 - 寸法のみの場合は面積を計算
-
-【壁延長の計算方法】
-- 間仕切壁延長 = 各間仕切壁の長さの合計（両面にボードを貼るため重要）
-- 外周壁（躯体壁）は含めない（リノベでは通常GL工法で片面のみ、または既存利用）
-- 一般的な2LDK（50㎡）では間仕切壁延長は15〜25m程度
 
 必ず以下のJSON形式のみを返してください（説明文は不要）：
 
@@ -293,8 +330,28 @@ export async function analyzeDrawing(filePath) {
     analyzeWithClaude(filePath, base64Data, mimeType)
   ]);
 
+  console.log('=== AI解析結果の比較 ===');
   console.log('Gemini result:', geminiResult ? 'OK' : 'Failed');
   console.log('Claude result:', claudeResult ? 'OK' : 'Failed');
+
+  // 各AIの詳細結果をログ出力
+  if (geminiResult) {
+    console.log('--- Gemini 詳細 ---');
+    console.log('  partition_wall_length_m:', geminiResult.partition_wall_length_m);
+    console.log('  total_floor_area_sqm:', geminiResult.total_floor_area_sqm);
+    console.log('  ceiling_height_mm:', geminiResult.ceiling_height_mm);
+    console.log('  openings数:', geminiResult.openings ? geminiResult.openings.length : 0);
+    console.log('  rooms数:', geminiResult.rooms ? geminiResult.rooms.length : 0);
+  }
+
+  if (claudeResult) {
+    console.log('--- Claude 詳細 ---');
+    console.log('  partition_wall_length_m:', claudeResult.partition_wall_length_m);
+    console.log('  total_floor_area_sqm:', claudeResult.total_floor_area_sqm);
+    console.log('  ceiling_height_mm:', claudeResult.ceiling_height_mm);
+    console.log('  openings数:', claudeResult.openings ? claudeResult.openings.length : 0);
+    console.log('  rooms数:', claudeResult.rooms ? claudeResult.rooms.length : 0);
+  }
 
   // 成功した結果を集める
   const results = [geminiResult, claudeResult].filter(r => r !== null);
@@ -306,7 +363,12 @@ export async function analyzeDrawing(filePath) {
 
   // 結果をマージ
   const merged = mergeResults(results);
-  console.log('Merged result - partition_wall_length_m:', merged.partition_wall_length_m);
+  console.log('--- マージ結果 ---');
+  console.log('  partition_wall_length_m:', merged.partition_wall_length_m);
+  console.log('  total_floor_area_sqm:', merged.total_floor_area_sqm);
+  console.log('  ceiling_height_mm:', merged.ceiling_height_mm);
+  console.log('  openings数:', merged.openings ? merged.openings.length : 0);
+  console.log('========================');
 
   return merged;
 }
