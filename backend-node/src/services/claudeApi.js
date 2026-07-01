@@ -159,11 +159,11 @@ async function analyzeWithClaude(filePath, base64Data, mimeType) {
   }
 
   try {
-    console.log('Calling Claude API with model: claude-opus-4-5-20251101');
+    console.log('Calling Claude API with model: claude-opus-4-8');
     const anthropic = new Anthropic({ apiKey: claudeKey });
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-5-20251101',
+      model: 'claude-opus-4-8',
       max_tokens: 4096,
       messages: [
         {
