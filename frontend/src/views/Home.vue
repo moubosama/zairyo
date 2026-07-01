@@ -11,7 +11,7 @@
       <input
         v-model="projectName"
         type="text"
-        placeholder="例: 朝日パリオ北千住305号室"
+        placeholder="例: ○○マンション101号室"
         class="w-full bg-dark-600 border border-dark-500 rounded-lg px-4 py-3 focus:border-gold focus:outline-none"
       />
     </div>
