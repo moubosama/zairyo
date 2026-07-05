@@ -7,3 +7,4 @@ dist/
 uploads/
 .claude/
 nul
+read-excel.js
