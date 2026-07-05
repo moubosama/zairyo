@@ -1,36 +1,533 @@
 /**
  * 資材計算サービス
- * 54ファイルの実績データに基づいて最適化された計算ロジック
+ * アルファスタイル新宮町67戸（A〜Gタイプ）+ けいとさんの5現場実績データに基づいて最適化
  *
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- * 【実績データサマリー（けいとさんの資料より）】
+ * 【アルファスタイル新宮町 住戸タイプ別実績（意匠図より抽出）】
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  *
- * | 項目 | 実績範囲 | 固定/変動 | 備考 |
- * |------|----------|-----------|------|
- * | PB 12.5mm | 8〜60枚 | 変動 | 壁面積による |
- * | PB 9.5mm | 8〜40枚 | 変動 | 天井面積による |
- * | Mクロス | 2〜7枚 | 変動 | 水回り面積による |
- * | 垂木 | 10〜30束 | 変動 | 間取りによる |
- * | ラワンベニヤ | 4〜19枚 | 変動 | 水回り+床下地 |
- * | 天井クロス | 52〜75㎡ | 変動 | 天井面積 |
- * | 壁クロス | 187〜270㎡ | 変動 | 壁面積 |
- * | 巾木 | 10〜40m | 変動 | 壁延長−開口部 |
- * | フローリング | 50〜70㎡ | 変動 | 居室床面積 |
+ * | タイプ | 専有面積 | 内法面積 | 間取り | UBサイズ | 戸数 | LDK面積 |
+ * |--------|----------|----------|--------|----------|------|---------|
+ * | A | 71.90㎡ | 68.00㎡ | 3LDK | 1416 | 10戸 | 18.82㎡ |
+ * | B | 67.30㎡ | 64.80㎡ | 3LDK | 1416 | 10戸 | - |
+ * | C | 67.30㎡ | 64.80㎡ | 3LDK | 1416 | 10戸 | - |
+ * | D | 67.30㎡ | 64.80㎡ | 3LDK | 1416 | 10戸 | - |
+ * | E | 67.31㎡ | 64.80㎡ | 3LDK | 1416 | 9戸 | 18.90㎡ |
+ * | F | 50.74㎡ | - | 2LDK | 1216 | 9戸 | - |
+ * | G | 67.30㎡ | 64.80㎡ | 3LDK | 1416 | 9戸 | - |
+ * ※ 意匠図①より確認: UBサイズはFタイプのみ1216、他は全て1416
  *
- * 物件別実績:
+ * 【建具表（木製建具）より】
+ * - 片開き戸: WD-1TA(850×2175)〜WD-6C(450×2080)
+ * - 片引き戸: WD-8A(660×2075)〜WD-8TB(760×2170)
+ * - 引違い戸: WD-102C(1825×2075)
+ * - 2枚引込み: WD-01(2270×2170)
+ * - 2枚折戸: WD-12AL(605×2005)〜WD-120E(983×2320)
+ * - 6枚折戸: WD-160B(2091×2320)
+ *
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * 【アルファスタイル新宮町 Gタイプ(67戸) 1戸あたり実績】
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ *
+ * ■ 石膏ボード
+ * | 項目 | 総数量(67戸) | 1戸あたり | 算出根拠 |
+ * |------|-------------|-----------|----------|
+ * | 壁PB t-9.5 | 6,010枚 | 約90枚 | 壁面積122㎡÷1.4㎡=87枚 |
+ * | 天井PB t-9.5 | 2,810枚 | 約42枚 | 天井面積59㎡÷1.4㎡=42枚 |
+ * | 下り天井PB | 260枚 | 約4枚 | 下り天井5.2㎡ |
+ * | 耐水PB t-9.5 | 280枚 | 約4枚 | 水回り6.5㎡ |
+ * | EV廻り壁PB | 150枚 | 約2枚 | EV面9㎡ |
+ * | キッチンパネル | 170枚 | 約3枚 | 3'×8' |
+ *
+ * ■ 木工事
+ * | 項目 | 1戸あたり | 算出根拠 |
+ * |------|-----------|----------|
+ * | 際根太 45×30 | 18.2m | 床周囲 |
+ * | 間仕切下地 45×30 | 84m | @450ピッチ |
+ * | 天井下地 LVL 30×40 | 天井面積分 | 38.5m3(67戸) |
+ * | 吊戸下地 30×40 | 9本 | |
+ *
+ * ■ 仕上げ
+ * | 項目 | 1戸あたり | 算出根拠 |
+ * |------|-----------|----------|
+ * | 床フローリング直貼り | 48.4㎡ | 居室床面積 |
+ * | 巾木 H=40 | 56.4m | 壁延長−開口部 |
+ * | 玄関廻り巾木（樹脂） | 3.75m | |
+ * | 巾木出隅コーナー | 10個 | |
+ * | グラスウール | 6.4㎡ | 間仕切部 |
+ * | 下地補強合板 t-9.0 | 5.6㎡ | カーテンレール等 |
+ *
+ * ■ 建具（67戸分）
+ * | 建具タイプ | 数量 | サイズ |
+ * |------------|------|--------|
+ * | 片開き戸 | 約6枚/戸 | 600〜850×2080〜2175 |
+ * | 片引き戸 | 約2枚/戸 | 660〜760×2075 |
+ * | 2枚折戸 | 約3枚/戸 | 605〜983×2080〜2320 |
+ * | 6枚折戸 | 約0.4枚/戸 | 2091×2320 |
+ *
+ * ■ 床工事
+ * | 項目 | 1戸あたり | 算出根拠 |
+ * |------|-----------|----------|
+ * | 床下地合板 t-9.0 | 4.8㎡ | 水回り |
+ * | 乾式置床 H200 | 3.9㎡ | パウダールーム・トイレ |
+ *
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * 【旧実績データサマリー（けいとさんの資料より・リノベ用）】
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * - 朝日パリオ305 (2LDK, 620万): PB12.5=40枚, PB9.5=30枚, Mクロス=7枚, 垂木=25束
  * - 別物件ミドル (2LDK, 665万): PB12.5=50枚, PB9.5=35枚, Mクロス=7枚, 垂木=25束
  * - 寿401 HG (2LDK, 735万): PB9.5=30枚, Mクロス=7枚, 垂木=20束
  * - 3LDK 70㎡ (535万): PB12.5=35枚, PB9.5=30枚, Mクロス=7枚, 垂木=20束
- * - 目白テラスドハウス3A (722万): 天井CL=75㎡, 壁CL=270㎡, 巾木=15m
- * - 大型物件: PB12.5=60枚, PB9.5=40枚, 垂木=30束
  */
 
-const PB_SHEET_SIZE = 1.6562; // ㎡ (910mm × 1820mm = 3×6)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 【計算用定数】
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const PB_SHEET_SIZE_3x6 = 1.6562; // ㎡ (910mm × 1820mm = 3×6)
+const PB_SHEET_SIZE_3x8 = 2.208; // ㎡ (910mm × 2420mm = 3×8)
 const DOOR_OPENING_AREA = 0.8 * 2.0; // 1.6㎡
 const WINDOW_OPENING_AREA = 1.5 * 1.2; // 1.8㎡
 const TARUKI_PER_BUNDLE = 12; // 垂木1束=12本
+
+// 面積推定係数（床面積からの推定用）
+const CEILING_AREA_RATIO = 0.9;           // 天井面積 = 床面積 × 0.9
+const PARTITION_WALL_RATIO = 0.4;         // 間仕切壁延長 = 床面積 × 0.4 (目安)
+const PARTITION_WALL_MAX_RATIO = 0.45;    // 間仕切壁延長の最大係数
+const PARTITION_WALL_MIN_RATIO = 0.25;    // 間仕切壁延長の最小係数
+
+// ロス率・補正係数
+const LOSS_RATE_5 = 1.05;                 // +5% ロス（PB等）
+const LOSS_RATE_10 = 1.1;                 // +10% ロス（フローリング等）
+const LOSS_RATE_20 = 1.2;                 // +20% ロス（耐水PB等）
+const WALL_PB_REDUCTION = 0.6;            // 壁PBの両面係数削減（リノベ=片面のみ）
+const GLASSWOOL_COVERAGE = 0.5;           // グラスウール充填率（間仕切壁の半分）
+
+// 建具関連係数
+const DOOR_WIDTH_DEFAULT = 0.8;           // ドア幅デフォルト (m)
+const DOOR_OPEN_RATIO = 0.5;              // 開き戸比率
+const DOOR_SLIDE_RATIO = 0.2;             // 引き戸比率
+const DOOR_FOLD_RATIO = 0.3;              // 折戸比率
+
+// 沓摺係数
+const KUTSUZURI_DOOR_LENGTH = 0.7;        // 開き戸沓摺長さ係数
+const KUTSUZURI_SLIDE_LENGTH = 1.5;       // 引き戸沓摺長さ係数
+const KUTSUZURI_CLOSET_LENGTH = 0.8;      // 折戸沓摺長さ係数
+
+// 下地関連係数
+const KIWANETA_RATIO = 0.28;              // 際根太 = 床面積 × 0.28 (m)
+const AIRCON_PER_ROOM = 0.5;              // エアコン下地 = 部屋数 × 0.5
+
+// 壁下地係数
+const PARTITION_WALL_RATIO_30 = 0.3;      // 間仕切壁部分（壁面積の約30%）
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 【仮単価マスター】※実際の単価は信頼関係構築後に更新予定
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const UNIT_PRICES = {
+  // === 解体工事 ===
+  '解体工事 表層 設備・建具': 150000,
+  '解体工事 表層 フローリング・カーペット': 80000,
+  '解体廃材処分 表層 設備・建具': 120000,
+  '解体廃材処分 表層 フローリング・カーペット': 60000,
+
+  // === 仮設工事 ===
+  '養生費': 15000,
+
+  // === 左官工事 ===
+  '玄関土間左官補修': 25000,
+  '床左官補修': 20000,
+
+  // === 下地材 ===
+  '石膏ボード t-9.5 3×6': 450,        // 枚
+  '耐水石膏ボード t-9.5 3×6': 550,    // 枚
+  'キッチンパネル': 8500,              // 枚
+  'キッチンパネル見切り': 1200,        // 箇所
+  'グラスウール充填': 1800,            // ㎡
+  '下地補強合板': 850,                 // 枚
+  'エアコン下地補強合板': 850,         // 枚
+  '壁出隅面木': 450,                   // 箇所
+  '垂木 LVL 30×40 L3000': 3500,       // 束
+  '際根太': 350,                       // m
+  '吊戸下地': 280,                     // 本
+  '間仕切下地(木)': 380,               // m
+  '遮音壁PB張り': 2800,                // ㎡
+  'ラワンベニヤ 9mm 3×6': 1200,       // 枚
+  'ラワンランバー 24mm 3×8': 2800,    // 枚
+  '床下地合板': 3200,                  // ㎡
+
+  // === 床材 ===
+  'フローリング': 6500,                // ㎡
+  '床見切り': 1500,                    // 本
+  '水回りフロアタイル貼り': 45000,     // 式
+  'クッションフロア貼り': 35000,       // 式
+  '玄関土間フロアタイル貼り': 25000,   // 式
+  '乾式置床': 6900,                    // ㎡
+
+  // === 造作材 ===
+  '木製巾木': 850,                     // m
+  '木製巾木出隅役物': 350,             // 箇所
+  '樹脂巾木': 650,                     // m
+  '玄関見切縁': 480,                   // m
+  '玄関廻り壁面木': 550,               // m
+  '天井点検口': 4500,                  // 箇所
+  'PS点検口': 4500,                    // 箇所
+  'カーテンボックス': 8500,            // 箇所
+  '額縁': 3500,                        // 箇所
+  'UB三方枠': 12000,                   // 箇所
+  'AW掃出し下見切り': 1800,            // m
+  'タイル見切縁': 650,                 // m
+  '枕棚取付': 8500,                    // 箇所
+  'ハンガーパイプ取付': 3500,          // 箇所
+  'LD開戸沓摺': 2500,                  // m
+  '開戸沓摺': 1800,                    // m
+  '引戸沓摺': 2200,                    // m
+  'クローゼット沓摺': 1500,            // m
+
+  // === 仕上材 ===
+  '天井クロス貼り': 1200,              // ㎡
+  '壁クロス貼り': 1200,                // ㎡
+  'アクセントクロス貼り': 1800,        // ㎡
+  'クロス新規下地処理': 18000,         // 人工
+  'ダイノックシート貼り': 8500,        // m
+
+  // === 建具 ===
+  '片開き戸': 35000,                   // 枚
+  '片引き戸': 42000,                   // 枚
+  '2枚折戸': 28000,                    // 枚
+  '下駄箱': 85000,                     // 台
+
+  // === 家具 ===
+  'リネン庫': 45000,                   // 台
+  'トイレ吊戸棚': 32000,               // 台
+  'キッチンカウンター': 55000,         // 箇所
+  '固定棚': 12000,                     // 箇所
+  '可動棚': 18000,                     // 箇所
+
+  // === 設備 ===
+  'ユニットバス': 450000,              // 台
+  'システムキッチン本体': 380000,      // 台
+  '洗面化粧台': 120000,                // 台
+  '洗面タオルレール': 3500,            // 個
+  '洗濯パン': 8500,                    // 台
+  '洗濯機横引きトラップ': 4500,        // 個
+  '洗濯機用水栓': 6500,                // 個
+  'ランドリー収納': 25000,             // 個
+  'トイレ本体': 85000,                 // 台
+  'トイレペーパーホルダー': 3500,      // 個
+  'トイレタオルレール': 3500,          // 個
+  '給湯器': 180000,                    // 台
+  'マルチリモコン': 15000,             // 個
+  '床暖房': 45000,                     // ㎡
+  '室内窓': 85000,                     // 箇所
+
+  // === 内装材 ===
+  'カーテンレール設置': 3500,          // 箇所
+  'カーテンレール': 4500,              // 本
+  'レジスター': 2500,                  // 個
+  'スリーブキャップ': 850,             // 個
+
+  // === 電気工事 ===
+  'ダウンライト': 3500,                // 台
+  'シーリングライト': 12000,           // 台
+  '照明器具取付': 35000,               // 式
+  'スイッチ・コンセント工事': 85000,   // 式
+  '単室換気扇': 18000,                 // 台
+  '電気部分新規配線': 65000,           // 式
+  '分電盤交換': 45000,                 // 式
+  'ダウンライト追加配線': 4500,        // 箇所
+  '食洗機用専用回路追加': 25000,       // 式
+  '浴室換気乾燥機専用回路追加': 25000, // 式
+  '人感センサー・DL連光器設置': 18000, // 式
+  'モニターホン取付': 8500,            // 式
+  '給湯器リモコン取付': 5500,          // 式
+  'レジスタ取付': 2500,                // 箇所
+  '照明器具付け': 25000,               // 式
+  '火災報知器取付': 2500,              // 個
+
+  // === 電材 ===
+  '配線器具一式': 65000,               // 式
+  'TV端子': 3500,                      // 個
+  '人感スイッチ': 4500,                // 個
+  '両切スイッチダウンライト 100W 電球色': 3200, // 台
+  '調光器': 8500,                      // 台
+  'テレビドアホン': 25000,             // 台
+  '分電盤': 35000,                     // 台
+  '火災報知器（熱）': 3500,            // 個
+  '火災報知器（煙）': 3500,            // 個
+
+  // === 設備工事 ===
+  '給排水配管部分更新': 180000,        // 式
+  'UB接続': 45000,                     // 式
+  '給湯器取付': 35000,                 // 式
+  'トイレ取付': 25000,                 // 式
+  '洗面化粧台取付': 18000,             // 式
+  '洗面所アクセサリー取付': 8500,      // 式
+  '洗濯機パン取付': 12000,             // 式
+  'キッチンダクト配管工事': 5500,      // m
+  'トイレ・洗面・浴室ダクト配管工事': 4500, // m
+  '水回り用単室換気扇交換': 25000,     // 式
+  'エアコンスリーブキャップ取付': 2500, // 箇所
+
+  // === ガス工事 ===
+  '既存ガス管撤去': 25000,             // 式
+  '新規ガス管基本工事費': 45000,       // 式
+  'ガス新規配管': 8500,                // m
+  'ガスコンロ繋ぎ': 15000,             // 式
+  '給湯器繋ぎ': 18000,                 // 式
+
+  // === サッシ工事 ===
+  '網戸張替え': 4500,                  // 枚
+
+  // === 大工工事 ===
+  '天井下地': 2800,                    // ㎡
+  '壁下地': 3200,                      // ㎡
+  '玄関上がり框取付': 25000,           // 式
+  '壁下地補強ベニヤ・合板貼り': 3500,  // ㎡
+  '窓枠交換': 15000,                   // ㎡
+
+  // === 現場管理 ===
+  '施工管理費（工程管理）': 180000,    // 式
+  '現場諸経費': 85000,                 // 式
+
+  // === 諸経費 ===
+  'ルームクリーニング': 45000,         // 式
+  '検査費': 25000,                     // 式
+};
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 【アルファステイツ新宮町 67戸実績 → 1戸あたり】
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const ALPHA_STATS = {
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 【木工事シートより - 木材（m³単位）】
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  timber_kiwaneta: 1.8,         // 際根太 LVL 30×45 (m³) → 0.027m³/戸
+  timber_majikiri: 77.3,        // 間仕切木軸 LVL 30×45 (m³) → 1.15m³/戸
+  timber_dobuchi: 3.6,          // 木胴縁（一部界壁面）LVL 30×45 (m³) → 0.054m³/戸
+  timber_ceiling: 38.5,         // 天井下地 LVL 30×40 (m³) → 0.57m³/戸
+
+  // 石膏ボード（67戸分）
+  wall_pb_95: 6010,          // 壁PB t-9.5 (3'×6')
+  wall_pb_95_water: 280,     // 壁耐水PB t-9.5 (3'×6')
+  wall_pb_boundary: 200,     // 一部界壁PB t-9.5 (キッチンパネル下のみ)
+  wall_pb_boundary_water: 50,// 一部界壁耐水PB t-9.5 (キッチンパネル下のみ)
+  wall_pb_ev: 150,           // EV廻り壁PB t-9.5
+  wall_pb_closet: 340,       // クローゼット・WIC・CLRC面 PB t-9.5 (コンパネ→PBに変更 250121)
+  ceiling_pb_95: 2810,       // 天井PB t-9.5 (3'×6')
+  ceiling_pb_drop: 260,      // 下り天井PB t-9.5
+  kitchen_panel: 170,        // キッチンパネル 3'×8' (アイカセラール→キョーライトアーバンSマリアパール変更)
+  kitchen_panel_joiner: 134, // キッチンパネル見切り H=2250 (樹脂製ABSジョイナー)
+
+  // グラスウール・断熱
+  glasswool_partition: 451,  // 間仕切グラスウール t-50 24kg/m³
+  glasswool_ev: 140,         // EV廻り壁グラスウール t-50 (VE数量変更220→140)
+
+  // 下地補強合板
+  reinforce_board: 390,      // カーテンレール・手摺・タオル掛下地 t-9.0 (3'×6')
+  aircon_board: 20,          // エアコン下地補強合板 t-9.0
+
+  // 面木・コーナー
+  corner_general: 420,       // 壁出隅面木（一般）R型コーナーパット
+  corner_small_1000: 67,     // 壁出隅面木（小口）H=1000
+  corner_small_2200: 91,     // 壁出隅面木（小口）H=2200
+  corner_small_2300: 5,      // 壁出隅面木（小口）H=2300
+
+  // 巾木
+  wood_habaki: 3615,         // 木製巾木 H=40
+  habaki_corner: 672,        // 木製巾木出隅役物
+  resin_habaki: 242,         // 樹脂巾木（玄関用）H=60
+
+  // 玄関
+  entrance_trim: 319,        // 玄関SD見切縁
+  entrance_corner: 319,      // 玄関廻り壁面木
+
+  // 点検口
+  ceiling_hatch: 67,         // 天井点検口 450角
+
+  // カーテンボックス（タイプ別あり）
+  curtain_box_count: 67,     // カーテンボックス 各タイプ合計
+
+  // 額縁（合計）
+  frame_3way_total: 123,     // 三方額縁 合計
+  frame_4way_total: 164,     // 四方額縁 合計
+  ub_frame: 67,              // UB三方枠
+
+  // 建具枠
+  door_single: 375,          // 片開き戸枠 合計(WD-1TA〜WD-6C)
+  door_slide: 95,            // 片引き戸枠 合計(WD-8A〜WD-8TB)
+  door_double_slide: 9,      // 引違い戸枠(WD-102C)
+  door_4slide: 10,           // 2枚引込み×2枠(WD-01)
+  door_fold_2: 125,          // 2枚折戸 合計(WD-12AL〜WD-120E)
+  door_fold_6: 29,           // 6枚折戸(WD-160B)
+
+  // 沓摺
+  kutsuzuri_ld: 57,          // LD開戸沓摺 バリアフリー床見切
+  kutsuzuri_door: 225,       // 開戸沓摺
+  kutsuzuri_slide: 199,      // 引戸沓摺
+  kutsuzuri_closet: 163,     // クローゼット沓摺
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 木下地詳細（集計表シートより・Gタイプ9戸+造作構造材1戸=10戸分）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  kiwaneta_45x30: 163.8,     // 際根太 45×30 (m) → 18.2m/戸
+  shikidodai_85x45: 18,      // 敷土台 85×45 (本) → 2本/戸
+  shikidodai_49x36: 36,      // 敷土台 49×36 (本) → 4本/戸
+  tsurito_shita_30x40: 81,   // 吊戸下地 30×40 (本) → 9本/戸
+  linen_sangi_150x30: 9,     // リネン庫桟木 150×30 (本) → 1本/戸
+  aw_hakidashi_mikiri: 21.6, // AW掃出し下見切り カイダーベースボード (m) → 2.4m/戸
+  genkan_mawari_habaki: 33.75, // 玄関廻り巾木 樹脂H=35 (m) → 3.75m/戸
+  habaki_h40: 507.96,        // 巾木 H=40 (m) → 56.44m/戸
+  habaki_desumi: 90,         // 巾木出隅コーナー (個) → 10個/戸
+  ev_glasswool: 80.955,      // EV面グラスウール+PBt9.5+木胴縁 (㎡) → 8.995㎡/戸
+  sanitary_hikiki: 20.17,    // サニタリー片引き部 (㎡) → 2.24㎡/戸
+  floor_direct: 435.74,      // 床上直貼りフローリングt=13 (㎡) → 48.4㎡/戸
+
+  // 間仕切下地・壁ボード詳細（集計表シートより）
+  majikiri_shitaji: 756.74,  // 間仕切下地(木) 45×30 @450 (m) → 84m/戸
+  shaon_wall: 116.81,        // 遮音壁PB張り t9.5+GW (㎡) → 13㎡/戸
+  wall_pb_detail: 1098.55,   // 壁PB t-9.5 (㎡) → 122㎡/戸
+  wall_pb_water_detail: 58.08, // 壁耐水PB t-9.5 (㎡) → 6.5㎡/戸
+  wall_funen: 35.33,         // 壁不燃材 t-6.0 (㎡) → 3.9㎡/戸
+  hikiki_sodekabe: 28.45,    // 片引き袖壁 (㎡) → 3.2㎡/戸
+  majikiri_glasswool: 107.32, // 間仕切グラスウール t50 24kg (㎡) → 12㎡/戸
+  closet_rc_wall: 67.59,     // クローゼット内RC面 木胴縁+コンパネ (㎡) → 7.5㎡/戸
+
+  // 天井詳細
+  powder_toilet_ceiling: 36, // パウダールーム・トイレ天井ボード (㎡) → 4㎡/戸
+  ceiling_drop: 47.1,        // 天井(下り) (㎡) → 5.2㎡/戸
+  ceiling_pb_detail: 531.79, // 天井PB t-9.5 (㎡) → 59㎡/戸
+
+  // 出隅・その他造作
+  board_desumi: 198.18,      // ボード出隅 フクビ (㎡) → 22㎡/戸
+  kaibe_wall: 45.42,         // 界壁面 PBt9.5+木胴縁 (㎡) → 5㎡/戸
+  ps_tenkenkou: 18,          // PS点検口 (箇所) → 2箇所/戸
+  mengi: 99,                 // 面木 (箇所) → 11箇所/戸
+  mengi_general: 63,         // 面木(一般) 4R型コーナーパット (箇所) → 7箇所/戸
+  tile_mikiri: 18,           // タイル見切縁 塩ビ見切り (m) → 2m/戸
+
+  // 下地補強詳細
+  shitaji_hokyou_gesoku: 50.36, // 下地補強 下足入・洗面・吊戸 (㎡) → 5.6㎡/戸
+  shitaji_hokyou_gouhan: 22.68, // 下地補強 合板 (㎡) → 2.5㎡/戸
+  aircon_shitaji: 3.51,      // エアコン下地 (㎡) → 0.4㎡/戸
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 内装工事シート
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  floor_base_board: 323,     // 床下地合板 T9.0 (㎡) ※パウダールーム・トイレ
+  floor_okiyuka: 251,        // 乾式置床 H200 (㎡) ※パウダールーム・トイレ
+  floor_leveling_base: 220,  // 床シート下レベリング上 下地合板 (㎡)
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 木製建具工事シート（詳細）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 片開き戸詳細
+  door_wd1ta: 67,            // WD-1TA 片開き戸 850×2175
+  door_wd2a: 57,             // WD-2A 片開き戸 800×2080
+  door_wd2ta: 116,           // WD-2TA 片開き戸 800×2175
+  door_wd3tb: 67,            // WD-3TB 片開き戸 700×2175
+  door_wd6a: 19,             // WD-6A 片開き戸 600×2080
+  door_wd6ta: 30,            // WD-6TA 片開き戸 600×2175
+  door_wd6tba: 9,            // WD-6TBA 片開き戸 600×2210
+  door_wd6c: 10,             // WD-6C 片開き戸 450×2080
+  // 片引き戸詳細
+  door_wd8a: 28,             // WD-8A 片引き戸 660×2075
+  door_wd8b: 48,             // WD-8B 片引き戸 760×2075
+  door_wd8tb: 19,            // WD-8TB 片引き戸 760×2170
+  // 引違い・引込み戸
+  door_wd102c: 9,            // WD-102C 引違い戸 1825×2075
+  door_wd01: 10,             // WD-01 2枚引込み×2 (1135+1135)×2170
+  // 2枚折戸詳細
+  door_wd12al: 9,            // WD-12AL 2枚折戸 605×2005
+  door_wd12c: 9,             // WD-12C 2枚折戸 803×2080
+  door_wd12e: 9,             // WD-12E 2枚折戸 983×2080
+  door_wd120a: 48,           // WD-120A 2枚折戸 605×2320
+  door_wd120b: 10,           // WD-120B 2枚折戸 701×2320
+  door_wd120c: 20,           // WD-120C 2枚折戸 803×2320
+  door_wd120d: 9,            // WD-120D 2枚折戸 905×2320
+  door_wd120e: 20,           // WD-120E 2枚折戸 983×2320
+  // 6枚折戸
+  door_wd160b: 29,           // WD-160B 6枚折戸 2091×2320
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 家具工事シート
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 下足箱
+  shoe_box: 58,              // 下足箱取付 W1200×D410×H1900
+  // リネン庫
+  linen_closet: 67,          // リネン庫 W320×D310×H2200
+  // トイレ吊戸棚
+  toilet_cabinet_885: 39,    // 吊戸棚 W885×D310×H702 (A,C,D,G)
+  toilet_cabinet_935: 19,    // 吊戸棚 W935×D310×H702 (B,E)
+  toilet_cabinet_950: 9,     // 吊戸棚 W950×D310×H702 (F)
+  // キッチンカウンター
+  kitchen_counter: 67,       // キッチンカウンター（各タイプ）
+  // 固定棚
+  fixed_shelf_cl: 67,        // クローゼット固定棚（各タイプ）
+  fixed_shelf_wic: 29,       // WIC固定棚（B,C,E,G）
+  // 可動棚
+  movable_shelf_ld: 67,      // LD収納可動棚
+  movable_shelf_pantry: 10,  // パントリー可動棚(Aタイプのみ)
+  movable_shelf_sic: 18,     // SIC可動棚(Fタイプ 9×2)
+
+  // 工事面積
+  total_area: 4406,          // 延床面積(㎡) 67戸分 → 1戸≒65.8㎡
+
+  units: 67                  // 戸数
+};
+
+// 1戸あたりの標準数量を計算
+const PER_UNIT = {
+  // 木材（m³）
+  timber_kiwaneta: Math.round(ALPHA_STATS.timber_kiwaneta / ALPHA_STATS.units * 1000) / 1000,  // 0.027m³/戸
+  timber_majikiri: Math.round(ALPHA_STATS.timber_majikiri / ALPHA_STATS.units * 100) / 100,   // 1.15m³/戸
+  timber_dobuchi: Math.round(ALPHA_STATS.timber_dobuchi / ALPHA_STATS.units * 1000) / 1000,   // 0.054m³/戸
+  timber_ceiling: Math.round(ALPHA_STATS.timber_ceiling / ALPHA_STATS.units * 100) / 100,    // 0.57m³/戸
+
+  // 石膏ボード
+  wall_pb_95: Math.ceil(ALPHA_STATS.wall_pb_95 / ALPHA_STATS.units),         // 約90枚
+  wall_pb_95_water: Math.ceil(ALPHA_STATS.wall_pb_95_water / ALPHA_STATS.units), // 約4枚
+  wall_pb_closet: Math.ceil(ALPHA_STATS.wall_pb_closet / ALPHA_STATS.units), // 約5枚 (MC/WIC/CLRC)
+  ceiling_pb_95: Math.ceil(ALPHA_STATS.ceiling_pb_95 / ALPHA_STATS.units),   // 約42枚
+  ceiling_pb_drop: Math.ceil(ALPHA_STATS.ceiling_pb_drop / ALPHA_STATS.units), // 約4枚
+  kitchen_panel: Math.ceil(ALPHA_STATS.kitchen_panel / ALPHA_STATS.units),   // 約3枚
+  kitchen_panel_joiner: Math.ceil(ALPHA_STATS.kitchen_panel_joiner / ALPHA_STATS.units), // 約2箇所
+  glasswool: Math.ceil(ALPHA_STATS.glasswool_partition / ALPHA_STATS.units), // 約7㎡
+  glasswool_ev: Math.round(ALPHA_STATS.glasswool_ev / ALPHA_STATS.units * 10) / 10, // 約2.1㎡
+  reinforce_board: Math.ceil(ALPHA_STATS.reinforce_board / ALPHA_STATS.units), // 約6枚
+  aircon_board: Math.round(ALPHA_STATS.aircon_board / ALPHA_STATS.units * 10) / 10, // 約0.3枚
+  wood_habaki: Math.ceil(ALPHA_STATS.wood_habaki / ALPHA_STATS.units),       // 約54m
+  habaki_corner: Math.ceil(ALPHA_STATS.habaki_corner / ALPHA_STATS.units),   // 約10個
+  corner_general: Math.ceil(ALPHA_STATS.corner_general / ALPHA_STATS.units), // 約6個
+  frame_3way: Math.ceil(ALPHA_STATS.frame_3way_total / ALPHA_STATS.units),   // 約2個
+  frame_4way: Math.ceil(ALPHA_STATS.frame_4way_total / ALPHA_STATS.units),   // 約2個
+  door_total: Math.ceil((ALPHA_STATS.door_single + ALPHA_STATS.door_slide + ALPHA_STATS.door_double_slide +
+                         ALPHA_STATS.door_4slide + ALPHA_STATS.door_fold_2 + ALPHA_STATS.door_fold_6) / ALPHA_STATS.units), // 約10枚
+  floor_area: Math.round(ALPHA_STATS.total_area / ALPHA_STATS.units * 10) / 10, // 約65.8㎡
+
+  // 内装工事
+  floor_base_board: Math.round(ALPHA_STATS.floor_base_board / ALPHA_STATS.units * 10) / 10, // 約4.8㎡
+  floor_okiyuka: Math.round(ALPHA_STATS.floor_okiyuka / ALPHA_STATS.units * 10) / 10,       // 約3.7㎡
+  floor_leveling_base: Math.round(ALPHA_STATS.floor_leveling_base / ALPHA_STATS.units * 10) / 10, // 約3.3㎡
+
+  // 建具詳細
+  door_single_total: Math.ceil((ALPHA_STATS.door_wd1ta + ALPHA_STATS.door_wd2a + ALPHA_STATS.door_wd2ta +
+                                ALPHA_STATS.door_wd3tb + ALPHA_STATS.door_wd6a + ALPHA_STATS.door_wd6ta +
+                                ALPHA_STATS.door_wd6tba + ALPHA_STATS.door_wd6c) / ALPHA_STATS.units), // 約6枚
+  door_slide_total: Math.ceil((ALPHA_STATS.door_wd8a + ALPHA_STATS.door_wd8b + ALPHA_STATS.door_wd8tb) / ALPHA_STATS.units), // 約1.4枚
+  door_fold_total: Math.ceil((ALPHA_STATS.door_wd12al + ALPHA_STATS.door_wd12c + ALPHA_STATS.door_wd12e +
+                              ALPHA_STATS.door_wd120a + ALPHA_STATS.door_wd120b + ALPHA_STATS.door_wd120c +
+                              ALPHA_STATS.door_wd120d + ALPHA_STATS.door_wd120e + ALPHA_STATS.door_wd160b) / ALPHA_STATS.units), // 約2.5枚
+
+  // 家具
+  shoe_box: Math.ceil(ALPHA_STATS.shoe_box / ALPHA_STATS.units),             // 約1台
+  linen_closet: Math.ceil(ALPHA_STATS.linen_closet / ALPHA_STATS.units),     // 約1台
+  toilet_cabinet: Math.ceil((ALPHA_STATS.toilet_cabinet_885 + ALPHA_STATS.toilet_cabinet_935 +
+                             ALPHA_STATS.toilet_cabinet_950) / ALPHA_STATS.units), // 約1台
+  kitchen_counter: Math.ceil(ALPHA_STATS.kitchen_counter / ALPHA_STATS.units), // 約1台
+  fixed_shelf: Math.ceil((ALPHA_STATS.fixed_shelf_cl + ALPHA_STATS.fixed_shelf_wic) / ALPHA_STATS.units), // 約1.4箇所
+  movable_shelf: Math.ceil((ALPHA_STATS.movable_shelf_ld + ALPHA_STATS.movable_shelf_pantry +
+                            ALPHA_STATS.movable_shelf_sic) / ALPHA_STATS.units) // 約1.4箇所
+};
 
 export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // aiReadingがnull/undefined/空の場合のガード
@@ -104,7 +601,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   let ceilingArea = totalFloorArea - ubArea - closetArea;
   // 天井面積が0以下の場合、床面積の90%として推定（最低50㎡）
   if (ceilingArea <= 0) {
-    ceilingArea = totalFloorArea > 0 ? totalFloorArea * 0.9 : 50;
+    ceilingArea = totalFloorArea > 0 ? totalFloorArea * CEILING_AREA_RATIO : 50;
   }
 
   // 壁延長の計算
@@ -114,16 +611,14 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // AIから壁延長が取得できない場合、床面積から推定
   // 実績データ: 2LDK(50㎡)=約20m, 3LDK(70㎡)=約30m
   if (partitionWallLength === 0) {
-    partitionWallLength = totalFloorArea * 0.4; // 床面積の0.4倍が目安
+    partitionWallLength = totalFloorArea * PARTITION_WALL_RATIO;
   }
 
   // 間仕切壁延長の妥当性チェック
   // AIが躯体壁（外周壁）を含めて計算している場合、値が大きすぎる
   // 実績: 2LDK(50㎡)=15-25m, 3LDK(70㎡)=20-30m
-  // 上限: 床面積の0.45倍 (70㎡なら31.5m)
-  // 下限: 床面積の0.25倍 (50㎡なら12.5m)
-  const maxPartitionWallLength = totalFloorArea * 0.45;
-  const minPartitionWallLength = totalFloorArea * 0.25;
+  const maxPartitionWallLength = totalFloorArea * PARTITION_WALL_MAX_RATIO;
+  const minPartitionWallLength = totalFloorArea * PARTITION_WALL_MIN_RATIO;
 
   if (partitionWallLength > maxPartitionWallLength && totalFloorArea > 0) {
     console.log(`間仕切壁延長を補正: ${partitionWallLength}m → ${maxPartitionWallLength}m (AIが躯体壁を含めた可能性)`);
@@ -167,7 +662,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     } else {
       doorCount = Math.max(rooms.length + 2, 5);
     }
-    totalOpeningWidth = doorCount * 0.8;
+    totalOpeningWidth = doorCount * DOOR_WIDTH_DEFAULT;
   }
 
   const openingArea = doorCount * DOOR_OPENING_AREA + windowCount * WINDOW_OPENING_AREA;
@@ -199,66 +694,147 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   }
 
   // --- 資材計算 ---
+  // アルファステイツ新宮町67戸実績に基づく
 
-  // PB 12.5mm (壁用) - ロス率+5%
-  // 54ファイル実績: 8〜60枚（壁面積による）
-  // - 小型物件: 8〜15枚
-  // - 2LDK: 30〜50枚
-  // - 3LDK: 40〜60枚
-  let pb125Sheets = Math.ceil((wallArea / PB_SHEET_SIZE) * 1.05);
-  // 実績に基づく範囲制限: 8〜60枚
-  pb125Sheets = Math.min(Math.max(pb125Sheets, 8), 60);
+  // === 石膏ボード ===
+
+  // 壁PB t-9.5 (3'×6') - メイン壁用
+  // アルファステイツ実績: 6,010枚/67戸 = 約90枚/戸
+  // 床面積係数: 90枚 / 65.8㎡ ≒ 1.37枚/㎡
+  const wallPbCoeff = 1.37;
+  let wallPb95Sheets = Math.ceil(totalFloorArea * wallPbCoeff);
+  // リノベの場合は少なめに調整（新築の60%程度）
+  wallPb95Sheets = Math.ceil(wallPb95Sheets * WALL_PB_REDUCTION);
+  wallPb95Sheets = Math.min(Math.max(wallPb95Sheets, 30), 90);
   materials.push({
     category: '下地材',
-    name: 'PB 12.5mm 吉野 3×6',
-    spec: '910×1820mm',
+    name: '石膏ボード t-9.5 3×6',
+    spec: '壁用 910×1820mm',
     unit: '枚',
-    quantity: pb125Sheets,
-    calculation: `壁面積 ${wallArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE}㎡ × 1.05（8〜60枚）`
+    quantity: wallPb95Sheets,
+    calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${wallPbCoeff}枚/㎡ × 0.6（リノベ係数）`
   });
 
-  // PB 9.5mm (天井用) - ロス率+5%
-  // 54ファイル実績: 8〜40枚（天井面積に依存）
-  // - 小型物件: 8〜15枚
-  // - 2LDK: 20〜35枚
-  // - 3LDK: 30〜40枚
-  let pb95Sheets = Math.ceil((ceilingArea / PB_SHEET_SIZE) * 1.05);
-  // 実績に基づく範囲制限: 8〜40枚
-  pb95Sheets = Math.min(Math.max(pb95Sheets, 8), 40);
+  // 壁耐水PB t-9.5 - 水回り用
+  // アルファステイツ実績: 280枚/67戸 = 約4枚/戸
+  let wallPbWaterSheets = Math.ceil(cfArea / PB_SHEET_SIZE_3x6 * LOSS_RATE_20);
+  wallPbWaterSheets = Math.min(Math.max(wallPbWaterSheets, 2), 7);
   materials.push({
     category: '下地材',
-    name: 'PB 9.5mm 吉野 3×6',
-    spec: '910×1820mm',
+    name: '耐水石膏ボード t-9.5 3×6',
+    spec: '水回り壁用 910×1820mm',
     unit: '枚',
-    quantity: pb95Sheets,
-    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE}㎡ × 1.05（8〜40枚）`
+    quantity: wallPbWaterSheets,
+    calculation: `水回り面積 ${cfArea.toFixed(1)}㎡から算出`
   });
 
-  // Mクロス (水回りボード)
-  // 54ファイル実績: 2〜7枚（水回り面積による）
-  // 計算式: 水回り壁面積から算出
-  // 水回り = 洗面室(約2㎡) + トイレ(約1㎡) + 脱衣室(約1.5㎡)
-  // 壁面積 ≒ 水回り床面積 × 周囲長係数(3) × 天井高(2.4) ÷ ボードサイズ
-  let mCrossSheets = 7; // デフォルト最大値
-  if (cfArea > 0) {
-    // 水回り床面積が小さい場合は枚数を減らす
-    const waterWallArea = cfArea * 3 * ceilingHeight;
-    mCrossSheets = Math.ceil((waterWallArea / PB_SHEET_SIZE) * 1.05);
-    mCrossSheets = Math.min(Math.max(mCrossSheets, 2), 7); // 2〜7枚の範囲
-  }
+  // 天井PB t-9.5 (3'×6')
+  // アルファステイツ実績: 2,810枚/67戸 = 約42枚/戸
+  // 床面積係数: 42枚 / 65.8㎡ ≒ 0.64枚/㎡
+  const ceilingPbCoeff = 0.64;
+  let ceilingPb95Sheets = Math.ceil(ceilingArea / PB_SHEET_SIZE_3x6 * LOSS_RATE_5);
+  ceilingPb95Sheets = Math.min(Math.max(ceilingPb95Sheets, 20), 50);
   materials.push({
     category: '下地材',
-    name: 'Mクロス 12.5mm 3×6',
-    spec: '耐水ボード',
+    name: '石膏ボード t-9.5 3×6',
+    spec: '天井用 910×1820mm',
     unit: '枚',
-    quantity: mCrossSheets,
-    calculation: `水回り面積 ${cfArea.toFixed(1)}㎡から算出（2〜7枚）`
+    quantity: ceilingPb95Sheets,
+    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE_3x6.toFixed(2)}㎡ × ${LOSS_RATE_5}`
   });
 
-  // 垂木 (赤松KD 30×40 L3000 入数12)
-  // 54ファイル実績: 10〜30束
-  // 計算式: (間仕切壁延長÷0.303×2 + 天井面積÷0.303) ÷ 12
-  // 間取り別目安: 1LDK=10-15束, 2LDK=20-25束, 3LDK=25-30束
+  // 下り天井PB t-9.5
+  // アルファステイツ実績: 260枚/67戸 = 約4枚/戸
+  materials.push({
+    category: '下地材',
+    name: '石膏ボード t-9.5 3×6',
+    spec: '下り天井用',
+    unit: '枚',
+    quantity: 4,
+    calculation: '標準4枚（実績値）'
+  });
+
+  // キッチンパネル 3'×8'
+  // アルファステイツ実績: 170枚/67戸 = 約3枚/戸
+  materials.push({
+    category: '下地材',
+    name: 'キッチンパネル',
+    spec: 'アイカセラール t-3.0 3×8',
+    unit: '枚',
+    quantity: 3,
+    calculation: '標準3枚（実績値）'
+  });
+
+  // キッチンパネル見切り
+  // アルファステイツ実績: 134箇所/67戸 = 約2箇所/戸
+  materials.push({
+    category: '下地材',
+    name: 'キッチンパネル見切り',
+    spec: 'ABSジョイナー H=2250',
+    unit: '箇所',
+    quantity: 2,
+    calculation: '標準2箇所（実績値）'
+  });
+
+  // === グラスウール・断熱材 ===
+
+  // 間仕切グラスウール
+  // アルファステイツ実績: 451㎡/67戸 = 約7㎡/戸
+  let glasswoolArea = Math.ceil(partitionWallLength * ceilingHeight * GLASSWOOL_COVERAGE);
+  glasswoolArea = Math.min(Math.max(glasswoolArea, 5), 15);
+  materials.push({
+    category: '下地材',
+    name: 'グラスウール充填',
+    spec: 't-50 24kg/m3 間仕切用',
+    unit: '㎡',
+    quantity: glasswoolArea,
+    calculation: `間仕切壁 ${partitionWallLength.toFixed(1)}m × ${ceilingHeight.toFixed(1)}m × ${GLASSWOOL_COVERAGE}`
+  });
+
+  // === 下地補強合板 ===
+
+  // カーテンレール・手摺・タオル掛下地補強合板
+  // アルファステイツ実績: 390枚/67戸 = 約6枚/戸
+  materials.push({
+    category: '下地材',
+    name: '下地補強合板',
+    spec: 't-9.0 3×6 カーテンレール・手摺・タオル掛用',
+    unit: '枚',
+    quantity: 6,
+    calculation: '標準6枚（実績値）'
+  });
+
+  // エアコン下地補強合板
+  // アルファステイツ実績: 20枚/67戸 = 約0.3枚/戸 → 1枚
+  const roomCount = rooms.length > 0 ? rooms.length : 3;
+  const airconBoardCount = Math.min(Math.max(Math.ceil(roomCount * AIRCON_PER_ROOM), 1), 3);
+  materials.push({
+    category: '下地材',
+    name: 'エアコン下地補強合板',
+    spec: 't-9.0 3×6',
+    unit: '枚',
+    quantity: airconBoardCount,
+    calculation: `部屋数 ${roomCount}室 × ${AIRCON_PER_ROOM}`
+  });
+
+  // === 面木・コーナー ===
+
+  // 壁出隅面木（一般）
+  // アルファステイツ実績: 420箇所/67戸 = 約6箇所/戸
+  materials.push({
+    category: '下地材',
+    name: '壁出隅面木',
+    spec: 'R型コーナーパット H=2200〜2400',
+    unit: '箇所',
+    quantity: 6,
+    calculation: '標準6箇所（実績値）'
+  });
+
+  // === 構造材（木軸） ===
+
+  // 垂木 (赤松KD/LVL 30×40 L3000 入数12)
+  // アルファステイツ実績: 天井下地38.5m3/67戸、間仕切木軸77.3m3/67戸
+  // リノベでは規模が小さいため調整
   let tarukiBundles = 20; // デフォルト20束
   if (partitionWallLength > 0 || ceilingArea > 0) {
     const tarukiCount = ((partitionWallLength / 0.303 * 2) + (ceilingArea / 0.303)) / TARUKI_PER_BUNDLE;
@@ -266,16 +842,110 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     if (isNaN(tarukiBundles) || tarukiBundles <= 0) {
       tarukiBundles = 20;
     }
-    // 実績に基づく範囲制限: 10〜30束
     tarukiBundles = Math.min(Math.max(tarukiBundles, 10), 30);
   }
   materials.push({
     category: '下地材',
-    name: '垂木 赤松KD 30×40 L3000',
-    spec: '入数12本/束',
+    name: '垂木 LVL 30×40 L3000',
+    spec: '入数12本/束 壁・天井下地',
     unit: '束',
     quantity: tarukiBundles,
     calculation: `壁下地 + 天井下地 @303ピッチ（10〜30束）`
+  });
+
+  // === 木下地詳細（集計表シートより） ===
+
+  // 際根太 45×30
+  // 実績: 18.2m/戸
+  const kiwaneta = Math.ceil(totalFloorArea * KIWANETA_RATIO);
+  materials.push({
+    category: '下地材',
+    name: '際根太',
+    spec: '45×30 米栂1等',
+    unit: 'm',
+    quantity: Math.max(kiwaneta, 18),
+    calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${KIWANETA_RATIO}（実績18.2m/戸）`
+  });
+
+  // 吊戸下地 30×40
+  // 実績: 9本/戸
+  materials.push({
+    category: '下地材',
+    name: '吊戸下地',
+    spec: '30×40 米栂1等',
+    unit: '本',
+    quantity: 9,
+    calculation: '標準9本（実績値）'
+  });
+
+  // AW掃出し下見切り
+  // 実績: 2.4m/戸
+  materials.push({
+    category: '造作材',
+    name: 'AW掃出し下見切り',
+    spec: 'カイダーベースボード',
+    unit: 'm',
+    quantity: 2.4,
+    calculation: '標準2.4m（実績値）'
+  });
+
+  // EV面グラスウール（マンション向け）
+  // 実績: 8.995㎡/戸
+  // リノベでは省略可能だが、新築マンション向けに追加
+  if (overrides.ev_insulation === 'あり') {
+    materials.push({
+      category: '下地材',
+      name: 'EV面グラスウール',
+      spec: 'PBt9.5+木胴縁',
+      unit: '㎡',
+      quantity: 9,
+      calculation: '標準9㎡（実績値）'
+    });
+  }
+
+  // 間仕切下地(木) 45×30 @450ピッチ
+  // 実績: 84m/戸
+  const majikiriShitaji = Math.ceil(partitionWallLength * 4.2);
+  materials.push({
+    category: '下地材',
+    name: '間仕切下地(木)',
+    spec: '45×30 @450ピッチ 米栂1等',
+    unit: 'm',
+    quantity: Math.max(majikiriShitaji, 80),
+    calculation: `間仕切壁 ${partitionWallLength.toFixed(1)}m × 4.2（実績84m/戸）`
+  });
+
+  // 遮音壁PB張り
+  // 実績: 13㎡/戸
+  materials.push({
+    category: '下地材',
+    name: '遮音壁PB張り',
+    spec: 't9.5+グラスウール',
+    unit: '㎡',
+    quantity: 13,
+    calculation: '標準13㎡（実績値）'
+  });
+
+  // PS点検口
+  // 実績: 2箇所/戸
+  materials.push({
+    category: '造作材',
+    name: 'PS点検口',
+    spec: '450角',
+    unit: '箇所',
+    quantity: 2,
+    calculation: '標準2箇所（実績値）'
+  });
+
+  // タイル見切縁
+  // 実績: 2m/戸
+  materials.push({
+    category: '造作材',
+    name: 'タイル見切縁',
+    spec: '塩ビ見切り',
+    unit: 'm',
+    quantity: 2,
+    calculation: '標準2m（実績値）'
   });
 
   // フローリング - ロス率+10%
@@ -283,7 +953,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // - 1LDK: 約40㎡
   // - 2LDK: 50〜55㎡
   // - 3LDK: 60〜70㎡
-  let flooringQty = Math.ceil(flooringArea * 1.1 * 10) / 10;
+  let flooringQty = Math.ceil(flooringArea * LOSS_RATE_10 * 10) / 10;
   // 最低50㎡、最大70㎡（ロス込み）
   if (flooringQty > 0) {
     materials.push({
@@ -292,7 +962,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       spec: packageSpecs?.flooring || 'DAIKEN MYフロア (1×6)',
       unit: '㎡',
       quantity: flooringQty,
-      calculation: `居室床面積 ${flooringArea.toFixed(1)}㎡ × 1.1`
+      calculation: `居室床面積 ${flooringArea.toFixed(1)}㎡ × ${LOSS_RATE_10}`
     });
   }
 
@@ -336,7 +1006,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // - 水回りリフロアタイル下地: 4〜5枚
   // - 床暖房新規導入下地: 3〜4枚
   // - フローリング下地更新: 5〜12枚
-  let rawanSheets = Math.max(Math.ceil((cfArea / PB_SHEET_SIZE) * 1.1), 4);
+  let rawanSheets = Math.max(Math.ceil((cfArea / PB_SHEET_SIZE_3x6) * LOSS_RATE_10), 4);
   // 床暖房がある場合は追加
   const hasFloorHeatingForRawan = (overrides.floor_heating && overrides.floor_heating.includes('あり')) ||
     data.special?.some(s => s.type === 'floor_heating' || s.type === '床暖房');
@@ -369,36 +1039,213 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     calculation: '標準2枚'
   });
 
-  // 巾木 - 壁延長から開口部幅を引く
-  // 54ファイル実績: 10〜40m（ソフト巾木または木製巾木）
-  // 注意: 30m固定ではなく、間取りにより大きく変動
-  // - 1LDK: 10〜15m
-  // - 2LDK: 20〜30m
-  // - 3LDK: 30〜40m
+  // === 巾木 ===
+  // アルファステイツ実績: 木製巾木3,615m/67戸 = 約54m/戸
+  // 床面積係数: 54m / 65.8㎡ ≒ 0.82m/㎡
+  const habakiCoeff = 0.82;
+
   const totalWallLength = partitionWallLength + structuralWallLength;
-  let habakiLength = Math.ceil(totalWallLength - totalOpeningWidth);
+  let habakiLength = Math.ceil(totalFloorArea * habakiCoeff);
   const layoutTypeForHabaki = data.layout_type || '';
-  if (habakiLength <= 0 || isNaN(habakiLength)) {
-    // 間取りから推定
-    if (layoutTypeForHabaki.includes('3LDK') || layoutTypeForHabaki.includes('4LDK')) {
-      habakiLength = 35;
-    } else if (layoutTypeForHabaki.includes('2LDK')) {
-      habakiLength = 25;
-    } else if (layoutTypeForHabaki.includes('1LDK')) {
-      habakiLength = 15;
-    } else {
-      habakiLength = 25; // デフォルト
-    }
+
+  // 間取りによる調整
+  if (layoutTypeForHabaki.includes('3LDK') || layoutTypeForHabaki.includes('4LDK')) {
+    habakiLength = Math.max(habakiLength, 50);
+  } else if (layoutTypeForHabaki.includes('2LDK')) {
+    habakiLength = Math.max(habakiLength, 40);
+  } else if (layoutTypeForHabaki.includes('1LDK')) {
+    habakiLength = Math.min(habakiLength, 35);
   }
-  // 実績に基づく範囲制限: 10〜40m
-  habakiLength = Math.min(Math.max(habakiLength, 10), 40);
+
+  // 実績に基づく範囲制限: 30〜60m
+  habakiLength = Math.min(Math.max(habakiLength, 30), 60);
+
   materials.push({
     category: '造作材',
-    name: '巾木',
-    spec: packageSpecs?.habaki || 'ソフト巾木',
+    name: '木製巾木',
+    spec: packageSpecs?.habaki || 'ニホンフラッシュ LM-9KJ H=40',
     unit: 'm',
     quantity: habakiLength,
-    calculation: `壁延長 ${totalWallLength.toFixed(1)}m − 開口部幅 ${totalOpeningWidth.toFixed(1)}m（10〜40m）`
+    calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${habakiCoeff}m/㎡`
+  });
+
+  // 木製巾木出隅役物
+  // アルファステイツ実績: 672箇所/67戸 = 約10箇所/戸
+  const habakiCornerCount = Math.ceil(habakiLength / 5);
+  materials.push({
+    category: '造作材',
+    name: '木製巾木出隅役物',
+    spec: '4R対応折曲',
+    unit: '箇所',
+    quantity: habakiCornerCount,
+    calculation: `巾木長さ ${habakiLength}m ÷ 5m`
+  });
+
+  // 樹脂巾木（玄関用）
+  // アルファステイツ実績: 242m/67戸 = 約3.6m/戸
+  materials.push({
+    category: '造作材',
+    name: '樹脂巾木',
+    spec: '玄関用 カイダーベースボード SC型 H=60',
+    unit: 'm',
+    quantity: 4,
+    calculation: '標準4m（実績値）'
+  });
+
+  // 玄関SD見切縁
+  // アルファステイツ実績: 319m/67戸 = 約4.8m/戸
+  materials.push({
+    category: '造作材',
+    name: '玄関見切縁',
+    spec: '創建 ビニール見切縁 PDD-10',
+    unit: 'm',
+    quantity: 5,
+    calculation: '標準5m（実績値）'
+  });
+
+  // 玄関廻り壁面木
+  // アルファステイツ実績: 319m/67戸 = 約4.8m/戸
+  materials.push({
+    category: '造作材',
+    name: '玄関廻り壁面木',
+    spec: '4R型コーナーパット',
+    unit: 'm',
+    quantity: 5,
+    calculation: '標準5m（実績値）'
+  });
+
+  // === 点検口 ===
+  // アルファステイツ実績: 天井点検口 67箇所/67戸 = 1箇所/戸
+  materials.push({
+    category: '造作材',
+    name: '天井点検口',
+    spec: '450角 ブルズ JKN45SV',
+    unit: '箇所',
+    quantity: 1,
+    calculation: '標準1箇所（実績値）'
+  });
+
+  // === カーテンボックス ===
+  // アルファステイツ実績: 各タイプ約1箇所/戸
+  materials.push({
+    category: '造作材',
+    name: 'カーテンボックス',
+    spec: '合板t12+PBt9.5 クロス巻込み W210×H150',
+    unit: '箇所',
+    quantity: 1,
+    calculation: 'LD用 標準1箇所'
+  });
+
+  // === 額縁 ===
+  // アルファステイツ実績: 三方額縁123箇所+四方額縁164箇所/67戸 = 約4箇所/戸
+  // 窓数から推定
+  const frameCount = Math.max(windowCount, 3);
+  materials.push({
+    category: '造作材',
+    name: '額縁',
+    spec: 'オレフィンシート貼 三方・四方',
+    unit: '箇所',
+    quantity: frameCount,
+    calculation: `窓数 ${windowCount}箇所`
+  });
+
+  // UB三方枠
+  // アルファステイツ実績: 67箇所/67戸 = 1箇所/戸
+  materials.push({
+    category: '造作材',
+    name: 'UB三方枠',
+    spec: 'カイダーベースボード S-40〜60 W758×H1919',
+    unit: '箇所',
+    quantity: 1,
+    calculation: '標準1箇所（実績値）'
+  });
+
+  // === 置床・床下地 ===
+  // アルファステイツ実績（内装工事シートより）:
+  // - 乾式置床 H200: 251㎡/67戸 = 約3.75㎡/戸 (トイレ・パウダールーム)
+  // - 床下地合板 t-9.0: 323㎡/67戸 = 約4.8㎡/戸
+
+  // 乾式置床（水回り用）
+  const okiyukaArea = Math.ceil(cfArea * LOSS_RATE_20);
+  const okiyukaQty = Math.max(okiyukaArea, 4);
+  materials.push({
+    category: '床材',
+    name: '乾式置床',
+    spec: 'H200 トイレ・パウダールーム用',
+    unit: '㎡',
+    quantity: okiyukaQty,
+    calculation: `水回り面積 ${cfArea.toFixed(1)}㎡ × ${LOSS_RATE_20}`
+  });
+
+  // 床下地合板（置床上）
+  materials.push({
+    category: '下地材',
+    name: '床下地合板',
+    spec: 't-9.0 3×6 置床上',
+    unit: '㎡',
+    quantity: Math.ceil(okiyukaQty * LOSS_RATE_10),
+    calculation: `置床面積 ${okiyukaQty}㎡ + ロス${(LOSS_RATE_10 - 1) * 100}%`
+  });
+
+  // === 建具沓摺 ===
+  // アルファステイツ実績（木工事シートより）:
+  // - LD開戸沓摺: 57m/67戸 ≒ 0.85m/戸 → バリアフリー床見切り
+  // - 開戸沓摺: 225m/67戸 ≒ 3.4m/戸
+  // - 引戸沓摺: 199m/67戸 ≒ 3.0m/戸
+  // - クローゼット沓摺: 163m/67戸 ≒ 2.4m/戸
+
+  // 建具タイプ別カウント
+  const doorOpenCount = openings.filter(o =>
+    o.type === '開き戸' || o.type === 'door' || o.type === '片開き戸'
+  ).length || Math.ceil(doorCount * DOOR_OPEN_RATIO);
+  const doorSlideCount = openings.filter(o =>
+    o.type === '引戸' || o.type === '片引戸' || o.type === '引違い戸'
+  ).length || Math.ceil(doorCount * DOOR_SLIDE_RATIO);
+  const doorFoldCount = openings.filter(o =>
+    o.type === '折戸' || o.type === 'クローゼット' || o.type === '収納'
+  ).length || Math.ceil(doorCount * DOOR_FOLD_RATIO);
+
+  // LD開戸沓摺（バリアフリー床見切り）
+  materials.push({
+    category: '造作材',
+    name: 'LD開戸沓摺',
+    spec: 'バリアフリー床見切り',
+    unit: 'm',
+    quantity: 1,
+    calculation: '標準1m（実績値）'
+  });
+
+  // 開戸沓摺
+  const kutsuzuriDoorLength = Math.ceil(doorOpenCount * KUTSUZURI_DOOR_LENGTH);
+  materials.push({
+    category: '造作材',
+    name: '開戸沓摺',
+    spec: 'アルミ製',
+    unit: 'm',
+    quantity: Math.max(kutsuzuriDoorLength, 3),
+    calculation: `開戸 ${doorOpenCount}枚 × ${KUTSUZURI_DOOR_LENGTH}m`
+  });
+
+  // 引戸沓摺
+  const kutsuzuriSlideLength = Math.ceil(doorSlideCount * KUTSUZURI_SLIDE_LENGTH);
+  materials.push({
+    category: '造作材',
+    name: '引戸沓摺',
+    spec: 'アルミ製',
+    unit: 'm',
+    quantity: Math.max(kutsuzuriSlideLength, 3),
+    calculation: `引戸 ${doorSlideCount}枚 × ${KUTSUZURI_SLIDE_LENGTH}m`
+  });
+
+  // クローゼット沓摺
+  const kutsuzuriClosetLength = Math.ceil(doorFoldCount * KUTSUZURI_CLOSET_LENGTH);
+  materials.push({
+    category: '造作材',
+    name: 'クローゼット沓摺',
+    spec: 'アルミ製',
+    unit: 'm',
+    quantity: Math.max(kutsuzuriClosetLength, 2),
+    calculation: `折戸 ${doorFoldCount}枚 × ${KUTSUZURI_CLOSET_LENGTH}m`
   });
 
   // 天井クロス（量産品番）
@@ -471,25 +1318,112 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     calculation: '窓枠'
   });
 
-  // 建具
-  // 7現場実績: Panasonic ベリティス PA型 H2035 または ダイケンリノベセレクション
+  // === 建具詳細 ===
+  // アルファステイツ実績: 片開き戸約6枚、片引き戸約1.4枚、折戸約2.5枚/戸
+
+  // 片開き戸
+  const singleDoorCount = doorOpenCount > 0 ? doorOpenCount : PER_UNIT.door_single_total;
   materials.push({
     category: '建具',
-    name: '建具一式',
-    spec: packageSpecs?.doors || 'Panasonic ベリティス',
+    name: '片開き戸',
+    spec: packageSpecs?.doors || '既製品 W600〜850×H2080〜2175',
     unit: '枚',
-    quantity: doorCount,
-    calculation: `図面から ${doorCount}枚`
+    quantity: singleDoorCount,
+    calculation: `実績値 約${PER_UNIT.door_single_total}枚/戸`
+  });
+
+  // 片引き戸
+  const slideDoorCount = doorSlideCount > 0 ? doorSlideCount : PER_UNIT.door_slide_total;
+  materials.push({
+    category: '建具',
+    name: '片引き戸',
+    spec: '既製品 W660〜760×H2075〜2170',
+    unit: '枚',
+    quantity: slideDoorCount,
+    calculation: `実績値 約${PER_UNIT.door_slide_total}枚/戸`
+  });
+
+  // 2枚折戸（クローゼット用）
+  const foldDoorCount = doorFoldCount > 0 ? doorFoldCount : PER_UNIT.door_fold_total;
+  materials.push({
+    category: '建具',
+    name: '2枚折戸',
+    spec: 'クローゼット用 W605〜983×H2080〜2320',
+    unit: '枚',
+    quantity: foldDoorCount,
+    calculation: `実績値 約${PER_UNIT.door_fold_total}枚/戸`
   });
 
   // 下駄箱（トール 2070×800）
+  // アルファステイツ実績: 58台/67戸 ≒ 1台/戸
   materials.push({
     category: '建具',
     name: '下駄箱',
-    spec: 'トール 2070×800 Panasonic ベリティス',
+    spec: 'トール W1200×D410×H1900 Panasonic ベリティス',
     unit: '台',
     quantity: 1,
-    calculation: '標準1台'
+    calculation: '標準1台（実績値）'
+  });
+
+  // === 家具工事 ===
+  // アルファステイツ実績に基づく
+
+  // リネン庫
+  // アルファステイツ実績: 67台/67戸 = 1台/戸
+  materials.push({
+    category: '家具',
+    name: 'リネン庫',
+    spec: 'W320×D310×H2200 パウダールーム用',
+    unit: '台',
+    quantity: 1,
+    calculation: '標準1台（実績値）'
+  });
+
+  // トイレ吊戸棚
+  // アルファステイツ実績: 67台/67戸 = 1台/戸
+  materials.push({
+    category: '家具',
+    name: 'トイレ吊戸棚',
+    spec: 'W885〜950×D310×H702',
+    unit: '台',
+    quantity: 1,
+    calculation: '標準1台（実績値）'
+  });
+
+  // キッチンカウンター
+  // アルファステイツ実績: 67台/67戸 = 1台/戸
+  materials.push({
+    category: '家具',
+    name: 'キッチンカウンター',
+    spec: 'アイカ バリューエッジ t=28 表面材K-6001KN SW',
+    unit: '箇所',
+    quantity: 1,
+    calculation: '標準1箇所（実績値）'
+  });
+
+  // 固定棚（クローゼット・WIC用）
+  // アルファステイツ実績: 約1.4箇所/戸
+  const storageDataForShelf = data.storage || [];
+  const storageCountForShelf = storageDataForShelf.filter(s => s.type === 'closet' || s.has_makuradana).length;
+  const fixedShelfCount = storageCountForShelf > 0 ? storageCountForShelf : 2;
+  materials.push({
+    category: '家具',
+    name: '固定棚',
+    spec: '南海プライウッド 中棚Cシリーズ同等',
+    unit: '箇所',
+    quantity: fixedShelfCount,
+    calculation: `収納 ${fixedShelfCount}箇所`
+  });
+
+  // 可動棚（LD収納用）
+  // アルファステイツ実績: 約1.4箇所/戸
+  materials.push({
+    category: '家具',
+    name: '可動棚',
+    spec: 'ポリ合板 T25 ダボレール共 2〜3段',
+    unit: '箇所',
+    quantity: 1,
+    calculation: '標準1箇所（実績値）'
   });
 
   // 設備関連
@@ -911,8 +1845,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     name: '壁下地',
     spec: 'PB12.5mm ※外周壁は既存下地',
     unit: '㎡',
-    quantity: Math.ceil(wallArea * 0.3), // 間仕切壁部分のみ（約30%）
-    calculation: `間仕切壁部分 約${(wallArea * 0.3).toFixed(1)}㎡`
+    quantity: Math.ceil(wallArea * PARTITION_WALL_RATIO_30),
+    calculation: `間仕切壁部分 約${(wallArea * PARTITION_WALL_RATIO_30).toFixed(1)}㎡`
   });
 
   // 玄関上がり框取付
@@ -1322,8 +2256,46 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     calculation: '標準1式'
   });
 
+  // === 単価・金額計算 ===
+  // 各資材に単価と金額を追加
+  const materialsWithPrice = materials.map(item => {
+    // 資材名でUNIT_PRICESから単価を検索
+    let unitPrice = UNIT_PRICES[item.name] || 0;
+
+    // 名前が見つからない場合、部分一致で検索
+    if (unitPrice === 0) {
+      for (const [key, price] of Object.entries(UNIT_PRICES)) {
+        if (item.name.includes(key) || key.includes(item.name)) {
+          unitPrice = price;
+          break;
+        }
+      }
+    }
+
+    // 金額計算
+    const amount = Math.round(unitPrice * item.quantity);
+
+    return {
+      ...item,
+      unit_price: unitPrice,
+      amount: amount
+    };
+  });
+
+  // カテゴリ別小計を計算
+  const categoryTotals = {};
+  materialsWithPrice.forEach(item => {
+    if (!categoryTotals[item.category]) {
+      categoryTotals[item.category] = 0;
+    }
+    categoryTotals[item.category] += item.amount;
+  });
+
+  // 総合計
+  const grandTotal = Object.values(categoryTotals).reduce((sum, val) => sum + val, 0);
+
   return {
-    materials,
+    materials: materialsWithPrice,
     summary: {
       total_floor_area: totalFloorArea,
       floor_area: flooringArea,
@@ -1335,6 +2307,11 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       window_count: windowCount,
       partition_wall_length: partitionWallLength,
       structural_wall_length: structuralWallLength
+    },
+    estimate: {
+      category_totals: categoryTotals,
+      grand_total: grandTotal,
+      note: '仮単価による概算見積もり（税抜）'
     }
   };
 }

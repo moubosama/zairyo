@@ -111,8 +111,17 @@ export const useProjectStore = defineStore('project', () => {
     error.value = null
     try {
       const response = await api.calculateMaterials(currentProject.value.id)
-      materials.value = response.data.materials
+      // バックエンドの snake_case を camelCase に変換
+      materials.value = response.data.materials.map(item => ({
+        ...item,
+        unitPrice: item.unit_price,
+        // amount はそのまま使用
+      }))
       areas.value = response.data.summary
+      // estimate情報も保存（カテゴリ別小計・総合計）
+      if (response.data.estimate) {
+        areas.value.estimate = response.data.estimate
+      }
       return materials.value
     } catch (e) {
       error.value = e.response?.data?.message || '資材計算に失敗しました'
