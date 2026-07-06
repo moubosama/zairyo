@@ -50,11 +50,46 @@ function grossAreaAnchor(data) {
 
 /**
  * メイン: AI解析結果を検証・正規化して返す
- * @returns { data: 正規化済み結果, warnings: [{field, message, before, after}] }
+ * @returns { data: 正規化済み結果, warnings: [{field, message, before, after}], isRejected: boolean }
  */
 export function validateAndNormalize(raw, options = {}) {
   const data = JSON.parse(JSON.stringify(raw));
   const warnings = [];
+
+  // ---------- 0. 図面種別ゲート: 平面図以外は解析拒否 ----------
+  const docType = data.document_type;
+  const isAnalyzable = data.is_analyzable;
+
+  // document_type が明示的に非平面図の場合
+  if (docType && docType !== 'floor_plan') {
+    const docTypeLabels = {
+      'finish_schedule': '仕上表',
+      'elevation': '展開図・立面図',
+      'other': '平面図以外の図面',
+    };
+    const label = docTypeLabels[docType] || docType;
+    warnings.push({
+      field: 'document_type',
+      message: `この画像は「${label}」と判定されました。資材計算には計画平面図をアップロードしてください`,
+      before: docType,
+      after: null,
+    });
+    data.document_type_needs_review = true;
+
+    // 両方のAIが非平面図と判定した場合は拒否（isRejected: true）
+    // ※ reconcileDualResults で両AI結果を見て判定するため、ここでは警告のみ
+  }
+
+  // is_analyzable が明示的に false の場合
+  if (isAnalyzable === false) {
+    warnings.push({
+      field: 'is_analyzable',
+      message: 'この画像からは資材計算に必要な情報（寸法・間取り）を読み取れませんでした',
+      before: false,
+      after: null,
+    });
+    data.document_type_needs_review = true;
+  }
 
   // ---------- 1. 部屋面積: 帖数記載があれば帖数×1.65で強制上書き ----------
   if (Array.isArray(data.rooms)) {
@@ -192,12 +227,49 @@ export function validateAndNormalize(raw, options = {}) {
  */
 export function reconcileDualResults(geminiResult, claudeResult) {
   const results = [geminiResult, claudeResult].filter(Boolean);
-  if (results.length === 0) return { merged: null, disagreements: [] };
-  if (results.length === 1) return { merged: results[0], disagreements: [] };
+  if (results.length === 0) return { merged: null, disagreements: [], isRejected: false };
+  if (results.length === 1) return { merged: results[0], disagreements: [], isRejected: false };
 
   const [a, b] = results;
   const merged = JSON.parse(JSON.stringify(a));
   const disagreements = [];
+
+  // ---------- 図面種別ゲート: 両AIが非平面図と判定したら拒否 ----------
+  const docTypeA = a.document_type;
+  const docTypeB = b.document_type;
+  const analyzableA = a.is_analyzable !== false; // undefined も true 扱い
+  const analyzableB = b.is_analyzable !== false;
+
+  // 両方が非平面図を返した場合、または両方がis_analyzable=falseの場合
+  const bothNonFloorPlan = docTypeA && docTypeA !== 'floor_plan' &&
+                            docTypeB && docTypeB !== 'floor_plan';
+  const bothNotAnalyzable = !analyzableA && !analyzableB;
+
+  if (bothNonFloorPlan || bothNotAnalyzable) {
+    disagreements.push({
+      field: 'document_type',
+      gemini: docTypeA || 'floor_plan',
+      claude: docTypeB || 'floor_plan',
+      message: '両AIが平面図ではないと判定。アップロードされた画像を確認してください',
+    });
+    merged.is_rejected = true;
+    merged.rejection_reason = bothNonFloorPlan
+      ? `この画像は平面図ではありません（Gemini: ${docTypeA}, Claude: ${docTypeB}）`
+      : '両AIとも資材計算に必要な情報を読み取れませんでした';
+  }
+
+  // 一方のみが非平面図と判定した場合は警告
+  const oneNonFloorPlan = (docTypeA && docTypeA !== 'floor_plan') !==
+                          (docTypeB && docTypeB !== 'floor_plan');
+  if (oneNonFloorPlan && !bothNonFloorPlan) {
+    disagreements.push({
+      field: 'document_type',
+      gemini: docTypeA || 'floor_plan',
+      claude: docTypeB || 'floor_plan',
+      message: 'AIの図面種別判定が不一致。平面図でない可能性があります',
+    });
+    merged.document_type_needs_review = true;
+  }
 
   // 部屋: 帖数ラベルがある方を優先。両方帖数ありで一致→採用、不一致→警告
   if (Array.isArray(merged.rooms)) {
@@ -283,5 +355,5 @@ export function reconcileDualResults(geminiResult, claudeResult) {
   const openingsB = b.openings || [];
   merged.openings = openingsA.length >= openingsB.length ? openingsA : openingsB;
 
-  return { merged, disagreements };
+  return { merged, disagreements, isRejected: !!merged.is_rejected };
 }

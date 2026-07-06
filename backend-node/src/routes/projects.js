@@ -163,6 +163,16 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
     });
     console.log('AI analysis complete');
 
+    // 図面種別ゲート: 両AIが非平面図と判定した場合は400エラー
+    if (analysisResult.is_rejected) {
+      console.log('Image rejected:', analysisResult.rejection_reason);
+      return res.status(400).json({
+        error: 'invalid_document_type',
+        message: analysisResult.rejection_reason || 'この画像は計画平面図ではありません。資材計算には計画平面図をアップロードしてください。',
+        document_type: analysisResult.document_type,
+      });
+    }
+
     // AI生テキストはrawResponseへ、正規化済みJSONはparsedDataへ
     // （生テキストは後日のevalセット作成・デバッグの一次資料になる）
     const rawResponses = analysisResult._raw_responses || null;

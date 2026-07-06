@@ -168,77 +168,50 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
 必ず以下のJSON形式のみを返してください（説明文は不要）：
 
 {
+  "document_type": "floor_plan",
+  "is_analyzable": true,
   "property_name": "物件名（図面タイトルから）",
   "layout_type": "2LDK",
-  "outer_dimensions_mm": { "width": 11300, "depth": 8450 },
-  "total_floor_area_sqm": 65,
-  "partition_wall_length_m": 22,
-  "ceiling_height_mm": 2400,
+  "outer_dimensions_mm": { "width": null, "depth": null },
+  "total_floor_area_sqm": null,
+  "partition_wall_length_m": null,
+  "ceiling_height_mm": null,
   "rooms": [
     {
-      "name": "LDK",
-      "area_jou": "14.5",
-      "area_sqm": 23.9,
-      "floor_type": "flooring"
-    },
-    {
-      "name": "洋室1",
-      "area_jou": "6.0",
-      "area_sqm": 9.9,
-      "floor_type": "flooring"
-    },
-    {
-      "name": "洋室2",
-      "area_jou": "5.7",
-      "area_sqm": 9.4,
-      "floor_type": "flooring"
-    },
-    {
-      "name": "パウダールーム",
-      "area_sqm": 3.5,
-      "floor_type": "cf"
-    },
-    {
-      "name": "トイレ",
-      "area_sqm": 1.8,
-      "floor_type": "cf"
-    },
-    {
-      "name": "玄関",
-      "area_sqm": 2.0,
-      "floor_type": "tile"
-    },
-    {
-      "name": "廊下・ホール",
-      "area_sqm": 4.5,
+      "name": "（部屋名）",
+      "area_jou": null,
+      "area_sqm": null,
       "floor_type": "flooring"
     }
   ],
   "openings": [
-    { "type": "片開き戸", "width_mm": 800, "height_mm": 2080, "room": "LDK" },
-    { "type": "片開き戸", "width_mm": 800, "height_mm": 2175, "room": "洋室1" },
-    { "type": "片引き戸", "width_mm": 760, "height_mm": 2075, "room": "洋室2" },
-    { "type": "2枚折戸", "width_mm": 803, "height_mm": 2320, "room": "クローゼット1" },
-    { "type": "2枚折戸", "width_mm": 983, "height_mm": 2320, "room": "クローゼット2" },
-    { "type": "6枚折戸", "width_mm": 2091, "height_mm": 2320, "room": "WIC" },
-    { "type": "片開き戸", "width_mm": 600, "height_mm": 2080, "room": "トイレ" },
-    { "type": "片開き戸", "width_mm": 700, "height_mm": 2175, "room": "パウダールーム" }
+    { "type": "（建具種類）", "width_mm": null, "height_mm": null, "room": "（部屋名）" }
   ],
   "equipment": {
-    "ub_size": "1216",
-    "kitchen": "I型 2550",
-    "washstand": "W750"
+    "ub_size": null,
+    "kitchen": null,
+    "washstand": null
   },
   "storage": [
-    { "name": "クローゼット1", "width_mm": 1600, "has_makuradana": true, "has_hanger_pipe": true },
-    { "name": "WIC", "width_mm": 2400, "has_makuradana": true, "has_hanger_pipe": true },
-    { "name": "SIC", "width_mm": 900, "has_makuradana": true, "has_hanger_pipe": false }
+    { "name": "（収納名）", "width_mm": null, "has_makuradana": false, "has_hanger_pipe": false }
   ],
-  "special": [
-    { "type": "床暖房", "area_sqm": 3.5, "room": "LDK" },
-    { "type": "カウンター", "width_mm": 2000, "room": "LDK" }
-  ]
+  "special": []
 }
+
+⚠️【重要】上記はフォーマット例です。例の数値やプレースホルダをそのまま出力にコピーしてはいけません。
+  - 図面に帖数・寸法の記載が見つからない場合は、推測せず必ず null を返すこと
+  - area_jou は図面に「○○帖」と明記されている場合のみ、その数値を文字列で転記する
+  - 記載がない場合に例の値（14.5, 6.0等）をコピーするのは絶対に禁止
+
+【document_type の判定】
+  - "floor_plan": 計画平面図・平面詳細図（部屋の間取り、寸法線、建具が描かれている）
+  - "finish_schedule": 仕上表（部屋名と仕上材の一覧表）
+  - "elevation": 展開図・立面図
+  - "other": 上記以外（配置図、設備図、写真など）
+
+【is_analyzable の判定】
+  - true: 平面図であり、資材計算に必要な情報（寸法・間取り）が読み取れる
+  - false: 平面図でない、または情報が不足していて資材計算ができない
 
 【floor_type の判定基準】
 - "flooring": 居室（LDK、洋室、廊下、ホール等）
