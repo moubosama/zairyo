@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
+import { validateAndNormalize, reconcileDualResults } from './aiReadingValidator.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -8,6 +9,24 @@ import path from 'path';
  * アルファスタイル新宮町67戸 + けいとさんの5現場実績データに基づいて最適化
  */
 const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の建築士です。計画平面図から資材計算に必要な情報をJSON形式で抽出してください。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【最重要原則：あなたの仕事は「転記」であり「計測」ではない】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+図面に文字で書かれている情報（帖数、寸法値、UBサイズ、品番等）を
+そのまま転記することを最優先してください。
+画像から自分で長さや面積を目測することは、記載がない場合の最終手段です。
+
+■ 部屋面積の扱い
+  - 図面に「約14.5帖」のような帖数記載がある部屋は、必ず area_jou に
+    その数値を文字列で転記する（例: "14.5"）
+  - area_jou がある場合、area_sqm は area_jou × 1.65 の値を入れる
+  - 帖数記載が見つからない部屋のみ、目測の area_sqm を入れ、area_jou は null
+
+■ 寸法の扱い
+  - 図面上の寸法線に書かれた数値（mm）を最優先で転記する
+  - 目測による寸法推定は寸法線が読めない場合のみ
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 【重要：面積換算ルール】
@@ -151,17 +170,20 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
   "rooms": [
     {
       "name": "LDK",
-      "area_sqm": 16.5,
+      "area_jou": "14.5",
+      "area_sqm": 23.9,
       "floor_type": "flooring"
     },
     {
       "name": "洋室1",
-      "area_sqm": 6.6,
+      "area_jou": "6.0",
+      "area_sqm": 9.9,
       "floor_type": "flooring"
     },
     {
       "name": "洋室2",
-      "area_sqm": 5.8,
+      "area_jou": "5.7",
+      "area_sqm": 9.4,
       "floor_type": "flooring"
     },
     {
@@ -269,7 +291,7 @@ async function analyzeWithGemini(filePath, base64Data, mimeType) {
  * Claude APIで図面解析
  */
 async function analyzeWithClaude(filePath, base64Data, mimeType) {
-  const claudeKey = process.env.ANTHROPIC_API_KEY;
+  const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
   console.log('Claude API key exists:', !!claudeKey);
   console.log('Claude API key length:', claudeKey ? claudeKey.length : 0);
 
@@ -344,56 +366,12 @@ function parseJsonResponse(text) {
 }
 
 /**
- * 複数のAI結果をマージ（平均化）
- */
-function mergeResults(results) {
-  if (results.length === 0) return null;
-  if (results.length === 1) return results[0];
-
-  // 基本構造は最初の結果を使用
-  const merged = JSON.parse(JSON.stringify(results[0]));
-
-  // 数値フィールドを平均化
-  const numericFields = ['total_floor_area_sqm', 'partition_wall_length_m', 'ceiling_height_mm'];
-  numericFields.forEach(field => {
-    const values = results.map(r => r[field]).filter(v => v !== undefined && v !== null);
-    if (values.length > 0) {
-      merged[field] = Math.round(values.reduce((a, b) => a + b, 0) / values.length * 10) / 10;
-    }
-  });
-
-  // 部屋の面積を平均化
-  if (merged.rooms && merged.rooms.length > 0) {
-    merged.rooms.forEach((room, i) => {
-      const areas = results
-        .map(r => r.rooms && r.rooms[i] ? r.rooms[i].area_sqm : null)
-        .filter(v => v !== null);
-      if (areas.length > 0) {
-        room.area_sqm = Math.round(areas.reduce((a, b) => a + b, 0) / areas.length * 10) / 10;
-      }
-    });
-  }
-
-  // 建具数は最大値を採用（見落としを防ぐ）
-  if (merged.openings) {
-    const maxOpenings = Math.max(...results.map(r => (r.openings || []).length));
-    // 最も多くの建具を検出した結果を採用
-    const bestResult = results.find(r => (r.openings || []).length === maxOpenings);
-    if (bestResult && bestResult.openings) {
-      merged.openings = bestResult.openings;
-    }
-  }
-
-  return merged;
-}
-
-/**
  * メイン解析関数
  * Gemini と Claude の両方で解析し、結果をマージ
  */
 export async function analyzeDrawing(filePath) {
   const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
-  const claudeKey = process.env.ANTHROPIC_API_KEY;
+  const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
 
   if (!geminiKey && !claudeKey) {
     console.log('No API keys found, using mock data...');
@@ -450,16 +428,25 @@ export async function analyzeDrawing(filePath) {
     return getMockAnalysisResult();
   }
 
-  // 結果をマージ
-  const merged = mergeResults(results);
-  console.log('--- マージ結果 ---');
-  console.log('  partition_wall_length_m:', merged.partition_wall_length_m);
-  console.log('  total_floor_area_sqm:', merged.total_floor_area_sqm);
-  console.log('  ceiling_height_mm:', merged.ceiling_height_mm);
-  console.log('  openings数:', merged.openings ? merged.openings.length : 0);
+  // 結果を照合（平均化ではなくフィールド単位の突き合わせ）
+  const { merged, disagreements } = reconcileDualResults(geminiResult, claudeResult);
+
+  // サーバー側で検証・正規化を強制（帖数優先、実績バンドでクランプ等）
+  const { data: validated, warnings } = validateAndNormalize(merged);
+
+  // 警告・不一致を結果に添付（フロントのSpecConfirmで表示可能）
+  validated._warnings = warnings;
+  validated._ai_disagreements = disagreements;
+
+  console.log('--- 照合・検証結果 ---');
+  console.log('  partition_wall_length_m:', validated.partition_wall_length_m);
+  console.log('  total_floor_area_sqm:', validated.total_floor_area_sqm);
+  console.log('  警告数:', warnings.length);
+  warnings.forEach(w => console.log(`  ⚠ ${w.field}: ${w.message} (${w.before} → ${w.after})`));
+  disagreements.forEach(d => console.log(`  ⚡ ${d.field}: Gemini=${d.gemini} / Claude=${d.claude}`));
   console.log('========================');
 
-  return merged;
+  return validated;
 }
 
 /**
