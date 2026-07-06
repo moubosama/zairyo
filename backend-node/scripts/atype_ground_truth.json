@@ -1,0 +1,49 @@
+{
+ "source": "①意匠図.pdf page_39（平面詳細図 Aタイプ）の記載ラベルをOCR+座標対応で抽出",
+ "type": "A",
+ "senyu_area_sqm": 71.9,
+ "layout": "3LDK",
+ "units": 10,
+ "plan_drawing": "意匠図_all/page_39.png",
+ "note": "Gタイプと異なり壁・天井の拾い出し正解は無いため、評価対象は部屋面積・専有面積・間取り・図面種別のみ。壁/天井面積は参考値（Gタイプ比の相場感）として扱う",
+ "rooms": [
+  {
+   "name": "リビング・ダイニング",
+   "area_sqm_label": 18.82,
+   "area_jou": "11.6"
+  },
+  {
+   "name": "キッチン",
+   "area_sqm_label": 6.05,
+   "area_jou": "3.7"
+  },
+  {
+   "name": "洋室(1)",
+   "area_sqm_label": 9.73,
+   "area_jou": "6.0"
+  },
+  {
+   "name": "洋室(2)",
+   "area_sqm_label": 8.92,
+   "area_jou": "5.5"
+  },
+  {
+   "name": "洋室(3)",
+   "area_sqm_label": 8.42,
+   "area_jou": "5.1"
+  }
+ ],
+ "excluded_labels": [
+  {
+   "area_sqm": 15.03,
+   "note": "図面右下の面積表記。位置的にバルコニー等の専有外とみられるため部屋に含めない"
+  }
+ ],
+ "pass_criteria": {
+  "senyu_area": "ユーザー入力71.90が反映され誤差0%",
+  "rooms": "居室5部屋の㎡ラベルが±3%以内で転記される（area_source: sqm_label）",
+  "layout": "3LDK判定",
+  "document_type": "floor_plan判定",
+  "no_fabrication": "図面にない部屋・帖数が出現しない"
+ }
+}
