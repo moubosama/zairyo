@@ -712,7 +712,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '石膏ボード t-9.5 3×6',
-    spec: '壁用 910×1820mm',
+    spec: '吉野石膏 壁用 910×1820mm',
     unit: '枚',
     quantity: wallPb95Sheets,
     calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${wallPbCoeff}枚/㎡ × 0.6（リノベ係数）`
@@ -725,7 +725,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '耐水石膏ボード t-9.5 3×6',
-    spec: '水回り壁用 910×1820mm',
+    spec: '吉野石膏 耐水 水回り壁用 910×1820mm',
     unit: '枚',
     quantity: wallPbWaterSheets,
     calculation: `水回り面積 ${cfArea.toFixed(1)}㎡から算出`
@@ -740,7 +740,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '石膏ボード t-9.5 3×6',
-    spec: '天井用 910×1820mm',
+    spec: '吉野石膏 天井用 910×1820mm',
     unit: '枚',
     quantity: ceilingPb95Sheets,
     calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE_3x6.toFixed(2)}㎡ × ${LOSS_RATE_5}`
@@ -751,7 +751,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '石膏ボード t-9.5 3×6',
-    spec: '下り天井用',
+    spec: '吉野石膏 下り天井用 910×1820mm',
     unit: '枚',
     quantity: 4,
     calculation: '標準4枚（実績値）'
@@ -986,7 +986,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '床材',
     name: waterproofFloorType === 'tile' ? '水回りフロアタイル貼り' : 'クッションフロア貼り',
-    spec: '洗面室・トイレ',
+    spec: waterproofFloorType === 'tile' ? 'サンゲツ フロアタイル IS' : 'サンゲツ Hフロア 洗面室・トイレ',
     unit: '式',
     quantity: 1,
     calculation: '水回り一式'
@@ -997,7 +997,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     materials.push({
       category: '床材',
       name: '玄関土間フロアタイル貼り',
-      spec: '面積増',
+      spec: 'LIXIL エコカラット or 600角磁器質タイル',
       unit: '式',
       quantity: 2,
       calculation: '玄関土間'
