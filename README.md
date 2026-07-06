@@ -3,6 +3,24 @@
 工務店向けのリノベーション資材拾い自動化システムです。
 AI（Gemini API）による図面解析と自社標準仕様テンプレートを組み合わせ、資材リスト作成を効率化します。
 
+
+## ⚠️ 本番運用の注意（データ永続化）
+
+現在の構成（Render + SQLite `file:./dev.db`）では、**Renderのディスクがエフェメラルなため、再デプロイのたびにプロジェクト履歴・登録会社・アップロード画像がすべて消えます**。本番運用する場合は以下の移行が必要です。
+
+1. **DB**: Render PostgreSQL（またはNeon等）を作成し、`schema.prisma` の `provider` を `postgresql` に変更、`DATABASE_URL` を差し替えて `npx prisma migrate deploy`
+2. **アップロード画像**: S3 / Cloudflare R2 等のオブジェクトストレージへ移行
+
+## 環境変数（backend-node/.env.example 参照）
+
+| 変数 | 必須 | 説明 |
+|------|------|------|
+| DATABASE_URL | ✅ | DB接続文字列 |
+| ANTHROPIC_API_KEY | 推奨 | Claude解析用（Geminiとのデュアル照合） |
+| GOOGLE_GEMINI_API_KEY | 推奨 | Gemini解析用 |
+| JWT_SECRET | ✅（本番） | 未設定だと本番では起動しません |
+| ALLOWED_ORIGINS | 推奨（本番） | CORS許可オリジン（カンマ区切り） |
+
 ## デモ
 
 - **フロントエンド**: https://zairyo.vercel.app

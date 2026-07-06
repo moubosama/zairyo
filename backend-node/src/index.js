@@ -2,20 +2,24 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
-import packagesRouter from './routes/packages.js';
-import projectsRouter from './routes/projects.js';
-import authRouter from './routes/auth.js';
-import unitPricesRouter from './routes/unitPrices.js';
-import productsRouter from './routes/products.js';
 
 dotenv.config();
+
+// configはdotenv後にimport（JWT_SECRETの本番チェックが走る）
+const { ALLOWED_ORIGINS, isProduction } = await import('./config.js');
+const { default: packagesRouter } = await import('./routes/packages.js');
+const { default: projectsRouter } = await import('./routes/projects.js');
+const { default: authRouter } = await import('./routes/auth.js');
+const { default: unitPricesRouter } = await import('./routes/unitPrices.js');
+const { default: productsRouter } = await import('./routes/products.js');
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 8000;
 
 // Middleware
-app.use(cors());
+// ALLOWED_ORIGINS（カンマ区切り）が設定されていればそのオリジンのみ許可
+app.use(cors(ALLOWED_ORIGINS ? { origin: ALLOWED_ORIGINS } : {}));
 app.use(express.json());
 
 // Make prisma available to routes
@@ -36,7 +40,9 @@ app.get('/api/health', (req, res) => {
 // Error handling
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ error: err.message });
+  // 本番では内部エラーの詳細をクライアントに返さない
+  const message = isProduction ? 'Internal server error' : err.message;
+  res.status(500).json({ error: message });
 });
 
 app.listen(PORT, () => {

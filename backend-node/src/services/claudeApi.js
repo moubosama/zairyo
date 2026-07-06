@@ -160,7 +160,7 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
 8. 特殊仕様（床暖房、室内窓、カウンター等）の有無
 
 【面積の換算】
-- 1畳 = 約1.65㎡（中京間）
+- 1帖 = 1.65㎡ で統一（このシステムの実績データ基準）
 - 1坪 = 3.306㎡
 - 畳数が記載されている場合はそのまま使用
 - 寸法のみの場合は面積を計算
@@ -287,7 +287,7 @@ async function analyzeWithGemini(filePath, base64Data, mimeType) {
 
     const response = await result.response;
     const text = response.text();
-    return parseJsonResponse(text);
+    return { parsed: parseJsonResponse(text), rawText: text };
   } catch (error) {
     console.error('Gemini API error:', error.message);
     return null;
@@ -343,7 +343,7 @@ async function analyzeWithClaude(filePath, base64Data, mimeType) {
 
     console.log('Claude API response received');
     const text = response.content[0].text;
-    return parseJsonResponse(text);
+    return { parsed: parseJsonResponse(text), rawText: text };
   } catch (error) {
     console.error('Claude API error:', error.message);
     console.error('Claude API error details:', JSON.stringify(error, null, 2));
@@ -373,50 +373,6 @@ function parseJsonResponse(text) {
 }
 
 /**
- * 複数のAI結果をマージ（平均化）
- */
-function mergeResults(results) {
-  if (results.length === 0) return null;
-  if (results.length === 1) return results[0];
-
-  // 基本構造は最初の結果を使用
-  const merged = JSON.parse(JSON.stringify(results[0]));
-
-  // 数値フィールドを平均化
-  const numericFields = ['total_floor_area_sqm', 'partition_wall_length_m', 'ceiling_height_mm'];
-  numericFields.forEach(field => {
-    const values = results.map(r => r[field]).filter(v => v !== undefined && v !== null);
-    if (values.length > 0) {
-      merged[field] = Math.round(values.reduce((a, b) => a + b, 0) / values.length * 10) / 10;
-    }
-  });
-
-  // 部屋の面積を平均化
-  if (merged.rooms && merged.rooms.length > 0) {
-    merged.rooms.forEach((room, i) => {
-      const areas = results
-        .map(r => r.rooms && r.rooms[i] ? r.rooms[i].area_sqm : null)
-        .filter(v => v !== null);
-      if (areas.length > 0) {
-        room.area_sqm = Math.round(areas.reduce((a, b) => a + b, 0) / areas.length * 10) / 10;
-      }
-    });
-  }
-
-  // 建具数は最大値を採用（見落としを防ぐ）
-  if (merged.openings) {
-    const maxOpenings = Math.max(...results.map(r => (r.openings || []).length));
-    // 最も多くの建具を検出した結果を採用
-    const bestResult = results.find(r => (r.openings || []).length === maxOpenings);
-    if (bestResult && bestResult.openings) {
-      merged.openings = bestResult.openings;
-    }
-  }
-
-  return merged;
-}
-
-/**
  * メイン解析関数
  * Gemini と Claude の両方で解析し、結果をマージ
  */
@@ -443,10 +399,13 @@ export async function analyzeDrawing(filePath, options = {}) {
   }
 
   // 両方のAPIを並行して呼び出し
-  const [geminiResult, claudeResult] = await Promise.all([
+  const [geminiRes, claudeRes] = await Promise.all([
     analyzeWithGemini(filePath, base64Data, mimeType),
     analyzeWithClaude(filePath, base64Data, mimeType)
   ]);
+
+  const geminiResult = geminiRes?.parsed || null;
+  const claudeResult = claudeRes?.parsed || null;
 
   console.log('=== AI解析結果の比較 ===');
   console.log('Gemini result:', geminiResult ? 'OK' : 'Failed');
@@ -488,6 +447,12 @@ export async function analyzeDrawing(filePath, options = {}) {
   // 警告・不一致を結果に添付（フロントのSpecConfirmで表示可能）
   validated._warnings = warnings;
   validated._ai_disagreements = disagreements;
+
+  // AI生テキスト（DB保存用: evalセット作成・デバッグの一次資料）
+  validated._raw_responses = {
+    gemini: geminiRes?.rawText || null,
+    claude: claudeRes?.rawText || null,
+  };
 
   console.log('--- 照合・検証結果 ---');
   console.log('  partition_wall_length_m:', validated.partition_wall_length_m);

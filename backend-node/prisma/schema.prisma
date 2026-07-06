@@ -24,6 +24,8 @@ model Project {
   name         String
   packageId    Int?
   package      Package?       @relation(fields: [packageId], references: [id])
+  companyId    Int?           // null = 未ログイン（ゲスト）のプロジェクト
+  company      Company?       @relation(fields: [companyId], references: [id])
   status       String         @default("draft")
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -74,17 +76,8 @@ model Company {
   createdAt         DateTime                  @default(now())
   updatedAt         DateTime                  @updatedAt
   unitPrices        UnitPrice[]
-  projects          CompanyProject[]
+  projects          Project[]
   productSelections CompanyProductSelection[]
-}
-
-// 会社とプロジェクトの紐付け
-model CompanyProject {
-  id        Int      @id @default(autoincrement())
-  companyId Int
-  company   Company  @relation(fields: [companyId], references: [id])
-  projectId Int
-  createdAt DateTime @default(now())
 }
 
 // 単価マスタ（会社ごと）

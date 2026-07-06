@@ -6,7 +6,7 @@
  * AIが守らない前提で、サーバー側で強制する。
  */
 
-const JOU_TO_SQM = 1.65; // 江戸間基準
+const JOU_TO_SQM = 1.65; // 中京間相当（実績データに合わせた値。不動産表示規約は1畳=1.62㎡以上）
 
 // 間取りタイプ別の間仕切壁延長バンド（実績データより）
 const PARTITION_WALL_BANDS = {
@@ -182,6 +182,7 @@ export function validateAndNormalize(raw, options = {}) {
     data.ceiling_height_mm = 2400;
   }
 
+  data._validated = true; // calculator側の重複クランプを無効化するフラグ
   return { data, warnings };
 }
 

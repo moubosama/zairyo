@@ -615,18 +615,21 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   }
 
   // 間仕切壁延長の妥当性チェック
+  // ※ aiReadingValidator で検証済み（_validated=true）の場合は二重補正しない
   // AIが躯体壁（外周壁）を含めて計算している場合、値が大きすぎる
   // 実績: 2LDK(50㎡)=15-25m, 3LDK(70㎡)=20-30m
-  const maxPartitionWallLength = totalFloorArea * PARTITION_WALL_MAX_RATIO;
-  const minPartitionWallLength = totalFloorArea * PARTITION_WALL_MIN_RATIO;
+  if (!data._validated) {
+    const maxPartitionWallLength = totalFloorArea * PARTITION_WALL_MAX_RATIO;
+    const minPartitionWallLength = totalFloorArea * PARTITION_WALL_MIN_RATIO;
 
-  if (partitionWallLength > maxPartitionWallLength && totalFloorArea > 0) {
-    console.log(`間仕切壁延長を補正: ${partitionWallLength}m → ${maxPartitionWallLength}m (AIが躯体壁を含めた可能性)`);
-    partitionWallLength = maxPartitionWallLength;
-  }
-  if (partitionWallLength < minPartitionWallLength && totalFloorArea > 0) {
-    console.log(`間仕切壁延長を補正: ${partitionWallLength}m → ${minPartitionWallLength}m (最小値)`);
-    partitionWallLength = minPartitionWallLength;
+    if (partitionWallLength > maxPartitionWallLength && totalFloorArea > 0) {
+      console.log(`間仕切壁延長を補正: ${partitionWallLength}m → ${maxPartitionWallLength}m (AIが躯体壁を含めた可能性)`);
+      partitionWallLength = maxPartitionWallLength;
+    }
+    if (partitionWallLength < minPartitionWallLength && totalFloorArea > 0) {
+      console.log(`間仕切壁延長を補正: ${partitionWallLength}m → ${minPartitionWallLength}m (最小値)`);
+      partitionWallLength = minPartitionWallLength;
+    }
   }
 
   // 躯体壁（外周壁）の延長を推定

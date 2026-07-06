@@ -60,7 +60,7 @@
       <div v-if="store.loading" class="flex flex-col items-center">
         <div class="spinner mb-4"></div>
         <p class="text-gold">AI が図面を解析中...</p>
-        <p class="text-sm text-gray-400 mt-2">Gemini 2.5 Flash で処理しています</p>
+        <p class="text-sm text-gray-400 mt-2">Gemini + Claude のデュアルAIで処理しています</p>
       </div>
 
       <!-- Default State -->
@@ -102,7 +102,7 @@
             class="bg-dark-600 rounded p-2 text-sm"
           >
             <div class="font-medium">{{ room.name }}</div>
-            <div class="text-gray-400">{{ room.area_sqm }}㎡ ({{ room.area_tsubo }}畳)</div>
+            <div class="text-gray-400">{{ room.area_sqm }}㎡<span v-if="room.area_jou">（約{{ room.area_jou }}帖）</span></div>
           </div>
         </div>
       </div>

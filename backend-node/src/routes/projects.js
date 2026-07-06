@@ -2,30 +2,29 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import jwt from 'jsonwebtoken';
+import { optionalAuth, projectScope } from '../middleware/auth.js';
 import { analyzeDrawing } from '../services/claudeApi.js';
 import { calculateMaterials } from '../services/materialCalculator.js';
 import ExcelJS from 'exceljs';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'zairyo-secret-key-change-in-production';
-
-// オプショナル認証ミドルウェア（トークンがあれば検証、なくても通す）
-function optionalAuth(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (token) {
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
-      if (!err) {
-        req.companyId = decoded.companyId;
-      }
-    });
-  }
-  next();
-}
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
+
+// 全ルートでトークンがあれば検証（ゲスト利用も可、データはcompanyId単位で分離）
+router.use(optionalAuth);
+
+/**
+ * 所有権チェック付きでプロジェクトを取得
+ * 他社（または他ゲスト⇔ログイン間）のプロジェクトは404として扱う
+ */
+async function findOwnedProject(prisma, req, include = undefined) {
+  const id = parseInt(req.params.id);
+  if (Number.isNaN(id)) return null;
+  return prisma.project.findFirst({
+    where: { id, ...projectScope(req) },
+    include,
+  });
+}
 
 // ファイルアップロード設定
 const storage = multer.diskStorage({
@@ -36,12 +35,15 @@ const storage = multer.diskStorage({
   }
 });
 
+const ALLOWED_MIME_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+
 const upload = multer({
   storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB（フロントだけでなくAPI側でも強制）
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['.pdf', '.png', '.jpg', '.jpeg'];
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowedTypes.includes(ext)) {
+    if (allowedTypes.includes(ext) && ALLOWED_MIME_TYPES.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error('Invalid file type'));
@@ -54,6 +56,7 @@ router.get('/', async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
     const projects = await prisma.project.findMany({
+      where: projectScope(req),
       orderBy: { createdAt: 'desc' },
       include: {
         aiReadings: { orderBy: { createdAt: 'desc' }, take: 1 },
@@ -87,7 +90,8 @@ router.post('/', async (req, res) => {
     const project = await prisma.project.create({
       data: {
         name,
-        status: 'draft'
+        status: 'draft',
+        companyId: req.companyId ?? null
       }
     });
 
@@ -101,14 +105,11 @@ router.post('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
-    const project = await prisma.project.findUnique({
-      where: { id: parseInt(req.params.id) },
-      include: {
-        package: true,
-        aiReadings: true,
-        overrides: true,
-        materialLists: true
-      }
+    const project = await findOwnedProject(prisma, req, {
+      package: true,
+      aiReadings: true,
+      overrides: true,
+      materialLists: true
     });
 
     if (!project) {
@@ -140,7 +141,11 @@ router.get('/:id', async (req, res) => {
 router.post('/:id/upload', upload.single('file'), async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
-    const projectId = parseInt(req.params.id);
+    const project = await findOwnedProject(prisma, req);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const projectId = project.id;
     console.log('Upload request for project:', projectId);
 
     if (!req.file) {
@@ -158,13 +163,17 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
     });
     console.log('AI analysis complete');
 
-    // 解析結果を保存
+    // AI生テキストはrawResponseへ、正規化済みJSONはparsedDataへ
+    // （生テキストは後日のevalセット作成・デバッグの一次資料になる）
+    const rawResponses = analysisResult._raw_responses || null;
+    delete analysisResult._raw_responses;
+
     const aiReading = await prisma.aiReading.create({
       data: {
         projectId,
         fileName: req.file.originalname,
         filePath: req.file.path,
-        rawResponse: JSON.stringify(analysisResult),
+        rawResponse: JSON.stringify(rawResponses),
         parsedData: JSON.stringify(analysisResult)
       }
     });
@@ -189,7 +198,11 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
 router.post('/:id/overrides', async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
-    const projectId = parseInt(req.params.id);
+    const project = await findOwnedProject(prisma, req);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const projectId = project.id;
     const { overrides } = req.body;
 
     // 既存のオーバーライドを削除して新規作成
@@ -215,20 +228,17 @@ router.post('/:id/overrides', async (req, res) => {
 });
 
 // POST /api/projects/:id/calculate - 資材計算実行
-router.post('/:id/calculate', optionalAuth, async (req, res) => {
+router.post('/:id/calculate', async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
-    const projectId = parseInt(req.params.id);
 
-    // プロジェクトと関連データを取得
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      include: {
-        package: true,
-        aiReadings: { orderBy: { createdAt: 'desc' }, take: 1 },
-        overrides: true
-      }
+    // プロジェクトと関連データを取得（所有権チェック込み）
+    const project = await findOwnedProject(prisma, req, {
+      package: true,
+      aiReadings: { orderBy: { createdAt: 'desc' }, take: 1 },
+      overrides: true
     });
+    const projectId = project?.id;
 
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
@@ -364,7 +374,11 @@ router.post('/:id/calculate', optionalAuth, async (req, res) => {
 router.get('/:id/materials', async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
-    const projectId = parseInt(req.params.id);
+    const project = await findOwnedProject(prisma, req);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const projectId = project.id;
 
     const materialList = await prisma.materialList.findFirst({
       where: { projectId },
@@ -388,15 +402,11 @@ router.get('/:id/materials', async (req, res) => {
 router.get('/:id/export', async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
-    const projectId = parseInt(req.params.id);
-
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      include: {
-        package: true,
-        materialLists: { orderBy: { createdAt: 'desc' }, take: 1 }
-      }
+    const project = await findOwnedProject(prisma, req, {
+      package: true,
+      materialLists: { orderBy: { createdAt: 'desc' }, take: 1 }
     });
+    const projectId = project?.id;
 
     if (!project || project.materialLists.length === 0) {
       return res.status(404).json({ error: 'Material list not found' });
