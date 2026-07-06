@@ -1,0 +1,243 @@
+{
+  "document_type": "floor_plan",
+  "is_analyzable": true,
+  "property_name": "アルファステイツ新宮町",
+  "layout_type": "3LDK",
+  "outer_dimensions_mm": {
+    "width": 11500,
+    "depth": 5900
+  },
+  "total_floor_area_sqm": 67.3,
+  "partition_wall_length_m": 25.78,
+  "ceiling_height_mm": 2400,
+  "rooms": [
+    {
+      "name": "リビング・ダイニング",
+      "area_jou": "10.3",
+      "area_sqm_label": "16.75",
+      "area_sqm": 16.8,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "キッチン",
+      "area_jou": "3.4",
+      "area_sqm_label": "5.66",
+      "area_sqm": 5.7,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室(1)",
+      "area_jou": "6.0",
+      "area_sqm_label": "9.72",
+      "area_sqm": 9.7,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室(2)",
+      "area_jou": "5.0",
+      "area_sqm_label": "8.10",
+      "area_sqm": 8.1,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室(3)",
+      "area_jou": "4.7",
+      "area_sqm_label": "7.76",
+      "area_sqm": 7.8,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "玄関",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 1.87,
+      "floor_type": "tile",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "廊下",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 5.5,
+      "floor_type": "flooring",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "パウダールーム",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 3.08,
+      "floor_type": "cf",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "トイレ",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 1.25,
+      "floor_type": "cf",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "MB",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 0.54,
+      "floor_type": "tile",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "EPS",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 0.12,
+      "floor_type": "tile",
+      "area_source": "ai_estimate"
+    }
+  ],
+  "openings": [
+    {
+      "type": "片開き戸",
+      "width_mm": 800,
+      "height_mm": 2320,
+      "room": "洋室(1)"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 800,
+      "height_mm": 2320,
+      "room": "WIC"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 800,
+      "height_mm": 2320,
+      "room": "洋室(2)"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 905,
+      "height_mm": 2320,
+      "room": "クローゼット"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 800,
+      "height_mm": 2320,
+      "room": "洋室(3)"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 905,
+      "height_mm": 2320,
+      "room": "クローゼット"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2170,
+      "room": "パウダールーム"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 700,
+      "height_mm": 2170,
+      "room": "トイレ"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 800,
+      "height_mm": 2320,
+      "room": "クローゼット"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 800,
+      "height_mm": 2175,
+      "room": "玄関"
+    },
+    {
+      "type": "窓",
+      "width_mm": 600,
+      "height_mm": 1100,
+      "room": "洋室(1)"
+    },
+    {
+      "type": "窓",
+      "width_mm": 650,
+      "height_mm": 1100,
+      "room": "洋室(2)"
+    },
+    {
+      "type": "窓",
+      "width_mm": 850,
+      "height_mm": 1100,
+      "room": "洋室(3)"
+    },
+    {
+      "type": "窓",
+      "width_mm": 1800,
+      "height_mm": 1900,
+      "room": "リビング・ダイニング"
+    },
+    {
+      "type": "窓",
+      "width_mm": 1800,
+      "height_mm": 1900,
+      "room": "リビング・ダイニング"
+    }
+  ],
+  "equipment": {
+    "ub_size": "1416",
+    "kitchen": "I型2200",
+    "washstand": "W750"
+  },
+  "storage": [
+    {
+      "name": "ウォークインクローゼット",
+      "width_mm": 2400,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "クローゼット",
+      "width_mm": 2000,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "クローゼット",
+      "width_mm": 2320,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "クローゼット",
+      "width_mm": 885,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    }
+  ],
+  "special": [
+    {
+      "type": "床暖房",
+      "area_sqm": 3
+    }
+  ],
+  "total_area_source": "user_input",
+  "_validated": true,
+  "_warnings": [],
+  "_ai_disagreements": [
+    {
+      "field": "outer_dimensions_mm",
+      "gemini": "{\"width\":11090,\"depth\":5920}",
+      "claude": "{\"width\":11500,\"depth\":5900}",
+      "message": "両AIの外形寸法読み取りが不一致。要確認"
+    }
+  ]
+}

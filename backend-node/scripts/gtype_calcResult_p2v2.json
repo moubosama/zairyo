@@ -1,0 +1,14 @@
+{
+  "wall_area": 211.60999999999999,
+  "ceiling_area": 60.459999999999994,
+  "total_floor_area": 60.459999999999994,
+  "floor_area": 53.6,
+  "water_floor_area": 4.33,
+  "tile_area": 2.5300000000000002,
+  "door_count": 15,
+  "window_count": 5,
+  "partition_wall_length": 25.78,
+  "structural_wall_length": 34.990212917328755,
+  "pb_wall_sheets": 135,
+  "pb_ceiling_sheets": 39
+}
