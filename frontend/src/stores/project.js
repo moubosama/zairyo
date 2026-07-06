@@ -55,7 +55,7 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  async function uploadPlan(file) {
+  async function uploadPlan(file, totalAreaSqm = null) {
     if (!currentProject.value) {
       throw new Error('プロジェクトが作成されていません')
     }
@@ -65,6 +65,9 @@ export const useProjectStore = defineStore('project', () => {
     try {
       const formData = new FormData()
       formData.append('file', file)
+      if (totalAreaSqm) {
+        formData.append('total_area_sqm', totalAreaSqm)
+      }
 
       const response = await api.uploadPlan(currentProject.value.id, formData)
       // APIは { parsedData: {...} } を返すので、parsedDataを取り出す

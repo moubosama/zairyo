@@ -148,9 +148,14 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
     }
     console.log('File uploaded:', req.file.path);
 
-    // Claude APIで解析
-    console.log('Starting AI analysis...');
-    const analysisResult = await analyzeDrawing(req.file.path);
+    // Claude APIで解析（専有面積のユーザー入力があれば最優先で採用）
+    const userTotalAreaSqm = req.body.total_area_sqm
+      ? parseFloat(req.body.total_area_sqm)
+      : null;
+    console.log('Starting AI analysis...', userTotalAreaSqm ? `(専有面積入力: ${userTotalAreaSqm}㎡)` : '');
+    const analysisResult = await analyzeDrawing(req.file.path, {
+      userTotalAreaSqm: userTotalAreaSqm && userTotalAreaSqm > 0 ? userTotalAreaSqm : undefined,
+    });
     console.log('AI analysis complete');
 
     // 解析結果を保存

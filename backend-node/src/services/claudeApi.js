@@ -28,6 +28,12 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
   - 図面上の寸法線に書かれた数値（mm）を最優先で転記する
   - 目測による寸法推定は寸法線が読めない場合のみ
 
+■ 外形寸法の転記（必須）
+  - 図面の最も外側の寸法線から、住戸全体の横幅と奥行き（mm）を転記する
+  - 縦方向が複数区間に分かれている場合（例: 2350+950+2700）は合計値を入れる
+  - バルコニー・外部廊下・専用ポーチは含めない（住戸躯体の外形のみ）
+  - JSON の outer_dimensions_mm に {"width": 12450, "depth": 6000} の形式で入れる
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 【重要：面積換算ルール】
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -164,6 +170,7 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
 {
   "property_name": "物件名（図面タイトルから）",
   "layout_type": "2LDK",
+  "outer_dimensions_mm": { "width": 11300, "depth": 8450 },
   "total_floor_area_sqm": 65,
   "partition_wall_length_m": 22,
   "ceiling_height_mm": 2400,
@@ -366,10 +373,54 @@ function parseJsonResponse(text) {
 }
 
 /**
+ * 複数のAI結果をマージ（平均化）
+ */
+function mergeResults(results) {
+  if (results.length === 0) return null;
+  if (results.length === 1) return results[0];
+
+  // 基本構造は最初の結果を使用
+  const merged = JSON.parse(JSON.stringify(results[0]));
+
+  // 数値フィールドを平均化
+  const numericFields = ['total_floor_area_sqm', 'partition_wall_length_m', 'ceiling_height_mm'];
+  numericFields.forEach(field => {
+    const values = results.map(r => r[field]).filter(v => v !== undefined && v !== null);
+    if (values.length > 0) {
+      merged[field] = Math.round(values.reduce((a, b) => a + b, 0) / values.length * 10) / 10;
+    }
+  });
+
+  // 部屋の面積を平均化
+  if (merged.rooms && merged.rooms.length > 0) {
+    merged.rooms.forEach((room, i) => {
+      const areas = results
+        .map(r => r.rooms && r.rooms[i] ? r.rooms[i].area_sqm : null)
+        .filter(v => v !== null);
+      if (areas.length > 0) {
+        room.area_sqm = Math.round(areas.reduce((a, b) => a + b, 0) / areas.length * 10) / 10;
+      }
+    });
+  }
+
+  // 建具数は最大値を採用（見落としを防ぐ）
+  if (merged.openings) {
+    const maxOpenings = Math.max(...results.map(r => (r.openings || []).length));
+    // 最も多くの建具を検出した結果を採用
+    const bestResult = results.find(r => (r.openings || []).length === maxOpenings);
+    if (bestResult && bestResult.openings) {
+      merged.openings = bestResult.openings;
+    }
+  }
+
+  return merged;
+}
+
+/**
  * メイン解析関数
  * Gemini と Claude の両方で解析し、結果をマージ
  */
-export async function analyzeDrawing(filePath) {
+export async function analyzeDrawing(filePath, options = {}) {
   const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
   const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
 
@@ -432,7 +483,7 @@ export async function analyzeDrawing(filePath) {
   const { merged, disagreements } = reconcileDualResults(geminiResult, claudeResult);
 
   // サーバー側で検証・正規化を強制（帖数優先、実績バンドでクランプ等）
-  const { data: validated, warnings } = validateAndNormalize(merged);
+  const { data: validated, warnings } = validateAndNormalize(merged, options);
 
   // 警告・不一致を結果に添付（フロントのSpecConfirmで表示可能）
   validated._warnings = warnings;

@@ -30,6 +30,25 @@ function parseJou(value) {
 }
 
 /**
+ * 外形寸法（寸法線の転記値）から専有面積の推定アンカーを計算
+ * 外形（壁外々）×0.93 ≒ 壁芯ベース専有面積の近似
+ */
+function grossAreaAnchor(data) {
+  const dims = data.outer_dimensions_mm;
+  if (!dims?.width || !dims?.depth) return null;
+  const gross = (dims.width / 1000) * (dims.depth / 1000);
+  if (gross < 20 || gross > 200) return null; // 転記ミスの排除
+  // 外壁厚約200mm → 壁芯ベース専有面積 ≒ (W-0.2)×(D-0.2)
+  const wallCenter = ((dims.width - 200) / 1000) * ((dims.depth - 200) / 1000);
+  return {
+    gross: Math.round(gross * 10) / 10,
+    estimated: Math.round(wallCenter * 10) / 10,
+    min: Math.round(wallCenter * 0.93 * 10) / 10,
+    max: Math.round(gross * 10) / 10,
+  };
+}
+
+/**
  * メイン: AI解析結果を検証・正規化して返す
  * @returns { data: 正規化済み結果, warnings: [{field, message, before, after}] }
  */
@@ -60,7 +79,8 @@ export function validateAndNormalize(raw, options = {}) {
     }
   }
 
-  // ---------- 2. 総床面積: ユーザー入力があれば最優先、なければ部屋合計と照合 ----------
+  // ---------- 2. 総床面積: ユーザー入力 > 外形寸法アンカー > 部屋合計照合 ----------
+  const anchor = grossAreaAnchor(data);
   if (options.userTotalAreaSqm) {
     if (data.total_floor_area_sqm !== options.userTotalAreaSqm) {
       warnings.push({
@@ -72,6 +92,21 @@ export function validateAndNormalize(raw, options = {}) {
     }
     data.total_floor_area_sqm = options.userTotalAreaSqm;
     data.total_area_source = 'user_input';
+  } else if (anchor) {
+    const total = data.total_floor_area_sqm;
+    if (!total || total < anchor.min || total > anchor.max) {
+      warnings.push({
+        field: 'total_floor_area_sqm',
+        message: `AI値(${total}㎡)が外形寸法${data.outer_dimensions_mm.width}×${data.outer_dimensions_mm.depth}由来の範囲(${anchor.min}〜${anchor.max}㎡)外。寸法ベース推定値を採用`,
+        before: total,
+        after: anchor.estimated,
+      });
+      data.total_floor_area_sqm = anchor.estimated;
+      data.total_area_source = 'outer_dimensions';
+      data.total_floor_area_needs_review = true;
+    } else {
+      data.total_area_source = 'ai_estimate_verified'; // 寸法と整合
+    }
   } else if (Array.isArray(data.rooms) && data.rooms.length > 0) {
     const roomSum = data.rooms.reduce((s, r) => s + (r.area_sqm || 0), 0);
     const total = data.total_floor_area_sqm;
@@ -183,8 +218,45 @@ export function reconcileDualResults(geminiResult, claudeResult) {
     });
   }
 
+  // 外形寸法: 読めた方を採用。両方読めて不一致なら警告
+  if (!merged.outer_dimensions_mm?.width && b.outer_dimensions_mm?.width) {
+    merged.outer_dimensions_mm = b.outer_dimensions_mm;
+  } else if (
+    merged.outer_dimensions_mm?.width &&
+    b.outer_dimensions_mm?.width &&
+    merged.outer_dimensions_mm.width !== b.outer_dimensions_mm.width
+  ) {
+    disagreements.push({
+      field: 'outer_dimensions_mm',
+      gemini: JSON.stringify(a.outer_dimensions_mm),
+      claude: JSON.stringify(b.outer_dimensions_mm),
+      message: '両AIの外形寸法読み取りが不一致。要確認',
+    });
+  }
+
+  const anchor = grossAreaAnchor(merged);
+
+  // 総床面積: アンカーがあれば乖離率に関わらずアンカーに近い方を採用
+  if (anchor && a.total_floor_area_sqm && b.total_floor_area_sqm) {
+    const va = a.total_floor_area_sqm;
+    const vb = b.total_floor_area_sqm;
+    merged.total_floor_area_sqm =
+      Math.abs(va - anchor.estimated) <= Math.abs(vb - anchor.estimated) ? va : vb;
+    if (Math.abs(va - vb) / Math.max(va, vb) > 0.15) {
+      disagreements.push({
+        field: 'total_floor_area_sqm',
+        gemini: va,
+        claude: vb,
+        message: '両AIの読み取りが15%以上乖離。外形寸法に近い方を採用',
+      });
+      merged.total_floor_area_sqm_needs_review = true;
+    }
+  }
+
   // 数値フィールド: 15%以上乖離したら要確認フラグ（平均はしない）
-  const numericFields = ['total_floor_area_sqm', 'partition_wall_length_m'];
+  const numericFields = anchor && a.total_floor_area_sqm && b.total_floor_area_sqm
+    ? ['partition_wall_length_m']
+    : ['total_floor_area_sqm', 'partition_wall_length_m'];
   numericFields.forEach((field) => {
     const va = a[field];
     const vb = b[field];
@@ -195,7 +267,12 @@ export function reconcileDualResults(geminiResult, claudeResult) {
         claude: vb,
         message: '両AIの読み取りが15%以上乖離。要確認',
       });
-      merged[field] = Math.min(va, vb); // 過大計上を避け小さい方を仮採用
+      if (field === 'total_floor_area_sqm' && anchor) {
+        merged[field] =
+          Math.abs(va - anchor.estimated) <= Math.abs(vb - anchor.estimated) ? va : vb;
+      } else {
+        merged[field] = Math.min(va, vb); // 過大計上を避け小さい方を仮採用
+      }
       merged[`${field}_needs_review`] = true;
     }
   });

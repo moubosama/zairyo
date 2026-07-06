@@ -19,6 +19,23 @@
       </div>
     </div>
 
+    <!-- 専有面積入力（任意・最優先で採用される） -->
+    <div class="card mb-6">
+      <label class="text-sm text-gray-400 block mb-2">
+        専有面積（㎡）
+        <span class="text-xs ml-2">任意入力・物件資料の値を入れるとAI読み取りより優先されます</span>
+      </label>
+      <input
+        v-model.number="totalAreaSqm"
+        type="number"
+        step="0.01"
+        min="0"
+        placeholder="例: 67.30"
+        class="bg-dark-600 border border-dark-400 rounded px-3 py-2 w-48 focus:border-gold focus:outline-none"
+        :disabled="store.loading"
+      />
+    </div>
+
     <!-- Upload Area -->
     <div
       @dragover.prevent="isDragging = true"
@@ -94,6 +111,22 @@
         <span class="text-sm text-gray-400">開口部</span>
         <p>ドア: {{ getDoorCount() }}枚 / 窓: {{ getWindowCount() }}枚</p>
       </div>
+
+      <!-- 検証警告・AI不一致（要確認項目） -->
+      <div
+        v-if="(store.aiReading._warnings?.length || 0) + (store.aiReading._ai_disagreements?.length || 0) > 0"
+        class="mt-4 border border-yellow-600 rounded p-3"
+      >
+        <span class="text-sm text-yellow-500 font-medium">⚠ 要確認項目</span>
+        <ul class="mt-2 text-sm text-gray-300 space-y-1">
+          <li v-for="(w, i) in store.aiReading._warnings" :key="'w' + i">
+            {{ w.message }}（{{ w.before }} → {{ w.after }}）
+          </li>
+          <li v-for="(d, i) in store.aiReading._ai_disagreements" :key="'d' + i">
+            {{ d.field }}: {{ d.message }}（Gemini: {{ d.gemini }} / Claude: {{ d.claude }}）
+          </li>
+        </ul>
+      </div>
     </div>
 
     <!-- Error -->
@@ -126,6 +159,7 @@ const store = useProjectStore()
 const fileInput = ref(null)
 const selectedFile = ref(null)
 const isDragging = ref(false)
+const totalAreaSqm = ref(null)
 
 const triggerFileInput = () => {
   if (!store.loading) {
@@ -165,7 +199,7 @@ const processFile = async (file) => {
   selectedFile.value = file
 
   try {
-    await store.uploadPlan(file)
+    await store.uploadPlan(file, totalAreaSqm.value)
   } catch (e) {
     console.error(e)
     selectedFile.value = null
