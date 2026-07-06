@@ -1,0 +1,234 @@
+{
+  "document_type": "floor_plan",
+  "is_analyzable": true,
+  "property_name": "Gタイプ",
+  "layout_type": "3LDK",
+  "outer_dimensions_mm": {
+    "width": 11500,
+    "depth": 9460
+  },
+  "total_floor_area_sqm": 67.3,
+  "partition_wall_length_m": 15.691,
+  "ceiling_height_mm": 2400,
+  "rooms": [
+    {
+      "name": "洋室 (1)",
+      "area_jou": "6.0",
+      "area_sqm": 9.9,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "洋室 (2)",
+      "area_jou": "5.0",
+      "area_sqm": 8.3,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "洋室 (3)",
+      "area_jou": "4.7",
+      "area_sqm": 7.8,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "リビング・ダイニング",
+      "area_jou": "10.3",
+      "area_sqm": 17,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "キッチン",
+      "area_jou": "3.4",
+      "area_sqm": 5.6,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "廊下",
+      "area_jou": null,
+      "area_sqm": null,
+      "floor_type": "flooring"
+    },
+    {
+      "name": "玄関",
+      "area_jou": null,
+      "area_sqm": null,
+      "floor_type": "tile"
+    },
+    {
+      "name": "トイレ",
+      "area_jou": null,
+      "area_sqm": null,
+      "floor_type": "cf"
+    },
+    {
+      "name": "パウダールーム",
+      "area_jou": null,
+      "area_sqm": null,
+      "floor_type": "cf"
+    }
+  ],
+  "openings": [
+    {
+      "type": "片開き戸",
+      "width_mm": null,
+      "height_mm": null,
+      "room": "玄関"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": null,
+      "height_mm": null,
+      "room": "洋室 (1)"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": null,
+      "height_mm": null,
+      "room": "洋室 (2)"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": null,
+      "height_mm": null,
+      "room": "洋室 (3)"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": null,
+      "height_mm": null,
+      "room": "トイレ"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": null,
+      "height_mm": null,
+      "room": "パウダールーム"
+    },
+    {
+      "type": "引違い戸",
+      "width_mm": null,
+      "height_mm": null,
+      "room": "リビング・ダイニング"
+    },
+    {
+      "type": "窓",
+      "width_mm": 850,
+      "height_mm": 1125,
+      "room": "洋室 (2)"
+    },
+    {
+      "type": "窓",
+      "width_mm": 850,
+      "height_mm": 1125,
+      "room": "洋室 (1)"
+    },
+    {
+      "type": "窓",
+      "width_mm": 600,
+      "height_mm": 1275,
+      "room": "キッチン"
+    },
+    {
+      "type": "窓",
+      "width_mm": 850,
+      "height_mm": null,
+      "room": "洋室 (3)"
+    },
+    {
+      "type": "引違い戸",
+      "width_mm": 1700,
+      "height_mm": null,
+      "room": "リビング・ダイニング"
+    }
+  ],
+  "equipment": {
+    "ub_size": "1416",
+    "kitchen": "I型2400",
+    "washstand": null
+  },
+  "storage": [
+    {
+      "name": "クローゼット",
+      "width_mm": 950,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "クローゼット",
+      "width_mm": 950,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "クローゼット",
+      "width_mm": 980,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "ウォークインクローゼット",
+      "width_mm": 2075,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "下足入",
+      "width_mm": 850,
+      "has_makuradana": false,
+      "has_hanger_pipe": false
+    },
+    {
+      "name": "MB",
+      "width_mm": 450,
+      "has_makuradana": false,
+      "has_hanger_pipe": false
+    },
+    {
+      "name": "PS",
+      "width_mm": null,
+      "has_makuradana": false,
+      "has_hanger_pipe": false
+    }
+  ],
+  "special": [
+    {
+      "name": "バルコニー",
+      "width_mm": 1700,
+      "depth_mm": 1940
+    },
+    {
+      "name": "EPS",
+      "width_mm": null,
+      "depth_mm": null
+    },
+    {
+      "name": "オープン棚",
+      "width_mm": null,
+      "depth_mm": null
+    }
+  ],
+  "partition_wall_length_m_needs_review": true,
+  "total_area_source": "user_input",
+  "partition_wall_needs_review": true,
+  "_validated": true,
+  "_warnings": [
+    {
+      "field": "partition_wall_length_m",
+      "message": "3LDKの実績下限(20m)未満。読み落としの可能性",
+      "before": 15.691,
+      "after": 15.691
+    }
+  ],
+  "_ai_disagreements": [
+    {
+      "field": "partition_wall_length_m",
+      "gemini": 15.691,
+      "claude": 26.5,
+      "message": "両AIの読み取りが15%以上乖離。要確認"
+    }
+  ]
+}

@@ -1,0 +1,196 @@
+{
+  "document_type": "floor_plan",
+  "is_analyzable": true,
+  "property_name": "アルファステイツ新宮町",
+  "layout_type": "3LDK",
+  "outer_dimensions_mm": {
+    "width": 9190,
+    "depth": 7000
+  },
+  "total_floor_area_sqm": 67.3,
+  "partition_wall_length_m": 20.352,
+  "ceiling_height_mm": 2400,
+  "rooms": [
+    {
+      "name": "洋室1",
+      "area_jou": "6.0",
+      "area_sqm": 9.9,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "洋室2",
+      "area_jou": "5.0",
+      "area_sqm": 8.3,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "洋室3",
+      "area_jou": "4.7",
+      "area_sqm": 7.8,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "LDK",
+      "area_jou": "10.3",
+      "area_sqm": 17,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "キッチン",
+      "area_jou": "3.4",
+      "area_sqm": 5.6,
+      "floor_type": "flooring",
+      "area_source": "jou_label"
+    },
+    {
+      "name": "玄関",
+      "area_jou": null,
+      "area_sqm": 3.08,
+      "floor_type": "tile",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "パウダールーム",
+      "area_jou": null,
+      "area_sqm": 3.235,
+      "floor_type": "cf",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "トイレ",
+      "area_jou": null,
+      "area_sqm": 1.345,
+      "floor_type": "cf",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "廊下",
+      "area_jou": null,
+      "area_sqm": 11.13,
+      "floor_type": "flooring",
+      "area_source": "ai_estimate"
+    }
+  ],
+  "openings": [
+    {
+      "type": "片開き戸",
+      "width_mm": 850,
+      "height_mm": 2000,
+      "room": "玄関"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2080,
+      "room": "パウダールーム"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 605,
+      "height_mm": 2003,
+      "room": "トイレ"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 835,
+      "height_mm": null,
+      "room": "洋室(2)クローゼット"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 735,
+      "height_mm": null,
+      "room": "洋室(3)クローゼット"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 800,
+      "height_mm": 2000,
+      "room": "洋室(2)"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 780,
+      "height_mm": null,
+      "room": "洋室(3)"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 660,
+      "height_mm": null,
+      "room": "ウォークインクローゼット"
+    },
+    {
+      "type": "窓",
+      "width_mm": 1125,
+      "height_mm": null,
+      "room": "洋室(2)"
+    },
+    {
+      "type": "窓",
+      "width_mm": 1275,
+      "height_mm": null,
+      "room": "リビング・ダイニング"
+    },
+    {
+      "type": "窓",
+      "width_mm": 1125,
+      "height_mm": null,
+      "room": "洋室(3)"
+    }
+  ],
+  "equipment": {
+    "ub_size": "1416",
+    "kitchen": "I型2400",
+    "washstand": "W750"
+  },
+  "storage": [
+    {
+      "name": "WIC",
+      "width_mm": 2400,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "クローゼット (洋室2)",
+      "width_mm": 2005,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "クローゼット (洋室3)",
+      "width_mm": 950,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "クローゼット (パウダールーム)",
+      "width_mm": 760,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    }
+  ],
+  "special": [],
+  "partition_wall_length_m_needs_review": true,
+  "total_area_source": "user_input",
+  "_validated": true,
+  "_warnings": [],
+  "_ai_disagreements": [
+    {
+      "field": "outer_dimensions_mm",
+      "gemini": "{\"width\":9190,\"depth\":7000}",
+      "claude": "{\"width\":11500,\"depth\":5900}",
+      "message": "両AIの外形寸法読み取りが不一致。要確認"
+    },
+    {
+      "field": "partition_wall_length_m",
+      "gemini": 20.352,
+      "claude": 24,
+      "message": "両AIの読み取りが15%以上乖離。要確認"
+    }
+  ]
+}
