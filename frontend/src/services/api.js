@@ -19,7 +19,13 @@ export const fetchProjects = () => api.get('/projects')
 export const createProject = (data) => api.post('/projects', data)
 export const fetchProject = (id) => api.get(`/projects/${id}`)
 export const uploadPlan = (id, formData) => api.post(`/projects/${id}/upload`, formData, {
-  headers: { 'Content-Type': 'multipart/form-data' },
+  headers: {
+    'Content-Type': 'multipart/form-data',
+    // 簡易アップロードガード（バックエンドのUPLOAD_GUARD_TOKENと一致させる）
+    ...(import.meta.env.VITE_UPLOAD_TOKEN
+      ? { 'X-Upload-Token': import.meta.env.VITE_UPLOAD_TOKEN }
+      : {}),
+  },
 })
 export const saveOverrides = (id, overrides) => api.post(`/projects/${id}/overrides`, { overrides })
 export const calculateMaterials = (id) => api.post(`/projects/${id}/calculate`)

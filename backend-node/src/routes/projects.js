@@ -140,6 +140,13 @@ router.get('/:id', async (req, res) => {
 // POST /api/projects/:id/upload - 図面アップロード+AI解析
 router.post('/:id/upload', upload.single('file'), async (req, res) => {
   try {
+    // 簡易アップロードガード（テスト版の課金露出対策）
+    // UPLOAD_GUARD_TOKEN が設定されている場合のみ有効
+    const guardToken = process.env.UPLOAD_GUARD_TOKEN;
+    if (guardToken && req.headers['x-upload-token'] !== guardToken) {
+      return res.status(403).json({ error: 'アップロードが許可されていません' });
+    }
+
     const prisma = req.app.get('prisma');
     const project = await findOwnedProject(prisma, req);
     if (!project) {

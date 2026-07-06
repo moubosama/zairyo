@@ -283,15 +283,28 @@ async function analyzeWithClaude(filePath, base64Data, mimeType) {
     return null;
   }
 
-  // ClaudeはPDFを直接サポートしていないので、画像のみ
-  if (mimeType === 'application/pdf') {
-    console.log('Claude does not support PDF directly, skipping...');
-    return null;
-  }
-
   try {
     console.log('Calling Claude API with model: claude-opus-4-8');
     const anthropic = new Anthropic({ apiKey: claudeKey });
+
+    // PDFはdocumentブロック、画像はimageブロックで送信
+    const mediaBlock = mimeType === 'application/pdf'
+      ? {
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: base64Data
+          }
+        }
+      : {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mimeType,
+            data: base64Data
+          }
+        };
 
     const response = await anthropic.messages.create({
       model: 'claude-opus-4-8',
@@ -300,14 +313,7 @@ async function analyzeWithClaude(filePath, base64Data, mimeType) {
         {
           role: 'user',
           content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mimeType,
-                data: base64Data
-              }
-            },
+            mediaBlock,
             {
               type: 'text',
               text: SYSTEM_PROMPT + '\n\nこの図面を解析して、JSON形式で情報を抽出してください。'
