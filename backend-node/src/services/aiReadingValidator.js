@@ -91,11 +91,31 @@ export function validateAndNormalize(raw, options = {}) {
     data.document_type_needs_review = true;
   }
 
-  // ---------- 1. 部屋面積: 帖数記載があれば帖数×1.65で強制上書き ----------
+  // ---------- 1. 部屋面積: 優先順位 = ㎡ラベル転記 > 帖数×1.65 > AI目測 ----------
   if (Array.isArray(data.rooms)) {
     for (const room of data.rooms) {
+      const sqmLabel = typeof room.area_sqm_label === 'number' ? room.area_sqm_label
+        : parseJou(room.area_sqm_label); // "9.72㎡"のような文字列にも対応
       const jou = parseJou(room.area_jou);
-      if (jou) {
+
+      if (sqmLabel && sqmLabel > 0.5 && sqmLabel < 100) {
+        // 図面に㎡が明記されていれば最優先（帖換算より正確）
+        // 帖数も併記されている場合は整合チェック（乖離15%超は転記ミスの可能性）
+        if (jou) {
+          const jouBasedSqm = jou * JOU_TO_SQM;
+          if (Math.abs(sqmLabel - jouBasedSqm) / jouBasedSqm > 0.15) {
+            warnings.push({
+              field: `rooms.${room.name}.area_sqm_label`,
+              message: `㎡ラベル(${sqmLabel}㎡)と帖数(${jou}帖≒${Math.round(jouBasedSqm * 10) / 10}㎡)が15%以上乖離。転記ミスの可能性`,
+              before: sqmLabel,
+              after: sqmLabel,
+            });
+            room.area_needs_review = true;
+          }
+        }
+        room.area_sqm = Math.round(sqmLabel * 10) / 10;
+        room.area_source = 'sqm_label';
+      } else if (jou) {
         const jouBasedSqm = Math.round(jou * JOU_TO_SQM * 10) / 10;
         const aiSqm = room.area_sqm;
         if (aiSqm && Math.abs(aiSqm - jouBasedSqm) / jouBasedSqm > 0.1) {
@@ -111,6 +131,22 @@ export function validateAndNormalize(raw, options = {}) {
       } else if (room.area_sqm) {
         room.area_source = 'ai_estimate';
       }
+    }
+  }
+
+  // ---------- 1.5 外形寸法の妥当性: 専有面積入力と矛盾する転記は棄却 ----------
+  // 外形グロス面積は専有面積の1.0〜1.3倍程度に収まるはず（壁厚+PS/MB分）
+  if (options.userTotalAreaSqm && data.outer_dimensions_mm?.width && data.outer_dimensions_mm?.depth) {
+    const gross = (data.outer_dimensions_mm.width / 1000) * (data.outer_dimensions_mm.depth / 1000);
+    const t = options.userTotalAreaSqm;
+    if (gross < t * 0.95 || gross > t * 1.3) {
+      warnings.push({
+        field: 'outer_dimensions_mm',
+        message: `外形寸法${data.outer_dimensions_mm.width}×${data.outer_dimensions_mm.depth}(グロス${Math.round(gross * 10) / 10}㎡)が専有面積${t}㎡と矛盾。誤読として棄却`,
+        before: `${data.outer_dimensions_mm.width}×${data.outer_dimensions_mm.depth}`,
+        after: null,
+      });
+      delete data.outer_dimensions_mm;
     }
   }
 
@@ -225,10 +261,24 @@ export function validateAndNormalize(raw, options = {}) {
  * デュアルAI結果のフィールド単位照合
  * 平均化ではなく「一致なら採用、乖離なら信頼できる方+警告」
  */
-export function reconcileDualResults(geminiResult, claudeResult) {
+export function reconcileDualResults(geminiResult, claudeResult, options = {}) {
   const results = [geminiResult, claudeResult].filter(Boolean);
   if (results.length === 0) return { merged: null, disagreements: [], isRejected: false };
-  if (results.length === 1) return { merged: results[0], disagreements: [], isRejected: false };
+
+  // 単一AIしか動いていない場合でも図面種別ゲートは機能させる
+  // （片方のAPIキーが無効な状態＝ゲートが最も必要な状況で素通りさせない）
+  if (results.length === 1) {
+    const only = results[0];
+    const nonFloorPlan = only.document_type && only.document_type !== 'floor_plan';
+    const notAnalyzable = only.is_analyzable === false;
+    if (nonFloorPlan || notAnalyzable) {
+      only.is_rejected = true;
+      only.rejection_reason = nonFloorPlan
+        ? `この画像は平面図ではありません（判定: ${only.document_type}）`
+        : '資材計算に必要な情報（寸法・間取り）を読み取れませんでした';
+    }
+    return { merged: only, disagreements: [], isRejected: !!only.is_rejected };
+  }
 
   const [a, b] = results;
   const merged = JSON.parse(JSON.stringify(a));
@@ -305,6 +355,15 @@ export function reconcileDualResults(geminiResult, claudeResult) {
       claude: JSON.stringify(b.outer_dimensions_mm),
       message: '両AIの外形寸法読み取りが不一致。要確認',
     });
+    // 専有面積入力があれば、グロス面積が「専有×1.05〜1.15」に近い方を採用
+    if (options.userTotalAreaSqm) {
+      const target = options.userTotalAreaSqm * 1.1;
+      const grossOf = (d) => (d.width / 1000) * (d.depth / 1000);
+      merged.outer_dimensions_mm =
+        Math.abs(grossOf(a.outer_dimensions_mm) - target) <= Math.abs(grossOf(b.outer_dimensions_mm) - target)
+          ? a.outer_dimensions_mm
+          : b.outer_dimensions_mm;
+    }
   }
 
   const anchor = grossAreaAnchor(merged);

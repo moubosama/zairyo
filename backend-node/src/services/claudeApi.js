@@ -180,6 +180,7 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
     {
       "name": "（部屋名）",
       "area_jou": null,
+      "area_sqm_label": null,
       "area_sqm": null,
       "floor_type": "flooring"
     }
@@ -201,6 +202,8 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
 ⚠️【重要】上記はフォーマット例です。例の数値やプレースホルダをそのまま出力にコピーしてはいけません。
   - 図面に帖数・寸法の記載が見つからない場合は、推測せず必ず null を返すこと
   - area_jou は図面に「○○帖」と明記されている場合のみ、その数値を文字列で転記する
+  - area_sqm_label は図面に「9.72㎡」「16.75m2」のように面積が数値で明記されている場合のみ、
+    その数値を転記する（平面詳細図では「9.72㎡(6.0帖)」の形式で併記されることが多い）
   - 記載がない場合に例の値（14.5, 6.0等）をコピーするのは絶対に禁止
 
 【document_type の判定】
@@ -412,7 +415,7 @@ export async function analyzeDrawing(filePath, options = {}) {
   }
 
   // 結果を照合（平均化ではなくフィールド単位の突き合わせ）
-  const { merged, disagreements } = reconcileDualResults(geminiResult, claudeResult);
+  const { merged, disagreements } = reconcileDualResults(geminiResult, claudeResult, options);
 
   // サーバー側で検証・正規化を強制（帖数優先、実績バンドでクランプ等）
   const { data: validated, warnings } = validateAndNormalize(merged, options);
