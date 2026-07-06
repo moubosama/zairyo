@@ -962,7 +962,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     materials.push({
       category: '床材',
       name: 'フローリング',
-      spec: packageSpecs?.flooring || 'DAIKEN MYフロア (1×6)',
+      spec: packageSpecs?.flooring || 'DAIKEN MYフロア ΔLL(I)-4 遮音直貼り',
       unit: '㎡',
       quantity: flooringQty,
       calculation: `居室床面積 ${flooringArea.toFixed(1)}㎡ × ${LOSS_RATE_10}`
@@ -973,7 +973,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '床材',
     name: '床見切り',
-    spec: 'DAIKEN MYフロア用',
+    spec: 'DAIKEN MYフロア ΔLL(I)-4用',
     unit: '本',
     quantity: 4,
     calculation: '標準4本'
@@ -1251,7 +1251,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     calculation: `折戸 ${doorFoldCount}枚 × ${KUTSUZURI_CLOSET_LENGTH}m`
   });
 
-  // 天井クロス（量産品番）
+  // 天井クロス（サンゲツ SP 量産クロス）
+  // 意匠図仕上表: サンゲツ 量産クロス
   // 54ファイル実績: 52〜75㎡
   // 範囲制限を適用
   let ceilingClothArea = Math.ceil(ceilingArea);
@@ -1259,13 +1260,14 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '仕上材',
     name: '天井クロス貼り',
-    spec: '量産品番',
+    spec: 'サンゲツ SP（量産クロス）',
     unit: '㎡',
     quantity: ceilingClothArea,
     calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡（52〜75㎡）`
   });
 
-  // 壁クロス（量産品番）
+  // 壁クロス（サンゲツ SP 量産クロス）
+  // 意匠図仕上表: サンゲツ 量産クロス
   // 54ファイル実績: 187〜270㎡
   // 範囲制限を適用
   let wallClothArea = Math.ceil(wallArea);
@@ -1273,18 +1275,18 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '仕上材',
     name: '壁クロス貼り',
-    spec: '量産品番',
+    spec: 'サンゲツ SP（量産クロス）',
     unit: '㎡',
     quantity: wallClothArea,
     calculation: `壁面積 ${wallArea.toFixed(1)}㎡（187〜270㎡）`
   });
 
-  // アクセントクロス（1000番）
+  // アクセントクロス（サンゲツ 1000番台）
   // 7現場実績: 10㎡が標準
   materials.push({
     category: '仕上材',
     name: 'アクセントクロス貼り',
-    spec: '1000番',
+    spec: 'サンゲツ 1000番台',
     unit: '㎡',
     quantity: 10,
     calculation: '標準10㎡'
@@ -1329,7 +1331,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '建具',
     name: '片開き戸',
-    spec: packageSpecs?.doors || '既製品 W600〜850×H2080〜2175',
+    spec: packageSpecs?.doors || 'ニホンフラッシュ WD-1TA〜6C W600〜850×H2080〜2175',
     unit: '枚',
     quantity: singleDoorCount,
     calculation: `実績値 約${PER_UNIT.door_single_total}枚/戸`
@@ -1340,7 +1342,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '建具',
     name: '片引き戸',
-    spec: '既製品 W660〜760×H2075〜2170',
+    spec: 'ニホンフラッシュ WD-8A/8B W660〜760×H2075〜2170',
     unit: '枚',
     quantity: slideDoorCount,
     calculation: `実績値 約${PER_UNIT.door_slide_total}枚/戸`
@@ -1351,7 +1353,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '建具',
     name: '2枚折戸',
-    spec: 'クローゼット用 W605〜983×H2080〜2320',
+    spec: 'ニホンフラッシュ WD-12/120系 W605〜983×H2080〜2320',
     unit: '枚',
     quantity: foldDoorCount,
     calculation: `実績値 約${PER_UNIT.door_fold_total}枚/戸`
@@ -1433,19 +1435,20 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   const equipment = data.equipment || {};
 
   // UB（ユニットバス）
+  // 意匠図設備リスト: LIXIL リノビオP / BW（Gタイプ等）、INAX BW（一部）
   // 54ファイル実績: 1216, 1317, 1416, 1418 の4サイズが多い
   const ubSize = equipment.ub_size || '1216';
-  let ubSpec = packageSpecs?.ub || 'TOTO WT';
+  let ubSpec = packageSpecs?.ub || 'LIXIL リノビオP';
   if (ubSize.includes('1616') || ubSize.includes('1618')) {
-    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1616 電気式浴室乾燥機あり 1面アクセントパネル';
+    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1616 電気式浴室乾燥機付 アクセントパネル';
   } else if (ubSize.includes('1418')) {
-    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1418';
+    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1418 電気式浴室乾燥機付';
   } else if (ubSize.includes('1416')) {
-    ubSpec = packageSpecs?.ub || 'TOTO WT 1416';
+    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1416 電気式浴室乾燥機付';
   } else if (ubSize.includes('1317')) {
-    ubSpec = packageSpecs?.ub || 'TOTO WT 1317';
+    ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1317';
   } else {
-    ubSpec = packageSpecs?.ub || 'TOTO WT 1216';
+    ubSpec = packageSpecs?.ub || 'LIXIL BW 1216';
   }
   materials.push({
     category: '設備',
