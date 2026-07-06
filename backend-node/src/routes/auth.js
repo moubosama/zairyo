@@ -1,10 +1,9 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '../config.js';
 
 const router = express.Router();
-
-const JWT_SECRET = process.env.JWT_SECRET || 'zairyo-secret-key-change-in-production';
 const JWT_EXPIRES_IN = '7d';
 
 // POST /api/auth/register - 会社登録
