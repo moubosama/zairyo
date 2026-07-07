@@ -11,6 +11,7 @@ const { default: packagesRouter } = await import('./routes/packages.js');
 const { default: projectsRouter } = await import('./routes/projects.js');
 const { default: authRouter } = await import('./routes/auth.js');
 const { default: unitPricesRouter } = await import('./routes/unitPrices.js');
+const { default: adminRouter } = await import('./routes/admin.js');
 const { default: productsRouter } = await import('./routes/products.js');
 
 const app = express();
@@ -31,6 +32,7 @@ app.use('/api/packages', packagesRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/unit-prices', unitPricesRouter);
 app.use('/api/products', productsRouter);
+app.use('/api/admin', adminRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

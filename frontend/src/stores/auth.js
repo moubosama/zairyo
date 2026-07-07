@@ -36,11 +36,11 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function register(name, email, password) {
+  async function register(name, email, password, inviteCode) {
     loading.value = true
     error.value = null
     try {
-      const res = await api.register({ name, email, password })
+      const res = await api.register({ name, email, password, invite_code: inviteCode })
       setSession(res.data.token, res.data.company)
       return true
     } catch (e) {

@@ -10,7 +10,13 @@ const JWT_EXPIRES_IN = '7d';
 router.post('/register', async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
-    const { name, email, password } = req.body;
+    const { name, email, password, invite_code } = req.body;
+
+    // 招待コードチェック（REGISTRATION_CODE設定時のみ有効）
+    // アカウント発行を運営者の管理下に置くためのゲート
+    if (process.env.REGISTRATION_CODE && invite_code !== process.env.REGISTRATION_CODE) {
+      return res.status(403).json({ error: '招待コードが正しくありません' });
+    }
 
     // バリデーション
     if (!name || !email || !password) {

@@ -28,6 +28,13 @@
 
       <div class="space-y-4">
         <div v-if="mode === 'register'">
+          <label class="text-sm text-gray-400 block mb-1">招待コード</label>
+          <input
+            v-model="inviteCode"
+            type="text"
+            placeholder="運営者から受け取ったコード"
+            class="w-full bg-dark-600 border border-dark-400 rounded px-3 py-2 focus:border-gold focus:outline-none mb-4"
+          />
           <label class="text-sm text-gray-400 block mb-1">会社名</label>
           <input
             v-model="name"
@@ -87,6 +94,7 @@ const auth = useAuthStore()
 
 const mode = ref('login')
 const name = ref('')
+const inviteCode = ref('')
 const email = ref('')
 const password = ref('')
 
@@ -100,7 +108,7 @@ async function submit() {
   if (!canSubmit.value) return
   const ok = mode.value === 'login'
     ? await auth.login(email.value.trim(), password.value)
-    : await auth.register(name.value.trim(), email.value.trim(), password.value)
+    : await auth.register(name.value.trim(), email.value.trim(), password.value, inviteCode.value.trim())
   if (ok) {
     router.push(route.query.redirect || '/')
   }
