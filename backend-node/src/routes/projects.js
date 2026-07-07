@@ -107,9 +107,9 @@ router.get('/:id', async (req, res) => {
     const prisma = req.app.get('prisma');
     const project = await findOwnedProject(prisma, req, {
       package: true,
-      aiReadings: true,
+      aiReadings: { orderBy: { createdAt: 'desc' } },
       overrides: true,
-      materialLists: true
+      materialLists: { orderBy: { createdAt: 'desc' } }
     });
 
     if (!project) {
