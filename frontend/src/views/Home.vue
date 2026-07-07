@@ -63,7 +63,13 @@
     </div>
 
     <!-- Navigation -->
-    <div class="flex justify-end mt-8">
+    <div class="flex justify-between items-center mt-8">
+      <button
+        @click="goToHistory"
+        class="btn-secondary"
+      >
+        📋 過去の見積もりを見る
+      </button>
       <button
         @click="goNext"
         :disabled="!selectedFile || loading"
@@ -138,6 +144,10 @@ const formatFileSize = (bytes) => {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+const goToHistory = () => {
+  router.push('/history')
 }
 
 const goNext = async () => {
