@@ -57,6 +57,24 @@
       </div>
     </div>
 
+    <!-- 専有面積入力（任意・AI読み取りより優先される） -->
+    <div class="card mt-6">
+      <label class="text-sm text-gray-400 block mb-2">
+        専有面積（㎡）
+        <span class="text-xs ml-2">任意・物件資料の値を入れると解析精度が上がります</span>
+      </label>
+      <input
+        v-model.number="totalAreaSqm"
+        type="number"
+        step="0.01"
+        min="0"
+        placeholder="例: 67.30"
+        class="bg-dark-600 border border-dark-400 rounded px-3 py-2 w-48 focus:border-gold focus:outline-none"
+        :disabled="loading"
+        @click.stop
+      />
+    </div>
+
     <!-- Error -->
     <div v-if="store.error" class="card mt-6 text-red-400">
       <p>{{ store.error }}</p>
@@ -93,6 +111,7 @@ const fileInput = ref(null)
 const selectedFile = ref(null)
 const isDragging = ref(false)
 const projectName = ref('')
+const totalAreaSqm = ref(null)
 const loading = ref(false)
 
 onMounted(() => {
@@ -168,7 +187,7 @@ const goNext = async () => {
     // プロジェクト作成
     await store.createProject(projectName.value.trim())
     // アップロード
-    await store.uploadPlan(selectedFile.value)
+    await store.uploadPlan(selectedFile.value, totalAreaSqm.value)
     // 計算
     await store.calculateMaterials()
     router.push('/result')

@@ -5,42 +5,84 @@
 ZAIRYOは、工務店向けのリノベーション資材拾い自動化システムです。
 AI（Gemini + Claude API）による図面解析で、資材リスト作成を大幅に効率化します。
 
+**検証済み精度（2026-07時点・意匠図2タイプでeval実施）**: 部屋面積±1%以内、壁面積-1.7%、天井面積+2.3%（プロの手拾い比）。詳細は `backend-node/scripts/` のeval結果JSONを参照。
+
 ## 技術スタック
 
-- **フロントエンド**: Vue.js 3 + Vite + Tailwind CSS
-- **バックエンド**: Node.js + Express + Prisma ORM
-- **AI解析**: Google Gemini API (gemini-2.5-flash) + Claude API (claude-opus-4-8) - デュアルAI解析
-- **データベース**: SQLite
+- **フロントエンド**: Vue.js 3 + Vite + Tailwind CSS + Pinia（Vercelデプロイ）
+- **バックエンド**: Node.js + Express + Prisma ORM（Renderデプロイ）
+- **AI解析**: Google Gemini API (gemini-2.5-flash) + Claude API (claude-opus-4-8) - デュアルAI照合
+- **データベース**: PostgreSQL（Render管理。※SQLiteから移行済み。再デプロイでもデータは消えない）
+- **認証**: JWT（会社アカウント単位）+ ゲスト利用可
 - **Excel出力**: ExcelJS
+
+## AI解析アーキテクチャ（重要）
+
+「AIは転記のみ、計算と検証はサーバー」が設計原則。
+
+```
+図面アップロード
+  → Gemini / Claude が並行解析（転記優先プロンプト）
+  → reconcileDualResults: フィールド単位で照合（平均化はしない）
+  → validateAndNormalize: サーバー側検証を強制
+      - 部屋面積の優先順位: ㎡ラベル転記 > 帖数×1.65 > AI目測
+      - 専有面積: ユーザー入力 > 外形寸法アンカー > 部屋合計照合
+      - 外形寸法が専有面積と矛盾（グロスが0.95〜1.3倍の範囲外）なら棄却
+      - 間仕切壁は間取りタイプ別バンドでクランプ、床暖房はLDK×70%上限
+      - 図面種別ゲート: floor_plan以外は400で拒否（単一AI時も有効）
+  → _warnings / _ai_disagreements を結果に添付（要確認項目）
+  → materialCalculator が数量計算（validator検証済みなら二重補正しない）
+```
+
+- プロンプト例の数値コピー（捏造）は禁止指示済み。記載がないフィールドはnull
+- rawResponse にAI生テキストを保存（eval・デバッグの一次資料）
+- 関連ファイル: `services/claudeApi.js`（プロンプト+API呼び出し）、`services/aiReadingValidator.js`（検証・照合）、`services/materialCalculator.js`（数量計算 約2,300行）
+
+## 認証・データ分離の仕様
+
+| 利用形態 | 機能 | 履歴 |
+|---------|------|------|
+| ゲスト（未ログイン） | アップロード→見積→Excel すべて可 | 保存されない（一覧APIが空を返す） |
+| ログイン（会社アカウント） | 同上 | 会社ごとに分離して保存・履歴画面で再表示可 |
+
+- 登録は `REGISTRATION_CODE` 設定時、招待コード必須
+- プロジェクトは companyId でスコープされ、他社のデータは404
+- 運営者用admin API: `GET /api/admin/companies`（会社一覧+利用状況）、`POST /api/admin/companies/:id/reset-password`。`ADMIN_TOKEN` 未設定時は404で無効化、使用時は `X-Admin-Token` ヘッダ
 
 ## ディレクトリ構成
 
 ```
 zairyo/
-├── backend-node/            # Node.js バックエンド
+├── backend-node/
 │   ├── src/
+│   │   ├── config.js             # JWT_SECRET等の一元管理（本番で未設定なら起動拒否）
+│   │   ├── middleware/auth.js    # optionalAuth / requireAuth / projectScope
 │   │   ├── routes/
-│   │   │   └── projects.js
-│   │   └── services/
-│   │       ├── claudeApi.js      # デュアルAI解析
-│   │       └── materialCalculator.js  # 資材計算ロジック
-│   ├── prisma/
-│   │   └── schema.prisma
-│   └── package.json
-├── frontend/                # Vue.js フロントエンド
+│   │   │   ├── auth.js           # 会社登録・ログイン（招待コード対応）
+│   │   │   ├── admin.js          # 運営者用API（ADMIN_TOKEN）
+│   │   │   ├── projects.js       # プロジェクトCRUD+解析+計算+Excel
+│   │   │   ├── packages.js / unitPrices.js / products.js
+│   │   ├── services/
+│   │   │   ├── claudeApi.js          # デュアルAI解析
+│   │   │   ├── aiReadingValidator.js # サーバー側検証・照合
+│   │   │   └── materialCalculator.js # 資材計算ロジック
+│   ├── scripts/                  # evalスクリプト+正解データ+評価結果
+│   ├── prisma/                   # schema.prisma（postgresql）+ seed.js（upsert方式・冪等）
+├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   ├── views/
-│   │   ├── stores/
-│   │   └── services/
-│   └── vite.config.js
+│   │   ├── router.js             # / , /login , /history(要ログイン) , /result
+│   │   ├── stores/               # project.js , auth.js（トークン+localStorage）
+│   │   ├── services/api.js       # axiosインターセプター（Bearer自動付与）
+│   │   └── views/                # Home / Login / MaterialResult / ProjectHistory
+│   │                             # ※PlanUpload/SpecConfirm/PackageSelectはルート未接続（旧フロー）
 └── CLAUDE.md
 ```
 
 ## 全体フロー
 
-1. **Step 1: 図面アップロード** - PDF/PNG/JPGをアップロード、Gemini + Claude APIで解析
-2. **Step 2: 資材リスト出力** - 計算結果を表示、Excel出力
+1. **図面アップロード（Home）** - 現場名+専有面積(任意)を入力しPDF/PNG/JPGをアップロード → デュアルAI解析
+2. **資材リスト（MaterialResult）** - 計算結果を表示、Excel出力
+3. **履歴（ProjectHistory・要ログイン）** - 現場名で過去の見積を再表示・Excel再出力
 
 ## デザインガイドライン
 
@@ -50,21 +92,124 @@ zairyo/
 
 ## APIエンドポイント
 
-| メソッド | エンドポイント | 説明 |
-|---------|--------------|------|
-| GET | /api/projects | プロジェクト一覧取得 |
-| POST | /api/projects | 新規プロジェクト作成 |
-| POST | /api/projects/{id}/upload | 図面アップロード+AI解析 |
-| POST | /api/projects/{id}/overrides | 仕様変更保存 |
-| POST | /api/projects/{id}/calculate | 資材計算実行 |
-| GET | /api/projects/{id}/materials | 資材リスト取得 |
-| GET | /api/projects/{id}/export | Excelダウンロード |
+| メソッド | エンドポイント | 認証 | 説明 |
+|---------|--------------|------|------|
+| POST | /api/auth/register | 招待コード | 会社登録 |
+| POST | /api/auth/login | - | ログイン（JWT発行） |
+| GET | /api/projects | 任意 | 一覧（未ログインは常に空） |
+| POST | /api/projects | 任意 | 新規作成（ログイン時は会社に紐付け） |
+| POST | /api/projects/{id}/upload | 任意+UPLOAD_GUARD_TOKEN | 図面アップロード+AI解析（total_area_sqm任意） |
+| POST | /api/projects/{id}/overrides | 任意 | 仕様変更保存 |
+| POST | /api/projects/{id}/calculate | 任意 | 資材計算実行 |
+| GET | /api/projects/{id}/materials | 任意 | 資材リスト取得 |
+| GET | /api/projects/{id}/export | 任意 | Excelダウンロード |
+| GET | /api/admin/companies | X-Admin-Token | 会社一覧+利用状況 |
+| POST | /api/admin/companies/{id}/reset-password | X-Admin-Token | パスワードリセット |
 
-## 計算ロジック（54ファイル実績データに基づく）
+※「任意」= トークンがあれば会社スコープ、なければゲストスコープ。他社のプロジェクトは404。
+
+## 計算ロジック（実績データに基づく）
+
+※「54ファイル」は資料のファイル数であり54現場分のデータではない。タイプ別の詳細拾い出し正解はGタイプのみ存在（scripts/内の正解JSON参照）
 
 AIは図面読み取りのみ。資材数量の計算はNode.js側で実行。
 
 ### 実績データサマリー（けいとさんの資料より）
+
+| 項目 | 実績範囲 | 固定/変動 | 備考 |
+|------|----------|-----------|------|
+| PB 12.5mm | 8〜60枚 | 変動 | 壁面積による |
+| PB 9.5mm | 8〜40枚 | 変動 | 天井面積による |
+| Mクロス | 2〜7枚 | 変動 | 水回り面積による |
+| 垂木 | 10〜30束 | 変動 | 間取りによる |
+| ラワンベニヤ | 4〜19枚 | 変動 | 水回り+床下地 |
+| 天井クロス | 52〜75㎡ | 変動 | 天井面積 |
+| 壁クロス | 187〜270㎡ | 変動 | 壁面積 |
+| 巾木 | 10〜40m | 変動 | 壁延長−開口部 |
+| フローリング | 50〜70㎡ | 変動 | 居室床面積 |
+
+### 主要計算式
+
+| 資材 | 計算式 | ロス率 |
+|-----|-------|-------|
+| PB 12.5mm | 壁面積(㎡) ÷ 1.6562 × 1.05 | +5% |
+| PB 9.5mm | 天井面積(㎡) ÷ 1.6562 × 1.05 | +5% |
+| Mクロス | 水回り壁面積 ÷ 1.6562 × 1.05 | +5% |
+| 垂木 | (間仕切壁延長÷0.303×2 + 天井面積÷0.303) ÷ 12 | — |
+| フローリング | 居室床面積(㎡) × 1.1 | +10% |
+| 巾木 | 壁延長(m) − 開口部幅合計 | — |
+| ラワンベニヤ | 水回り床面積 + 床暖房下地 + 下地更新 | — |
+| 天井クロス | 天井面積(㎡) | — |
+| 壁クロス | 壁面積(㎡) | — |
+| 建具 | 図面から自動カウント（1LDK=7枚, 2LDK=10枚, 3LDK=15枚） | — |
+
+### 壁面積計算
+
+```
+壁面積 = (間仕切壁延長 × 天井高 × 2) + (躯体壁延長 × 天井高 × 1) − 開口部面積
+開口部面積 = ドア数 × (0.8m × 2.0m) + 窓数 × (1.5m × 1.2m)
+※ 躯体壁処理: GL工法=片面(係数1)
+```
+
+### 間仕切壁延長の目安
+
+- 1LDK（40〜50㎡）: 12〜18m
+- 2LDK（50〜65㎡）: 15〜25m
+- 3LDK（65〜80㎡）: 20〜30m
+※ 30mを超える場合は躯体壁を含めている可能性が高い
+
+## AI解析プロンプト
+
+### 図面の線種ルール（実際の図面凡例に基づく）
+
+■ 躯体壁（外周壁・RC壁）= 間仕切壁に含めない！
+  - 濃紺または黒で塗りつぶされた太い壁
+  - 図面の最も外側（バルコニー側、窓側、玄関側）
+  - PS（パイプスペース）、MB（メーターボックス）も同様に塗りつぶし
+
+■ 間仕切壁（LGS壁）= これだけをpartition_wall_length_mに含める！
+  - 青色または水色の細い線で描かれた壁
+  - 室内を仕切る壁（部屋と部屋の間）
+  - 躯体壁より明らかに薄い
+
+### 期待するJSON出力形式（現行スキーマ）
+
+実際のプロンプトは `services/claudeApi.js` の SYSTEM_PROMPT が正。主要フィールド:
+
+```json
+{
+  "document_type": "floor_plan",
+  "is_analyzable": true,
+  "property_name": "物件名",
+  "layout_type": "3LDK",
+  "outer_dimensions_mm": { "width": 9400, "depth": 7450 },
+  "total_floor_area_sqm": 67.3,
+  "partition_wall_length_m": 24,
+  "ceiling_height_mm": 2400,
+  "rooms": [
+    {
+      "name": "リビング・ダイニング",
+      "area_jou": "10.3",
+      "area_sqm_label": 16.75,
+      "area_sqm": 16.8,
+      "floor_type": "flooring"
+    }
+  ],
+  "openings": [
+    { "type": "片開き戸", "width_mm": 800, "height_mm": 2080, "room": "LDK" }
+  ],
+  "equipment": { "ub_size": "1418", "kitchen": "I型 2250", "washstand": "W1000" },
+  "storage": [ { "name": "WIC", "width_mm": 1650, "has_makuradana": true, "has_hanger_pipe": true } ],
+  "special": [ { "type": "床暖房", "room": "LDK", "area_sqm": 5.0 } ]
+}
+```
+
+重要ルール:
+- 帖数(area_jou)・㎡ラベル(area_sqm_label)・寸法は図面の記載を**転記**。記載がなければnull（推測・例のコピー禁止）
+- area_sqmの最終値はサーバー側validatorが決定（㎡ラベル > 帖×1.65 > 目測）
+- document_typeがfloor_plan以外なら解析は400で拒否される
+
+## 実績データサマリー（けいとさんの資料より）
 
 | 項目 | 実績範囲 | 固定/変動 | 備考 |
 |------|----------|-----------|------|
@@ -159,7 +304,7 @@ AIは図面読み取りのみ。資材数量の計算はNode.js側で実行。
 }
 ```
 
-## 実績データ（54ファイル + アルファスタイル新宮町67戸）
+## 実績データ（けいとさんの資料 + アルファステイツ新宮町67戸）
 
 ### けいとさんの資料（リノベーション実績）
 
@@ -311,36 +456,59 @@ AIは図面読み取りのみ。資材数量の計算はNode.js側で実行。
 ## 開発コマンド
 
 ```bash
-# バックエンド
+# バックエンド（ローカルにPostgreSQLが必要。Docker or Neon無料DB）
 cd backend-node
 npm install
+npx prisma db push      # スキーマ反映
+node prisma/seed.js     # マスタ投入（upsert方式・何度実行しても安全）
 npm run dev
 
 # フロントエンド
 cd frontend
 npm install
 npm run dev
+
+# eval（精度検証）
+node scripts/eval-gtype.js <parsedData.json> [calcResult.json]
 ```
 
 ## 環境変数
 
 ```env
-# backend-node/.env
-DATABASE_URL="file:./dev.db"
-GOOGLE_GEMINI_API_KEY=your_gemini_api_key
-CLAUDE_API_KEY=your_claude_api_key
+# backend-node/.env（.env.example参照）
+DATABASE_URL="postgresql://user:pass@host:5432/zairyo"
+ANTHROPIC_API_KEY=xxx        # CLAUDE_API_KEYでも可（両対応）
+GOOGLE_GEMINI_API_KEY=xxx
+JWT_SECRET=xxx               # 本番必須（未設定だと起動拒否）
+ALLOWED_ORIGINS=https://zairyo.vercel.app   # CORS制限（カンマ区切り）
+UPLOAD_GUARD_TOKEN=xxx       # 任意: uploadのX-Upload-Tokenガード
+REGISTRATION_CODE=xxx        # 任意: 登録の招待コード
+ADMIN_TOKEN=xxx              # 任意: admin API有効化
 PORT=8000
+```
+
+```env
+# frontend（Vercel環境変数）
+VITE_API_URL=https://zairyo-backend.onrender.com/api
+VITE_UPLOAD_TOKEN=xxx        # UPLOAD_GUARD_TOKENと同じ値
 ```
 
 ## デプロイ
 
 ### フロントエンド (Vercel)
-- Root Directory: `frontend`
-- Framework: Vite
-- 環境変数: `VITE_API_URL=https://your-backend.onrender.com/api`
+- Root Directory: `frontend` / Framework: Vite
+- URL: https://zairyo.vercel.app
 
 ### バックエンド (Render)
 - Root Directory: `backend-node`
-- Build Command: `npm install`
-- Start Command: `npx prisma generate && npx prisma db push && npm start`
-- 環境変数: `GOOGLE_GEMINI_API_KEY`, `CLAUDE_API_KEY`, `DATABASE_URL`
+- Build Command: `npm install && npx prisma generate && npx prisma db push`
+- Start Command: `npm start`
+- DB: Render PostgreSQL（Internal URLをDATABASE_URLに）
+- seedは初回のみ: Build Commandに一時的に `&& node prisma/seed.js` を足して1回デプロイ→戻す（FreeプランはShell不可のため）
+
+## 運用メモ
+
+- **db push運用の注意**: 顧客の実データが入った後に破壊的なスキーマ変更をする場合は `prisma migrate` 方式へ移行すること
+- **精度の前提**: 専有面積のユーザー入力を推奨（Home画面の任意欄）。±2%精度は「寸法・㎡ラベルのある平面詳細図+デュアルAI」での実測値
+- **未解決の業務確認**: 既存壁PBの張り替えスコープ（全面/部分/なし）→ けいとさんへ確認中。PB枚数の妥当性はこれが決まってから
+- **凍結タスク**: アップロード画像のS3/R2移行、admin管理画面UI、ゲストプロジェクトの定期削除、会社内複数ユーザー
