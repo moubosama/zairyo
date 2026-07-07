@@ -10,6 +10,19 @@ const api = axios.create({
   },
 })
 
+// ログイン済みならAuthorizationヘッダを自動付与
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('zairyo_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 認証関連
+export const register = (data) => api.post('/auth/register', data)
+export const login = (data) => api.post('/auth/login', data)
+
 // パッケージ関連
 export const fetchPackages = () => api.get('/packages')
 export const fetchPackage = (id) => api.get(`/packages/${id}`)

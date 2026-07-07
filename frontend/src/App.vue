@@ -11,12 +11,30 @@
             <span class="ml-3 text-sm text-gray-400">資材拾いアシスタント</span>
           </router-link>
           <div class="flex items-center gap-4">
-            <router-link
-              to="/history"
-              class="text-sm text-gray-400 hover:text-gold transition-colors"
-            >
-              履歴
-            </router-link>
+            <template v-if="auth.isLoggedIn">
+              <router-link
+                to="/history"
+                class="text-sm text-gray-400 hover:text-gold transition-colors"
+              >
+                履歴
+              </router-link>
+              <span class="text-sm text-gold">{{ auth.companyName }}</span>
+              <button
+                @click="handleLogout"
+                class="text-sm text-gray-400 hover:text-gold transition-colors"
+              >
+                ログアウト
+              </button>
+            </template>
+            <template v-else>
+              <span class="text-xs text-gray-500">ゲスト利用中（履歴は保存されません）</span>
+              <router-link
+                to="/login"
+                class="text-sm text-gray-400 hover:text-gold transition-colors"
+              >
+                ログイン
+              </router-link>
+            </template>
           </div>
         </div>
       </div>
@@ -51,7 +69,16 @@
 
 <script setup>
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from './stores/auth'
+
+const router = useRouter()
+const auth = useAuthStore()
+
+function handleLogout() {
+  auth.logout()
+  router.push('/')
+}
 
 const route = useRoute()
 

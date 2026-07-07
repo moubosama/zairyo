@@ -54,6 +54,12 @@ const upload = multer({
 // GET /api/projects - プロジェクト一覧取得
 router.get('/', async (req, res) => {
   try {
+    // ゲスト（未ログイン）には履歴を提供しない
+    // ゲストのプロジェクトはセッション中の画面遷移のためだけにDBに存在する
+    if (!req.companyId) {
+      return res.json([]);
+    }
+
     const prisma = req.app.get('prisma');
     const projects = await prisma.project.findMany({
       where: projectScope(req),
