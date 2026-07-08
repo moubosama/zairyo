@@ -586,7 +586,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
     if (room.floor_type === 'flooring' || room.name?.includes('LDK') || room.name?.includes('洋室') || room.name?.includes('リビング') || room.name?.includes('廊下') || room.name?.includes('ホール')) {
       flooringArea += area;
-    } else if (room.floor_type === 'cf' || room.name?.includes('洗面') || room.name?.includes('トイレ') || room.name?.includes('UB') || room.name?.includes('脱衣')) {
+    } else if (room.floor_type === 'cf' || room.name?.includes('洗面') || room.name?.includes('トイレ') || room.name?.includes('UB') || room.name?.includes('脱衣') || room.name?.includes('パウダー')) {
       cfArea += area;
     } else if (room.floor_type === 'tile' || room.name?.includes('玄関')) {
       tileArea += area;
