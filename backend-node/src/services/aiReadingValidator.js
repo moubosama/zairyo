@@ -166,15 +166,36 @@ export function validateAndNormalize(raw, options = {}) {
   } else if (anchor) {
     const total = data.total_floor_area_sqm;
     if (!total || total < anchor.min || total > anchor.max) {
-      warnings.push({
-        field: 'total_floor_area_sqm',
-        message: `AI値(${total}㎡)が外形寸法${data.outer_dimensions_mm.width}×${data.outer_dimensions_mm.depth}由来の範囲(${anchor.min}〜${anchor.max}㎡)外。寸法ベース推定値を採用`,
-        before: total,
-        after: anchor.estimated,
-      });
-      data.total_floor_area_sqm = anchor.estimated;
-      data.total_area_source = 'outer_dimensions';
-      data.total_floor_area_needs_review = true;
+      // AI値と外形寸法が矛盾 → どちらが誤読かを部屋面積合計で裁定する
+      // 総面積は部屋合計の0.95〜1.4倍（廊下・収納・壁厚分の上乗せ）に収まるのが普通
+      const roomSum = Array.isArray(data.rooms)
+        ? data.rooms.reduce((s, r) => s + (r.area_sqm || 0), 0)
+        : 0;
+      const totalMatchesRooms = total && roomSum > 0 &&
+        total >= roomSum * 0.95 && total <= roomSum * 1.4;
+
+      if (totalMatchesRooms) {
+        // AI転記の総面積は部屋合計と整合 → 図面ラベルの転記とみなし、外形寸法の方を誤読として棄却
+        // （表題欄の専有面積ラベルは外形寸法の読み取りより信頼できる）
+        warnings.push({
+          field: 'outer_dimensions_mm',
+          message: `外形寸法${data.outer_dimensions_mm.width}×${data.outer_dimensions_mm.depth}由来の推定(${anchor.estimated}㎡)がAI転記の専有面積(${total}㎡)・部屋合計(${Math.round(roomSum * 10) / 10}㎡)と矛盾。外形寸法を誤読として棄却`,
+          before: `${data.outer_dimensions_mm.width}×${data.outer_dimensions_mm.depth}`,
+          after: null,
+        });
+        delete data.outer_dimensions_mm;
+        data.total_area_source = 'ai_label_roomsum_verified';
+      } else {
+        warnings.push({
+          field: 'total_floor_area_sqm',
+          message: `AI値(${total}㎡)が外形寸法${data.outer_dimensions_mm.width}×${data.outer_dimensions_mm.depth}由来の範囲(${anchor.min}〜${anchor.max}㎡)外。寸法ベース推定値を採用`,
+          before: total,
+          after: anchor.estimated,
+        });
+        data.total_floor_area_sqm = anchor.estimated;
+        data.total_area_source = 'outer_dimensions';
+        data.total_floor_area_needs_review = true;
+      }
     } else {
       data.total_area_source = 'ai_estimate_verified'; // 寸法と整合
     }
