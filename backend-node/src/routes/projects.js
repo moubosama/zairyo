@@ -421,6 +421,73 @@ router.get('/:id/materials', async (req, res) => {
   }
 });
 
+// PUT /api/projects/:id/materials - 数量・単価の手動編集を保存
+// クライアントから送られた materials 配列のうち quantity / unitPrice のみを
+// 保存済みリストにマージする（名前・計算根拠等の改変は受け付けない）
+router.put('/:id/materials', async (req, res) => {
+  try {
+    const prisma = req.app.get('prisma');
+    const project = await findOwnedProject(prisma, req);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const materialList = await prisma.materialList.findFirst({
+      where: { projectId: project.id },
+      orderBy: { createdAt: 'desc' }
+    });
+    if (!materialList) {
+      return res.status(404).json({ error: 'Material list not found. Please run calculation first.' });
+    }
+
+    const edits = req.body.materials;
+    if (!Array.isArray(edits)) {
+      return res.status(400).json({ error: 'materials must be an array' });
+    }
+
+    const stored = JSON.parse(materialList.materials);
+    if (edits.length !== stored.length) {
+      return res.status(409).json({ error: '資材リストが更新されています。再読み込みしてください。' });
+    }
+
+    let totalAmount = 0;
+    const merged = stored.map((item, i) => {
+      const quantity = Number(edits[i]?.quantity);
+      const unitPrice = Number(edits[i]?.unitPrice);
+      const next = {
+        ...item,
+        quantity: Number.isFinite(quantity) && quantity >= 0 ? quantity : item.quantity,
+        unitPrice: Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : (item.unitPrice || 0),
+      };
+      // 手動調整された行は計算根拠に明示（Excelにもそのまま出る）
+      if (next.quantity !== item.quantity && !item.edited) {
+        next.edited = true;
+        const base = item.calculation ? `${item.calculation} ／ ` : '';
+        next.calculation = `${base}手動調整（元: ${item.quantity}${item.unit || ''}）`;
+      }
+      next.amount = Math.round(next.unitPrice * next.quantity);
+      totalAmount += next.amount;
+      return next;
+    });
+
+    const updated = await prisma.materialList.update({
+      where: { id: materialList.id },
+      data: {
+        materials: JSON.stringify(merged),
+        totalAmount
+      }
+    });
+
+    res.json({
+      ...updated,
+      materials: merged,
+      totalAmount
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/projects/:id/export - Excelダウンロード
 router.get('/:id/export', async (req, res) => {
   try {

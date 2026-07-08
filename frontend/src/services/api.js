@@ -43,6 +43,7 @@ export const uploadPlan = (id, formData) => api.post(`/projects/${id}/upload`, f
 export const saveOverrides = (id, overrides) => api.post(`/projects/${id}/overrides`, { overrides })
 export const calculateMaterials = (id) => api.post(`/projects/${id}/calculate`)
 export const fetchMaterials = (id) => api.get(`/projects/${id}/materials`)
+export const updateMaterials = (id, materials) => api.put(`/projects/${id}/materials`, { materials })
 export const exportExcel = (id) => api.get(`/projects/${id}/export`, { responseType: 'blob' })
 
 // オーバーライドオプション

@@ -117,7 +117,8 @@ export const useProjectStore = defineStore('project', () => {
       // バックエンドの snake_case を camelCase に変換
       materials.value = response.data.materials.map(item => ({
         ...item,
-        unitPrice: item.unit_price,
+        // バックエンドはcamelCaseで返すが、旧snake_caseにも念のため対応
+        unitPrice: item.unitPrice ?? item.unit_price ?? 0,
         // amount はそのまま使用
       }))
       areas.value = response.data.summary
@@ -128,6 +129,25 @@ export const useProjectStore = defineStore('project', () => {
       return materials.value
     } catch (e) {
       error.value = e.response?.data?.message || '資材計算に失敗しました'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function updateMaterials(editedMaterials) {
+    if (!currentProject.value) {
+      throw new Error('プロジェクトが作成されていません')
+    }
+
+    loading.value = true
+    error.value = null
+    try {
+      const response = await api.updateMaterials(currentProject.value.id, editedMaterials)
+      materials.value = response.data.materials
+      return materials.value
+    } catch (e) {
+      error.value = e.response?.data?.error || '資材リストの保存に失敗しました'
       throw e
     } finally {
       loading.value = false
@@ -188,6 +208,7 @@ export const useProjectStore = defineStore('project', () => {
     uploadPlan,
     saveOverrides,
     calculateMaterials,
+    updateMaterials,
     exportExcel,
     reset,
   }

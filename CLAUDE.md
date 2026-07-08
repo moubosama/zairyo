@@ -81,7 +81,7 @@ zairyo/
 ## 全体フロー
 
 1. **図面アップロード（Home）** - 現場名+専有面積(任意)を入力しPDF/PNG/JPGをアップロード → デュアルAI解析
-2. **資材リスト（MaterialResult）** - 計算結果を表示、Excel出力
+2. **資材リスト（MaterialResult）** - 計算結果を表示、Excel出力。AI読み取りの要確認項目（_warnings/_ai_disagreements）を警告パネルで表示。間仕切壁延長・天井高を上書きして再計算、数量・単価の手動編集（PUT /materials）も可能
 3. **履歴（ProjectHistory・要ログイン）** - 現場名で過去の見積を再表示・Excel再出力
 
 ## デザインガイドライン
@@ -102,6 +102,7 @@ zairyo/
 | POST | /api/projects/{id}/overrides | 任意 | 仕様変更保存 |
 | POST | /api/projects/{id}/calculate | 任意 | 資材計算実行 |
 | GET | /api/projects/{id}/materials | 任意 | 資材リスト取得 |
+| PUT | /api/projects/{id}/materials | 任意 | 数量・単価の手動編集を保存（quantity/unitPriceのみマージ、金額は再計算） |
 | GET | /api/projects/{id}/export | 任意 | Excelダウンロード |
 | GET | /api/admin/companies | X-Admin-Token | 会社一覧+利用状況 |
 | POST | /api/admin/companies/{id}/reset-password | X-Admin-Token | パスワードリセット |

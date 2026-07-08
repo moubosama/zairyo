@@ -119,6 +119,13 @@ async function viewProject(project) {
       store.aiReading = data.aiReadings[0].parsedData
     }
 
+    // 保存済みの仕様上書きを復元（再計算時に消えないように）
+    if (data.overrides && data.overrides.length > 0) {
+      store.overrides = Object.fromEntries(data.overrides.map(o => [o.itemKey, o.value]))
+    } else {
+      store.overrides = {}
+    }
+
     if (data.materialLists && data.materialLists.length > 0) {
       store.materials = data.materialLists[0].materials
       // summaryからareasをセット

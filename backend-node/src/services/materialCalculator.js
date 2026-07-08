@@ -605,8 +605,12 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   }
 
   // 壁延長の計算
-  // AIが直接出力した間仕切壁延長を優先使用
-  let partitionWallLength = data.partition_wall_length_m || 0;
+  // ユーザーの上書き入力 > AIが直接出力した間仕切壁延長
+  const partitionWallOverride = parseFloat(overrides.partition_wall_length);
+  const hasPartitionWallOverride = !isNaN(partitionWallOverride) && partitionWallOverride > 0;
+  let partitionWallLength = hasPartitionWallOverride
+    ? partitionWallOverride
+    : (data.partition_wall_length_m || 0);
 
   // AIから壁延長が取得できない場合、床面積から推定
   // 実績データ: 2LDK(50㎡)=約20m, 3LDK(70㎡)=約30m
@@ -616,9 +620,10 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // 間仕切壁延長の妥当性チェック
   // ※ aiReadingValidator で検証済み（_validated=true）の場合は二重補正しない
+  // ※ ユーザーが上書き入力した値はそのまま採用（クランプしない）
   // AIが躯体壁（外周壁）を含めて計算している場合、値が大きすぎる
   // 実績: 2LDK(50㎡)=15-25m, 3LDK(70㎡)=20-30m
-  if (!data._validated) {
+  if (!data._validated && !hasPartitionWallOverride) {
     const maxPartitionWallLength = totalFloorArea * PARTITION_WALL_MAX_RATIO;
     const minPartitionWallLength = totalFloorArea * PARTITION_WALL_MIN_RATIO;
 
