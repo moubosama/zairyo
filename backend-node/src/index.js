@@ -16,6 +16,7 @@ const { default: unitPricesRouter } = await import('./routes/unitPrices.js');
 const { default: adminRouter } = await import('./routes/admin.js');
 const { default: productsRouter } = await import('./routes/products.js');
 const { startGuestCleanup } = await import('./services/projectCleanup.js');
+const { removeCopiedDefaults } = await import('../scripts/migrate-remove-copied-defaults.js');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -71,3 +72,8 @@ app.listen(PORT, () => {
 
 // ゲストプロジェクトの定期削除（起動時+6時間ごと、24時間経過分を削除）
 startGuestCleanup(prisma);
+
+// 旧仕様（登録時に標準単価をコピー）の残骸を掃除（冪等・2回目以降は対象0件）
+removeCopiedDefaults(prisma).catch(e => {
+  console.error('単価コピー移行エラー:', e.message);
+});

@@ -19,9 +19,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
-
-async function main() {
+export async function removeCopiedDefaults(prisma) {
   const defaults = await prisma.defaultUnitPrice.findMany();
   const defaultMap = new Map(defaults.map(d => [`${d.materialName}|${d.spec || ''}`, d.unitPrice]));
 
@@ -41,9 +39,16 @@ async function main() {
     }
   }
 
-  console.log(`完了: 合計${totalDeleted}件のコピー単価行を削除しました`);
+  if (totalDeleted > 0) {
+    console.log(`単価コピー移行: 合計${totalDeleted}件のコピー単価行を削除しました`);
+  }
+  return totalDeleted;
 }
 
-main()
-  .catch(e => { console.error(e); process.exit(1); })
-  .finally(() => prisma.$disconnect());
+// 単体実行にも対応（DATABASE_URL=<本番URL> node scripts/migrate-remove-copied-defaults.js）
+if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop())) {
+  const prisma = new PrismaClient();
+  removeCopiedDefaults(prisma)
+    .catch(e => { console.error(e); process.exit(1); })
+    .finally(() => prisma.$disconnect());
+}
