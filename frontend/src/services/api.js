@@ -11,10 +11,15 @@ const api = axios.create({
 })
 
 // ログイン済みならAuthorizationヘッダを自動付与
+// ゲストはプロジェクト作成時に発行された所有権トークンを自動付与
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('zairyo_token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  const guestToken = sessionStorage.getItem('zairyo_guest_token')
+  if (guestToken) {
+    config.headers['X-Guest-Token'] = guestToken
   }
   return config
 })
@@ -45,7 +50,8 @@ export const uploadPlan = (id, formData) => api.post(`/projects/${id}/upload`, f
 export const saveOverrides = (id, overrides) => api.post(`/projects/${id}/overrides`, { overrides })
 export const calculateMaterials = (id) => api.post(`/projects/${id}/calculate`)
 export const fetchMaterials = (id) => api.get(`/projects/${id}/materials`)
-export const updateMaterials = (id, materials) => api.put(`/projects/${id}/materials`, { materials })
+export const updateMaterials = (id, materials, materialListId) =>
+  api.put(`/projects/${id}/materials`, { materials, materialListId })
 export const exportExcel = (id) => api.get(`/projects/${id}/export`, { responseType: 'blob' })
 
 // オーバーライドオプション
@@ -62,6 +68,7 @@ export const adminResetPassword = (adminToken, companyId, newPassword = null) =>
 // 単価設定（要ログイン）
 export const fetchEffectiveUnitPrices = () => api.get('/unit-prices/effective')
 export const upsertUnitPrice = (data) => api.put('/unit-prices/upsert', data)
+export const bulkUpsertUnitPrices = (prices) => api.put('/unit-prices/bulk', { prices })
 export const deleteUnitPrice = (id) => api.delete(`/unit-prices/${id}`)
 export const resetUnitPrices = () => api.post('/unit-prices/reset')
 export const exportUnitPrices = () => api.get('/unit-prices/export', { responseType: 'blob' })

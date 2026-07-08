@@ -41,8 +41,18 @@ export function requireAuth(req, res, next) {
 
 /**
  * プロジェクトの所有スコープ条件
- * ログイン中: 自社のプロジェクトのみ / 未ログイン: ゲスト（companyId null）のみ
+ * ログイン中: 自社のプロジェクトのみ
+ * 未ログイン: ゲスト（companyId null）かつ作成時に発行されたX-Guest-Tokenが一致するもののみ
+ * （ゲスト全員が同一スコープを共有するとID総当たりで他人のプロジェクトを操作できてしまう）
  */
 export function projectScope(req) {
-  return { companyId: req.companyId ?? null };
+  if (req.companyId) {
+    return { companyId: req.companyId };
+  }
+  const guestToken = req.headers['x-guest-token'];
+  return {
+    companyId: null,
+    // トークン未提示は何にもマッチさせない（guestToken: undefined だとPrismaが条件自体を無視するため）
+    guestToken: typeof guestToken === 'string' && guestToken.length > 0 ? guestToken : '__no_token__',
+  };
 }

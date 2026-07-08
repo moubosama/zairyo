@@ -10,6 +10,7 @@ export const useProjectStore = defineStore('project', () => {
   const aiReading = ref(null)
   const overrides = ref({})
   const materials = ref([])
+  const materialListId = ref(null) // 編集競合検出用（PUT /materialsで送信）
   const areas = ref(null)
   const loading = ref(false)
   const error = ref(null)
@@ -46,6 +47,10 @@ export const useProjectStore = defineStore('project', () => {
         name
       })
       currentProject.value = response.data
+      // ゲストの場合は所有権トークンが発行される（以降のAPIで自動送信）
+      if (response.data.guestToken) {
+        sessionStorage.setItem('zairyo_guest_token', response.data.guestToken)
+      }
       return currentProject.value
     } catch (e) {
       error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの作成に失敗しました'
@@ -121,6 +126,7 @@ export const useProjectStore = defineStore('project', () => {
         unitPrice: item.unitPrice ?? item.unit_price ?? 0,
         // amount はそのまま使用
       }))
+      materialListId.value = response.data.id ?? null
       areas.value = response.data.summary
       // estimate情報も保存（カテゴリ別小計・総合計）
       if (response.data.estimate) {
@@ -143,8 +149,13 @@ export const useProjectStore = defineStore('project', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await api.updateMaterials(currentProject.value.id, editedMaterials)
+      const response = await api.updateMaterials(
+        currentProject.value.id,
+        editedMaterials,
+        materialListId.value
+      )
       materials.value = response.data.materials
+      materialListId.value = response.data.id ?? materialListId.value
       return materials.value
     } catch (e) {
       error.value = e.response?.data?.error || '資材リストの保存に失敗しました'
@@ -182,6 +193,7 @@ export const useProjectStore = defineStore('project', () => {
     aiReading.value = null
     overrides.value = {}
     materials.value = []
+    materialListId.value = null
     areas.value = null
     error.value = null
   }
@@ -194,6 +206,7 @@ export const useProjectStore = defineStore('project', () => {
     aiReading,
     overrides,
     materials,
+    materialListId,
     areas,
     loading,
     error,

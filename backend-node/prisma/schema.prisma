@@ -26,6 +26,7 @@ model Project {
   package      Package?       @relation(fields: [packageId], references: [id])
   companyId    Int?           // null = 未ログイン（ゲスト）のプロジェクト
   company      Company?       @relation(fields: [companyId], references: [id])
+  guestToken   String?        // ゲスト所有権トークン（作成時に発行、X-Guest-Tokenで照合）
   status       String         @default("draft")
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -37,7 +38,7 @@ model Project {
 model AiReading {
   id           Int      @id @default(autoincrement())
   projectId    Int
-  project      Project  @relation(fields: [projectId], references: [id])
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   fileName     String
   filePath     String
   rawResponse  String   // JSON string
@@ -48,7 +49,7 @@ model AiReading {
 model Override {
   id        Int      @id @default(autoincrement())
   projectId Int
-  project   Project  @relation(fields: [projectId], references: [id])
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   category  String
   itemKey   String
   value     String
@@ -59,7 +60,7 @@ model Override {
 model MaterialList {
   id          Int      @id @default(autoincrement())
   projectId   Int
-  project     Project  @relation(fields: [projectId], references: [id])
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   materials   String   // JSON string
   summary     String?  // JSON string (areas summary)
   totalAmount Int?

@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 
 /**
  * プロジェクトを関連データごと完全削除する
- * スキーマにonDelete: Cascadeが無いため、子テーブルを先に消す
+ * 子テーブル（AiReading/Override/MaterialList）はスキーマのonDelete: Cascadeで削除される
  * アップロードファイルの削除はベストエフォート（失敗してもDB削除は続行）
  */
 export async function deleteProjectDeep(prisma, projectId) {
@@ -11,21 +11,20 @@ export async function deleteProjectDeep(prisma, projectId) {
     select: { filePath: true },
   });
 
-  await prisma.$transaction([
-    prisma.aiReading.deleteMany({ where: { projectId } }),
-    prisma.override.deleteMany({ where: { projectId } }),
-    prisma.materialList.deleteMany({ where: { projectId } }),
-    prisma.project.delete({ where: { id: projectId } }),
-  ]);
+  await prisma.project.delete({ where: { id: projectId } });
 
-  for (const r of readings) {
-    if (!r.filePath) continue;
+  await unlinkFiles(readings.map(r => r.filePath));
+}
+
+async function unlinkFiles(filePaths) {
+  for (const filePath of filePaths) {
+    if (!filePath) continue;
     try {
-      await fs.unlink(r.filePath);
+      await fs.unlink(filePath);
     } catch (e) {
       // 既に無い・権限等は無視（DB上の削除が主目的）
       if (e.code !== 'ENOENT') {
-        console.warn(`アップロードファイル削除失敗: ${r.filePath} (${e.message})`);
+        console.warn(`アップロードファイル削除失敗: ${filePath} (${e.message})`);
       }
     }
   }
@@ -45,18 +44,19 @@ export async function cleanupGuestProjects(prisma) {
     where: { companyId: null, createdAt: { lt: cutoff } },
     select: { id: true },
   });
+  if (stale.length === 0) return 0;
 
-  for (const p of stale) {
-    try {
-      await deleteProjectDeep(prisma, p.id);
-    } catch (e) {
-      console.error(`ゲストプロジェクト削除失敗 (id=${p.id}):`, e.message);
-    }
-  }
+  const staleIds = stale.map(p => p.id);
+  const readings = await prisma.aiReading.findMany({
+    where: { projectId: { in: staleIds } },
+    select: { filePath: true },
+  });
 
-  if (stale.length > 0) {
-    console.log(`ゲストプロジェクトを${stale.length}件削除しました（${GUEST_RETENTION_HOURS}時間以上経過）`);
-  }
+  // 件数に関わらず一括削除（子テーブルはonDelete: Cascade）
+  await prisma.project.deleteMany({ where: { id: { in: staleIds } } });
+  await unlinkFiles(readings.map(r => r.filePath));
+
+  console.log(`ゲストプロジェクトを${stale.length}件削除しました（${GUEST_RETENTION_HOURS}時間以上経過）`);
   return stale.length;
 }
 

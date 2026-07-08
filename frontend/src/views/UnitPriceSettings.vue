@@ -176,33 +176,30 @@ function showToastMessage(message) {
 async function saveAll() {
   saving.value = true
   error.value = null
-  let saved = 0
   try {
-    for (const row of rows.value.filter(isDirty)) {
-      if (String(row.input ?? '').trim() === '') {
-        // 空欄に戻された = カスタム解除
-        if (row.customId) {
-          await api.deleteUnitPrice(row.customId)
-          row.customId = null
-          row.customPrice = null
-        }
-      } else {
-        const price = parseInt(row.input)
-        if (!Number.isFinite(price) || price < 0) continue
-        const response = await api.upsertUnitPrice({
+    // 変更行を1リクエストにまとめて送信（サーバー側で1トランザクション適用）
+    // 空欄に戻された行は unitPrice: null = カスタム解除
+    const prices = rows.value
+      .filter(isDirty)
+      .map(row => {
+        const raw = String(row.input ?? '').trim()
+        const price = raw === '' ? null : parseInt(raw)
+        if (price !== null && (!Number.isFinite(price) || price < 0)) return null
+        return {
           materialName: row.materialName,
           spec: row.spec,
           category: row.category,
           unit: row.unit,
           unitPrice: price,
-        })
-        row.customId = response.data.id
-        row.customPrice = response.data.unitPrice
-        row.input = String(response.data.unitPrice)
-      }
-      saved++
-    }
-    showToastMessage(`${saved}件の単価を保存しました`)
+        }
+      })
+      .filter(Boolean)
+
+    if (prices.length === 0) return
+
+    await api.bulkUpsertUnitPrices(prices)
+    await load()
+    showToastMessage(`${prices.length}件の単価を保存しました`)
   } catch (e) {
     error.value = e.response?.data?.error || '単価の保存に失敗しました'
   } finally {

@@ -74,7 +74,7 @@ zairyo/
 │   │   ├── router.js             # / , /login , /history , /result , /settings/prices , /settings/account , /admin
 │   │   ├── stores/               # project.js , auth.js（トークン+localStorage）
 │   │   ├── services/api.js       # axiosインターセプター（Bearer自動付与）
-│   │   └── views/                # Home / Login / MaterialResult / ProjectHistory / UnitPriceSettings / AccountSettings
+│   │   └── views/                # Home / Login / MaterialResult / ProjectHistory / UnitPriceSettings / AccountSettings / AdminDashboard
 │   │                             # ※PlanUpload/SpecConfirm/PackageSelectはルート未接続（旧フロー）
 └── CLAUDE.md
 ```
@@ -114,6 +114,9 @@ zairyo/
 | POST | /api/admin/companies/{id}/reset-password | X-Admin-Token | パスワードリセット |
 
 ※「任意」= トークンがあれば会社スコープ、なければゲストスコープ。他社のプロジェクトは404。
+※ ゲストのプロジェクト所有権: POST /api/projects が `guestToken` を発行し、以降のプロジェクト系APIは `X-Guest-Token` ヘッダの一致が必要（未提示は404）。ゲスト同士でも他人のプロジェクトには触れない。
+※ PUT /materials は編集元の `materialListId` をbodyに必須（並行する再計算との競合を409で検出）。
+※ PUT /api/unit-prices/bulk（要ログイン）: 単価の一括保存。`{prices: [{materialName, spec, category, unit, unitPrice|null}]}`（null=カスタム解除）を1トランザクションで適用。
 
 ## 計算ロジック（実績データに基づく）
 
@@ -518,7 +521,8 @@ VITE_UPLOAD_TOKEN=xxx        # UPLOAD_GUARD_TOKENと同じ値
 
 - **db push運用の注意**: 顧客の実データが入った後に破壊的なスキーマ変更をする場合は `prisma migrate` 方式へ移行すること
 - **精度の前提**: 専有面積のユーザー入力を推奨（Home画面の任意欄）。±2%精度は「寸法・㎡ラベルのある平面詳細図+デュアルAI」での実測値
-- **単価の適用ロジック**: 標準単価（DefaultUnitPrice・seed投入）をベースに、会社のカスタム単価（UnitPrice）を資材名+規格の一致で重ねる。単価設定画面（/settings/prices）で会社ごとに編集可能
+- **単価の適用ロジック**: 標準単価（DefaultUnitPrice・seed投入）をベースに、会社のカスタム単価（UnitPrice）を「資材名+規格の完全一致 > 規格未指定のゆるい一致」の2段階で重ねる。単価設定画面（/settings/prices）で会社ごとに編集可能。Excelインポートは標準単価と同額の行をカスタム登録しない（差分のみ保持）
+- **単価コピーの移行**: 旧仕様（登録時に標準単価をコピー）で作られた既存会社のコピー行は `scripts/migrate-remove-copied-defaults.js` で1回掃除する（冪等・カスタム行は保持）
 - **単価マスタの未整備**: calculatorが出力する約128資材のうち標準単価があるのは約40。残りは¥0表示になる → 実勢価格のリスト入手待ち（勝手に相場を入れない）
 - **未解決の業務確認**: 既存壁PBの張り替えスコープ（全面/部分/なし）→ けいとさんへ確認中。PB枚数の妥当性はこれが決まってから
 - **レートリミット**: /api/auth はIPあたり20回/15分、/upload はIPあたり20回/時（UPLOAD_RATE_LIMITで調整）。ゲストプロジェクトは24時間経過で自動削除（起動時+6時間ごと、`services/projectCleanup.js`）

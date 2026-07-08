@@ -137,6 +137,7 @@ async function viewProject(project) {
 
     if (data.materialLists && data.materialLists.length > 0) {
       store.materials = data.materialLists[0].materials
+      store.materialListId = data.materialLists[0].id
       // summaryからareasをセット
       if (data.materialLists[0].summary) {
         store.areas = data.materialLists[0].summary
@@ -144,12 +145,17 @@ async function viewProject(project) {
     }
 
     // ステータスに応じて遷移
+    // ※ /confirm・/upload は旧フローの廃止済みルート（遷移すると空白ページになる）
     if (project.hasMaterials) {
       router.push('/result?from=history')
-    } else if (project.status === 'analyzed') {
-      router.push('/confirm')
+    } else if (data.aiReadings && data.aiReadings.length > 0) {
+      // 解析済みだが未計算 → その場で計算して結果画面へ
+      await store.calculateMaterials()
+      router.push('/result?from=history')
     } else {
-      router.push('/upload')
+      // 図面未アップロード → ホームからやり直し
+      store.reset()
+      router.push('/')
     }
   } catch (e) {
     error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの読み込みに失敗しました'

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -95,11 +96,15 @@ router.post('/', async (req, res) => {
     const prisma = req.app.get('prisma');
     const { name } = req.body;
 
+    // ゲストには所有権トークンを発行（以降のAPIはX-Guest-Tokenヘッダで照合）
+    const guestToken = req.companyId ? null : crypto.randomUUID();
+
     const project = await prisma.project.create({
       data: {
         name,
         status: 'draft',
-        companyId: req.companyId ?? null
+        companyId: req.companyId ?? null,
+        guestToken
       }
     });
 
@@ -375,11 +380,14 @@ router.post('/:id/calculate', async (req, res) => {
         productSpec = selectedProduct.spec;
         unitPrice = selectedProduct.customPrice || selectedProduct.unitPrice;
       } else {
-        // 通常の単価マッチング
-        const priceInfo = unitPrices.find(p =>
-          p.materialName === material.name &&
-          (p.spec === material.spec || !p.spec || !material.spec)
-        );
+        // 通常の単価マッチング（2段階）
+        // 1. 資材名+規格の完全一致を優先（自社単価が配列先頭のため自社優先）
+        // 2. なければ規格未指定同士のゆるい一致にフォールバック
+        //    ※ 1段のゆるい一致だと、規格なしのカスタム単価1件が
+        //      同名の全規格違い（例: ダイノックシート貼り 玄関扉/窓枠）を乗っ取る
+        const priceInfo =
+          unitPrices.find(p => p.materialName === material.name && p.spec === material.spec) ||
+          unitPrices.find(p => p.materialName === material.name && (!p.spec || !material.spec));
         unitPrice = priceInfo?.unitPrice || 0;
       }
 
@@ -473,19 +481,37 @@ router.put('/:id/materials', async (req, res) => {
       return res.status(400).json({ error: 'materials must be an array' });
     }
 
+    // 編集元のリストIDを照合し、並行する再計算による上書き事故を防ぐ
+    // （行数だけの比較では「行数が同じで値が違う」再計算を検出できない）
+    const editedListId = parseInt(req.body.materialListId);
+    if (!Number.isFinite(editedListId)) {
+      return res.status(400).json({ error: 'materialListId is required' });
+    }
+    if (editedListId !== materialList.id) {
+      return res.status(409).json({ error: '資材リストが更新されています。再読み込みしてください。' });
+    }
+
     const stored = JSON.parse(materialList.materials);
     if (edits.length !== stored.length) {
       return res.status(409).json({ error: '資材リストが更新されています。再読み込みしてください。' });
     }
 
+    // 空文字/null/undefinedは「編集なし」として元の値を維持する
+    // （Number('')===0 のため、そのままだと入力欄をクリアしただけで数量0が保存される）
+    const parseEdit = (value) => {
+      if (value === '' || value === null || value === undefined) return null;
+      const n = Number(value);
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    };
+
     let totalAmount = 0;
     const merged = stored.map((item, i) => {
-      const quantity = Number(edits[i]?.quantity);
-      const unitPrice = Number(edits[i]?.unitPrice);
+      const quantity = parseEdit(edits[i]?.quantity);
+      const unitPrice = parseEdit(edits[i]?.unitPrice);
       const next = {
         ...item,
-        quantity: Number.isFinite(quantity) && quantity >= 0 ? quantity : item.quantity,
-        unitPrice: Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : (item.unitPrice || 0),
+        quantity: quantity !== null ? quantity : item.quantity,
+        unitPrice: unitPrice !== null ? unitPrice : (item.unitPrice || 0),
       };
       // 手動調整された行は計算根拠に明示（Excelにもそのまま出る）
       if (next.quantity !== item.quantity && !item.edited) {
