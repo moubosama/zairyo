@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import fsPromises from 'fs/promises';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -39,6 +40,24 @@ const storage = multer.diskStorage({
 });
 
 const ALLOWED_MIME_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+
+/**
+ * ファイル先頭のマジックバイトで実際の形式を検証する
+ * （拡張子・MIMEタイプはクライアント申告のため偽装可能）
+ */
+async function isValidFileSignature(filePath) {
+  const fd = await fsPromises.open(filePath, 'r');
+  try {
+    const { buffer } = await fd.read(Buffer.alloc(4), 0, 4, 0);
+    if (buffer.length < 4) return false;
+    const isPdf = buffer.subarray(0, 4).toString('latin1') === '%PDF';
+    const isPng = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47;
+    const isJpeg = buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF;
+    return isPdf || isPng || isJpeg;
+  } finally {
+    await fd.close();
+  }
+}
 
 const upload = multer({
   storage,
@@ -182,6 +201,12 @@ router.post('/:id/upload', uploadLimiter, upload.single('file'), async (req, res
       return res.status(400).json({ error: 'No file uploaded' });
     }
     console.log('File uploaded:', req.file.path);
+
+    // マジックバイト検証: 拡張子偽装（例: exeを.pdfにリネーム）を拒否
+    if (!(await isValidFileSignature(req.file.path))) {
+      await fsPromises.unlink(req.file.path).catch(() => {});
+      return res.status(400).json({ error: 'ファイルの内容がPDF/PNG/JPGではありません' });
+    }
 
     // Claude APIで解析（専有面積のユーザー入力があれば最優先で採用）
     const userTotalAreaSqm = req.body.total_area_sqm

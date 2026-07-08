@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { PrismaClient } from '@prisma/client';
 
@@ -24,6 +25,8 @@ const PORT = process.env.PORT || 8000;
 app.set('trust proxy', 1);
 
 // Middleware
+// セキュリティヘッダ（API専用サーバーのためデフォルト設定で十分）
+app.use(helmet());
 // ALLOWED_ORIGINS（カンマ区切り）が設定されていればそのオリジンのみ許可
 app.use(cors(ALLOWED_ORIGINS ? { origin: ALLOWED_ORIGINS } : {}));
 app.use(express.json());

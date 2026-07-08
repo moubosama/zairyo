@@ -525,5 +525,6 @@ VITE_UPLOAD_TOKEN=xxx        # UPLOAD_GUARD_TOKENと同じ値
 - **単価コピーの移行**: 旧仕様（登録時に標準単価をコピー）で作られた既存会社のコピー行は `scripts/migrate-remove-copied-defaults.js` で1回掃除する（冪等・カスタム行は保持）
 - **単価マスタの未整備**: calculatorが出力する約128資材のうち標準単価があるのは約40。残りは¥0表示になる → 実勢価格のリスト入手待ち（勝手に相場を入れない）
 - **未解決の業務確認**: 既存壁PBの張り替えスコープ（全面/部分/なし）→ けいとさんへ確認中。PB枚数の妥当性はこれが決まってから
-- **レートリミット**: /api/auth はIPあたり20回/15分、/upload はIPあたり20回/時（UPLOAD_RATE_LIMITで調整）。ゲストプロジェクトは24時間経過で自動削除（起動時+6時間ごと、`services/projectCleanup.js`）
+- **レートリミット**: /api/auth はIPあたり20回/15分、/upload はIPあたり20回/時（UPLOAD_RATE_LIMITで調整）、/api/admin は30回/15分。ゲストプロジェクトは24時間経過で自動削除（起動時+6時間ごと、`services/projectCleanup.js`）
+- **セキュリティ対策**: helmet（セキュリティヘッダ）、アップロードのマジックバイト検証（拡張子偽装を拒否）、adminトークンはtimingSafeEqual比較、npm既知脆弱性0件（xlsxパッケージは未使用のため削除済み・Excel処理はexceljsのみ）。アップロードファイルは静的配信していない（外部から取得不可）
 - **凍結タスク**: アップロード画像のS3/R2移行、会社内複数ユーザー

@@ -1,8 +1,27 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 
 const router = express.Router();
+
+// トークン総当たり対策（管理APIは人間が使う頻度しかない）
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+});
+router.use(adminLimiter);
+
+/** タイミング攻撃を避けた固定時間比較 */
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 /**
  * 運営者用の最小admin API（管理画面なし・curl/スクリプトから利用）
@@ -21,7 +40,7 @@ router.use((req, res, next) => {
     // 機能自体を無効化（存在も明かさない）
     return res.status(404).json({ error: 'Not found' });
   }
-  if (req.headers['x-admin-token'] !== adminToken) {
+  if (!safeEqual(req.headers['x-admin-token'] || '', adminToken)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   next();
