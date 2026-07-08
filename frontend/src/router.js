@@ -5,6 +5,7 @@ import ProjectHistory from './views/ProjectHistory.vue'
 import Login from './views/Login.vue'
 import UnitPriceSettings from './views/UnitPriceSettings.vue'
 import AccountSettings from './views/AccountSettings.vue'
+import AdminDashboard from './views/AdminDashboard.vue'
 
 const routes = [
   {
@@ -39,6 +40,12 @@ const routes = [
     name: 'account-settings',
     component: AccountSettings,
     meta: { requiresAuth: true },
+  },
+  {
+    // 運営者専用（ナビには出さない。認証はX-Admin-Tokenで画面内で行う）
+    path: '/admin',
+    name: 'admin-dashboard',
+    component: AdminDashboard,
   },
 ]
 

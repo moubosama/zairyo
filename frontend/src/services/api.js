@@ -51,6 +51,14 @@ export const exportExcel = (id) => api.get(`/projects/${id}/export`, { responseT
 // オーバーライドオプション
 export const fetchOverrideOptions = () => api.get('/override-options')
 
+// 運営者用admin API（X-Admin-Tokenヘッダで認証、JWTとは独立）
+export const adminFetchCompanies = (adminToken) =>
+  api.get('/admin/companies', { headers: { 'X-Admin-Token': adminToken } })
+export const adminResetPassword = (adminToken, companyId, newPassword = null) =>
+  api.post(`/admin/companies/${companyId}/reset-password`,
+    newPassword ? { new_password: newPassword } : {},
+    { headers: { 'X-Admin-Token': adminToken } })
+
 // 単価設定（要ログイン）
 export const fetchEffectiveUnitPrices = () => api.get('/unit-prices/effective')
 export const upsertUnitPrice = (data) => api.put('/unit-prices/upsert', data)
