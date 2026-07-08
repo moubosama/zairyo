@@ -315,13 +315,14 @@ router.post('/:id/calculate', async (req, res) => {
     );
     console.log('Calculation result:', JSON.stringify(result.summary));
 
-    // 単価を適用（ログインユーザーの単価、なければ標準単価）
+    // 単価を適用（標準単価をベースに、ログイン会社のカスタム単価を重ねる）
+    // ※ 自社単価を「1件だけ」登録した場合でも他の資材は標準単価が使われる
     const companyId = req.companyId; // 認証ミドルウェアから取得
-    let unitPrices = [];
+    let companyPrices = [];
     let productSelections = [];
 
     if (companyId) {
-      unitPrices = await prisma.unitPrice.findMany({
+      companyPrices = await prisma.unitPrice.findMany({
         where: { companyId }
       });
 
@@ -331,10 +332,9 @@ router.post('/:id/calculate', async (req, res) => {
       });
     }
 
-    // 単価がない場合は標準単価を使用
-    if (unitPrices.length === 0) {
-      unitPrices = await prisma.defaultUnitPrice.findMany();
-    }
+    const defaultPrices = await prisma.defaultUnitPrice.findMany();
+    // findは先頭一致を返すため、自社単価を前に置いて優先させる
+    const unitPrices = [...companyPrices, ...defaultPrices];
 
     // 選択商品のカタログ情報を取得
     const selectedProducts = {};

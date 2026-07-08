@@ -50,5 +50,15 @@ export const exportExcel = (id) => api.get(`/projects/${id}/export`, { responseT
 // オーバーライドオプション
 export const fetchOverrideOptions = () => api.get('/override-options')
 
+// 単価設定（要ログイン）
+export const fetchEffectiveUnitPrices = () => api.get('/unit-prices/effective')
+export const upsertUnitPrice = (data) => api.put('/unit-prices/upsert', data)
+export const deleteUnitPrice = (id) => api.delete(`/unit-prices/${id}`)
+export const resetUnitPrices = () => api.post('/unit-prices/reset')
+export const exportUnitPrices = () => api.get('/unit-prices/export', { responseType: 'blob' })
+export const importUnitPrices = (formData) => api.post('/unit-prices/import', formData, {
+  headers: { 'Content-Type': 'multipart/form-data' },
+})
+
 
 export default api

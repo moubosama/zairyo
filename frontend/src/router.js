@@ -3,6 +3,7 @@ import Home from './views/Home.vue'
 import MaterialResult from './views/MaterialResult.vue'
 import ProjectHistory from './views/ProjectHistory.vue'
 import Login from './views/Login.vue'
+import UnitPriceSettings from './views/UnitPriceSettings.vue'
 
 const routes = [
   {
@@ -25,6 +26,12 @@ const routes = [
     path: '/result',
     name: 'material-result',
     component: MaterialResult,
+  },
+  {
+    path: '/settings/prices',
+    name: 'unit-price-settings',
+    component: UnitPriceSettings,
+    meta: { requiresAuth: true },
   },
 ]
 

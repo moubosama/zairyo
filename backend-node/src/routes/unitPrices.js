@@ -26,6 +26,99 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /api/unit-prices/effective - 実効単価一覧（標準単価+自社カスタムのマージ表示）
+router.get('/effective', authenticateToken, async (req, res) => {
+  try {
+    const prisma = req.app.get('prisma');
+
+    const [defaults, customs] = await Promise.all([
+      prisma.defaultUnitPrice.findMany({
+        orderBy: [{ category: 'asc' }, { materialName: 'asc' }]
+      }),
+      prisma.unitPrice.findMany({ where: { companyId: req.companyId } })
+    ]);
+
+    const key = (p) => `${p.materialName}|${p.spec || ''}`;
+    const customMap = new Map(customs.map(c => [key(c), c]));
+
+    const rows = defaults.map(d => {
+      const custom = customMap.get(key(d));
+      if (custom) customMap.delete(key(d));
+      return {
+        materialName: d.materialName,
+        spec: d.spec,
+        category: d.category,
+        unit: d.unit,
+        defaultPrice: d.unitPrice,
+        customPrice: custom ? custom.unitPrice : null,
+        customId: custom ? custom.id : null,
+      };
+    });
+
+    // 標準単価に存在しない自社独自の資材も末尾に含める
+    for (const c of customMap.values()) {
+      rows.push({
+        materialName: c.materialName,
+        spec: c.spec,
+        category: c.category,
+        unit: c.unit,
+        defaultPrice: null,
+        customPrice: c.unitPrice,
+        customId: c.id,
+      });
+    }
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Get effective unit prices error:', error);
+    res.status(500).json({ error: '単価の取得に失敗しました' });
+  }
+});
+
+// PUT /api/unit-prices/upsert - 資材名+規格で自社単価を登録/更新
+// （※ PUT /:id より先に定義すること。後だと "upsert" が :id にマッチする）
+router.put('/upsert', authenticateToken, async (req, res) => {
+  try {
+    const prisma = req.app.get('prisma');
+    const { materialName, spec, category, unit, unitPrice } = req.body;
+
+    const price = parseInt(unitPrice);
+    if (!materialName || !unit || !Number.isFinite(price) || price < 0) {
+      return res.status(400).json({ error: '資材名、単位、0以上の単価は必須です' });
+    }
+
+    // specがnullの行は複合uniqueのwhereに使えないためfind→update/createで実装
+    const existing = await prisma.unitPrice.findFirst({
+      where: {
+        companyId: req.companyId,
+        materialName,
+        spec: spec || null,
+      }
+    });
+
+    const result = existing
+      ? await prisma.unitPrice.update({
+          where: { id: existing.id },
+          data: { unitPrice: price }
+        })
+      : await prisma.unitPrice.create({
+          data: {
+            companyId: req.companyId,
+            materialName,
+            spec: spec || null,
+            category: category || null,
+            unitPrice: price,
+            unit,
+          }
+        });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Upsert unit price error:', error);
+    res.status(500).json({ error: '単価の保存に失敗しました' });
+  }
+});
+
 // PUT /api/unit-prices/:id - 単価更新
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
@@ -241,30 +334,16 @@ router.get('/export', authenticateToken, async (req, res) => {
 });
 
 // POST /api/unit-prices/reset - 標準単価にリセット
+// 自社カスタム単価を全削除する（計算時は標準単価に自社単価を重ねる方式のため、
+// 削除すれば自動的に標準単価が適用される。以前の「標準をコピー」方式は
+// 標準単価の更新に追従できなくなるため廃止）
 router.post('/reset', authenticateToken, async (req, res) => {
   try {
     const prisma = req.app.get('prisma');
 
-    // 現在の単価を削除
     await prisma.unitPrice.deleteMany({
       where: { companyId: req.companyId }
     });
-
-    // 標準単価をコピー
-    const defaultPrices = await prisma.defaultUnitPrice.findMany();
-
-    if (defaultPrices.length > 0) {
-      await prisma.unitPrice.createMany({
-        data: defaultPrices.map(dp => ({
-          companyId: req.companyId,
-          materialName: dp.materialName,
-          spec: dp.spec,
-          category: dp.category,
-          unitPrice: dp.unitPrice,
-          unit: dp.unit
-        }))
-      });
-    }
 
     res.json({ message: '標準単価にリセットしました' });
   } catch (error) {

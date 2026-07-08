@@ -18,6 +18,12 @@
               >
                 履歴
               </router-link>
+              <router-link
+                to="/settings/prices"
+                class="text-sm text-gray-400 hover:text-gold transition-colors"
+              >
+                単価設定
+              </router-link>
               <span class="text-sm text-gold">{{ auth.companyName }}</span>
               <button
                 @click="handleLogout"
@@ -85,7 +91,8 @@ const route = useRoute()
 const steps = ['図面アップロード', '資材リスト']
 
 const showSteps = computed(() => {
-  return route.path !== '/history'
+  // ステップ表示は見積フロー（アップロード→資材リスト）のみ
+  return route.path === '/' || route.path === '/result'
 })
 
 const currentStep = computed(() => {

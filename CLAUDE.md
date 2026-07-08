@@ -70,10 +70,10 @@ zairyo/
 │   ├── prisma/                   # schema.prisma（postgresql）+ seed.js（upsert方式・冪等）
 ├── frontend/
 │   ├── src/
-│   │   ├── router.js             # / , /login , /history(要ログイン) , /result
+│   │   ├── router.js             # / , /login , /history(要ログイン) , /result , /settings/prices(要ログイン)
 │   │   ├── stores/               # project.js , auth.js（トークン+localStorage）
 │   │   ├── services/api.js       # axiosインターセプター（Bearer自動付与）
-│   │   └── views/                # Home / Login / MaterialResult / ProjectHistory
+│   │   └── views/                # Home / Login / MaterialResult / ProjectHistory / UnitPriceSettings
 │   │                             # ※PlanUpload/SpecConfirm/PackageSelectはルート未接続（旧フロー）
 └── CLAUDE.md
 ```
@@ -105,6 +105,9 @@ zairyo/
 | GET | /api/projects/{id}/materials | 任意 | 資材リスト取得 |
 | PUT | /api/projects/{id}/materials | 任意 | 数量・単価の手動編集を保存（quantity/unitPriceのみマージ、金額は再計算） |
 | GET | /api/projects/{id}/export | 任意 | Excelダウンロード |
+| GET | /api/unit-prices/effective | 要ログイン | 実効単価一覧（標準+自社カスタムのマージ） |
+| PUT | /api/unit-prices/upsert | 要ログイン | 資材名+規格で自社単価を登録/更新 |
+| POST | /api/unit-prices/reset | 要ログイン | 自社単価を全削除（=標準単価に戻す） |
 | GET | /api/admin/companies | X-Admin-Token | 会社一覧+利用状況 |
 | POST | /api/admin/companies/{id}/reset-password | X-Admin-Token | パスワードリセット |
 
@@ -513,6 +516,8 @@ VITE_UPLOAD_TOKEN=xxx        # UPLOAD_GUARD_TOKENと同じ値
 
 - **db push運用の注意**: 顧客の実データが入った後に破壊的なスキーマ変更をする場合は `prisma migrate` 方式へ移行すること
 - **精度の前提**: 専有面積のユーザー入力を推奨（Home画面の任意欄）。±2%精度は「寸法・㎡ラベルのある平面詳細図+デュアルAI」での実測値
+- **単価の適用ロジック**: 標準単価（DefaultUnitPrice・seed投入）をベースに、会社のカスタム単価（UnitPrice）を資材名+規格の一致で重ねる。単価設定画面（/settings/prices）で会社ごとに編集可能
+- **単価マスタの未整備**: calculatorが出力する約128資材のうち標準単価があるのは約40。残りは¥0表示になる → 実勢価格のリスト入手待ち（勝手に相場を入れない）
 - **未解決の業務確認**: 既存壁PBの張り替えスコープ（全面/部分/なし）→ けいとさんへ確認中。PB枚数の妥当性はこれが決まってから
 - **レートリミット**: /api/auth はIPあたり20回/15分、/upload はIPあたり20回/時（UPLOAD_RATE_LIMITで調整）。ゲストプロジェクトは24時間経過で自動削除（起動時+6時間ごと、`services/projectCleanup.js`）
 - **凍結タスク**: アップロード画像のS3/R2移行、admin管理画面UI、会社内複数ユーザー
