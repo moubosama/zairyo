@@ -31,6 +31,7 @@ export const fetchPackage = (id) => api.get(`/packages/${id}`)
 export const fetchProjects = () => api.get('/projects')
 export const createProject = (data) => api.post('/projects', data)
 export const fetchProject = (id) => api.get(`/projects/${id}`)
+export const deleteProject = (id) => api.delete(`/projects/${id}`)
 export const uploadPlan = (id, formData) => api.post(`/projects/${id}/upload`, formData, {
   headers: {
     'Content-Type': 'multipart/form-data',

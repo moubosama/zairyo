@@ -2,9 +2,11 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import rateLimit from 'express-rate-limit';
 import { optionalAuth, projectScope } from '../middleware/auth.js';
 import { analyzeDrawing } from '../services/claudeApi.js';
 import { calculateMaterials } from '../services/materialCalculator.js';
+import { deleteProjectDeep } from '../services/projectCleanup.js';
 import ExcelJS from 'exceljs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -143,8 +145,18 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// アップロードのレートリミット（デュアルAI課金の防御）
+// IPあたり1時間に20回まで。上限は環境変数で調整可能
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: parseInt(process.env.UPLOAD_RATE_LIMIT || '20', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'アップロード回数の上限に達しました。しばらく待ってから再試行してください。' },
+});
+
 // POST /api/projects/:id/upload - 図面アップロード+AI解析
-router.post('/:id/upload', upload.single('file'), async (req, res) => {
+router.post('/:id/upload', uploadLimiter, upload.single('file'), async (req, res) => {
   try {
     // 簡易アップロードガード（テスト版の課金露出対策）
     // UPLOAD_GUARD_TOKEN が設定されている場合のみ有効
@@ -213,6 +225,22 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
     });
   } catch (error) {
     console.error('Upload error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/projects/:id - プロジェクト削除（関連データ+アップロードファイルも削除）
+router.delete('/:id', async (req, res) => {
+  try {
+    const prisma = req.app.get('prisma');
+    const project = await findOwnedProject(prisma, req);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    await deleteProjectDeep(prisma, project.id);
+    res.json({ deleted: true, id: project.id });
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });

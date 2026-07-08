@@ -98,6 +98,7 @@ zairyo/
 | POST | /api/auth/login | - | ログイン（JWT発行） |
 | GET | /api/projects | 任意 | 一覧（未ログインは常に空） |
 | POST | /api/projects | 任意 | 新規作成（ログイン時は会社に紐付け） |
+| DELETE | /api/projects/{id} | 任意 | プロジェクト削除（関連データ+アップロードファイルも削除） |
 | POST | /api/projects/{id}/upload | 任意+UPLOAD_GUARD_TOKEN | 図面アップロード+AI解析（total_area_sqm任意） |
 | POST | /api/projects/{id}/overrides | 任意 | 仕様変更保存 |
 | POST | /api/projects/{id}/calculate | 任意 | 資材計算実行 |
@@ -483,6 +484,7 @@ GOOGLE_GEMINI_API_KEY=xxx
 JWT_SECRET=xxx               # 本番必須（未設定だと起動拒否）
 ALLOWED_ORIGINS=https://zairyo.vercel.app   # CORS制限（カンマ区切り）
 UPLOAD_GUARD_TOKEN=xxx       # 任意: uploadのX-Upload-Tokenガード
+UPLOAD_RATE_LIMIT=20         # 任意: uploadのIPあたり回数/時（デフォルト20）
 REGISTRATION_CODE=xxx        # 任意: 登録の招待コード
 ADMIN_TOKEN=xxx              # 任意: admin API有効化
 PORT=8000
@@ -512,4 +514,5 @@ VITE_UPLOAD_TOKEN=xxx        # UPLOAD_GUARD_TOKENと同じ値
 - **db push運用の注意**: 顧客の実データが入った後に破壊的なスキーマ変更をする場合は `prisma migrate` 方式へ移行すること
 - **精度の前提**: 専有面積のユーザー入力を推奨（Home画面の任意欄）。±2%精度は「寸法・㎡ラベルのある平面詳細図+デュアルAI」での実測値
 - **未解決の業務確認**: 既存壁PBの張り替えスコープ（全面/部分/なし）→ けいとさんへ確認中。PB枚数の妥当性はこれが決まってから
-- **凍結タスク**: アップロード画像のS3/R2移行、admin管理画面UI、ゲストプロジェクトの定期削除、会社内複数ユーザー
+- **レートリミット**: /api/auth はIPあたり20回/15分、/upload はIPあたり20回/時（UPLOAD_RATE_LIMITで調整）。ゲストプロジェクトは24時間経過で自動削除（起動時+6時間ごと、`services/projectCleanup.js`）
+- **凍結タスク**: アップロード画像のS3/R2移行、admin管理画面UI、会社内複数ユーザー

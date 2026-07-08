@@ -58,6 +58,14 @@
             >
               Excel
             </button>
+            <button
+              @click.stop="confirmDelete(project)"
+              :disabled="deletingId === project.id"
+              class="text-sm px-3 py-1 rounded border border-red-800 text-red-400 hover:bg-red-900/30 disabled:opacity-50"
+              title="このプロジェクトを削除"
+            >
+              {{ deletingId === project.id ? '削除中...' : '削除' }}
+            </button>
             <span class="text-gray-400">→</span>
           </div>
         </div>
@@ -83,6 +91,7 @@ const store = useProjectStore()
 const projects = ref([])
 const loading = ref(false)
 const error = ref(null)
+const deletingId = ref(null)
 
 onMounted(async () => {
   await loadProjects()
@@ -144,6 +153,27 @@ async function viewProject(project) {
     }
   } catch (e) {
     error.value = e.response?.data?.message || 'プロジェクトの読み込みに失敗しました'
+  }
+}
+
+async function confirmDelete(project) {
+  if (!window.confirm(`「${project.name}」を削除しますか？\n見積データ・アップロード図面も削除され、元に戻せません。`)) {
+    return
+  }
+
+  deletingId.value = project.id
+  error.value = null
+  try {
+    await api.deleteProject(project.id)
+    projects.value = projects.value.filter(p => p.id !== project.id)
+    // 削除したプロジェクトをstoreが指していたらクリア
+    if (store.currentProject?.id === project.id) {
+      store.reset()
+    }
+  } catch (e) {
+    error.value = e.response?.data?.error || 'プロジェクトの削除に失敗しました'
+  } finally {
+    deletingId.value = null
   }
 }
 
