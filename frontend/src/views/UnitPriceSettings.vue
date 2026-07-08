@@ -8,8 +8,11 @@
     </div>
 
     <!-- Toolbar -->
-    <div class="flex flex-wrap items-center justify-between gap-2 mb-6">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <div class="flex gap-2">
+        <button @click="showAddForm = !showAddForm" class="btn-secondary text-sm">
+          ＋ 資材を追加
+        </button>
         <button @click="downloadExcel" class="btn-secondary text-sm">📥 Excel出力</button>
         <label class="btn-secondary text-sm cursor-pointer">
           📤 Excelインポート
@@ -28,10 +31,71 @@
       </button>
     </div>
 
+    <!-- Add Material Form -->
+    <div v-if="showAddForm" class="card mb-4">
+      <h3 class="text-sm font-medium text-gold mb-3">自社独自の資材を追加</h3>
+      <form @submit.prevent="addMaterial" class="grid md:grid-cols-6 gap-3 items-end">
+        <div class="md:col-span-2">
+          <label class="block text-xs text-gray-400 mb-1">資材名 *</label>
+          <input v-model="newMaterial.name" required placeholder="例: 特注パネル" class="input w-full text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">規格</label>
+          <input v-model="newMaterial.spec" placeholder="例: 910×1820" class="input w-full text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">カテゴリ</label>
+          <input v-model="newMaterial.category" list="category-list" placeholder="例: 下地材" class="input w-full text-sm" />
+          <datalist id="category-list">
+            <option v-for="cat in categories" :key="cat" :value="cat" />
+          </datalist>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">単位 *</label>
+          <input v-model="newMaterial.unit" required placeholder="例: 枚" class="input w-full text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">単価（円） *</label>
+          <input v-model="newMaterial.unitPrice" type="number" min="0" step="1" required class="input w-full text-sm text-right" />
+        </div>
+        <div class="md:col-span-6 flex gap-2 justify-end">
+          <button type="button" @click="showAddForm = false" class="btn-secondary text-sm">キャンセル</button>
+          <button type="submit" :disabled="adding" class="btn-primary text-sm disabled:opacity-50">
+            {{ adding ? '追加中...' : '追加' }}
+          </button>
+        </div>
+      </form>
+      <p class="text-xs text-gray-400 mt-2">
+        ※ ここで追加した資材は自社の単価表とExcel出力に載ります（自動計算の対象にするには資材名が計算結果と一致している必要があります）
+      </p>
+    </div>
+
+    <!-- Search / Filter -->
+    <div class="flex flex-wrap items-center gap-4 mb-4">
+      <input
+        v-model="searchQuery"
+        type="search"
+        placeholder="🔍 資材名・規格・カテゴリで検索"
+        class="input w-72 text-sm"
+      />
+      <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+        <input v-model="showCustomOnly" type="checkbox" class="accent-gold" />
+        カスタム単価のみ表示
+      </label>
+      <span v-if="searchQuery || showCustomOnly" class="text-xs text-gray-500">
+        {{ filteredRows.length }} / {{ rows.length }}件
+      </span>
+    </div>
+
     <!-- Loading -->
     <div v-if="loading" class="text-center py-12">
       <div class="spinner mx-auto mb-4"></div>
       <p class="text-gray-400">読み込み中...</p>
+    </div>
+
+    <!-- Empty search result -->
+    <div v-else-if="filteredRows.length === 0" class="card text-center py-8 text-gray-400">
+      条件に一致する資材がありません
     </div>
 
     <!-- Price Table -->
@@ -127,6 +191,11 @@ const saving = ref(false)
 const error = ref(null)
 const showToast = ref(false)
 const toastMessage = ref('')
+const searchQuery = ref('')
+const showCustomOnly = ref(false)
+const showAddForm = ref(false)
+const adding = ref(false)
+const newMaterial = ref({ name: '', spec: '', category: '', unit: '', unitPrice: '' })
 
 const rowKey = (row) => `${row.materialName}|${row.spec || ''}`
 
@@ -149,9 +218,25 @@ async function load() {
   }
 }
 
+// 検索・フィルタ適用後の行
+const filteredRows = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  return rows.value.filter(row => {
+    if (showCustomOnly.value && row.customPrice === null) return false
+    if (!q) return true
+    return [row.materialName, row.spec, row.category]
+      .some(field => (field || '').toLowerCase().includes(q))
+  })
+})
+
+// 既存カテゴリ一覧（追加フォームの入力補完用）
+const categories = computed(() =>
+  [...new Set(rows.value.map(r => r.category).filter(Boolean))]
+)
+
 const groupedRows = computed(() => {
   const grouped = {}
-  for (const row of rows.value) {
+  for (const row of filteredRows.value) {
     const cat = row.category || 'その他'
     if (!grouped[cat]) grouped[cat] = []
     grouped[cat].push(row)
@@ -204,6 +289,36 @@ async function saveAll() {
     error.value = e.response?.data?.error || '単価の保存に失敗しました'
   } finally {
     saving.value = false
+  }
+}
+
+async function addMaterial() {
+  const price = parseInt(newMaterial.value.unitPrice)
+  if (!Number.isFinite(price) || price < 0) {
+    error.value = '単価は0以上の数値で入力してください'
+    return
+  }
+
+  adding.value = true
+  error.value = null
+  try {
+    await api.upsertUnitPrice({
+      materialName: newMaterial.value.name.trim(),
+      spec: newMaterial.value.spec.trim() || null,
+      category: newMaterial.value.category.trim() || null,
+      unit: newMaterial.value.unit.trim(),
+      unitPrice: price,
+    })
+    await load()
+    // 追加した資材がすぐ見えるように検索欄へセット
+    searchQuery.value = newMaterial.value.name.trim()
+    newMaterial.value = { name: '', spec: '', category: '', unit: '', unitPrice: '' }
+    showAddForm.value = false
+    showToastMessage('資材を追加しました')
+  } catch (e) {
+    error.value = e.response?.data?.error || '資材の追加に失敗しました'
+  } finally {
+    adding.value = false
   }
 }
 

@@ -89,7 +89,7 @@ const auth = useAuthStore()
 
 function handleLogout() {
   auth.logout()
-  router.push('/')
+  router.push('/login')
 }
 
 const route = useRoute()
