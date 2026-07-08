@@ -24,7 +24,13 @@
               >
                 単価設定
               </router-link>
-              <span class="text-sm text-gold">{{ auth.companyName }}</span>
+              <router-link
+                to="/settings/account"
+                class="text-sm text-gold hover:underline"
+                title="アカウント設定"
+              >
+                {{ auth.companyName }}
+              </router-link>
               <button
                 @click="handleLogout"
                 class="text-sm text-gray-400 hover:text-gold transition-colors"

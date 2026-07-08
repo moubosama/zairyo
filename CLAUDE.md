@@ -70,10 +70,10 @@ zairyo/
 │   ├── prisma/                   # schema.prisma（postgresql）+ seed.js（upsert方式・冪等）
 ├── frontend/
 │   ├── src/
-│   │   ├── router.js             # / , /login , /history(要ログイン) , /result , /settings/prices(要ログイン)
+│   │   ├── router.js             # / , /login , /history , /result , /settings/prices , /settings/account
 │   │   ├── stores/               # project.js , auth.js（トークン+localStorage）
 │   │   ├── services/api.js       # axiosインターセプター（Bearer自動付与）
-│   │   └── views/                # Home / Login / MaterialResult / ProjectHistory / UnitPriceSettings
+│   │   └── views/                # Home / Login / MaterialResult / ProjectHistory / UnitPriceSettings / AccountSettings
 │   │                             # ※PlanUpload/SpecConfirm/PackageSelectはルート未接続（旧フロー）
 └── CLAUDE.md
 ```
@@ -96,6 +96,7 @@ zairyo/
 |---------|--------------|------|------|
 | POST | /api/auth/register | 招待コード | 会社登録 |
 | POST | /api/auth/login | - | ログイン（JWT発行） |
+| POST | /api/auth/change-password | 要ログイン | パスワード変更（現パスワード確認あり） |
 | GET | /api/projects | 任意 | 一覧（未ログインは常に空） |
 | POST | /api/projects | 任意 | 新規作成（ログイン時は会社に紐付け） |
 | DELETE | /api/projects/{id} | 任意 | プロジェクト削除（関連データ+アップロードファイルも削除） |

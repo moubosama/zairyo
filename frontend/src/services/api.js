@@ -22,6 +22,7 @@ api.interceptors.request.use((config) => {
 // 認証関連
 export const register = (data) => api.post('/auth/register', data)
 export const login = (data) => api.post('/auth/login', data)
+export const changePassword = (data) => api.post('/auth/change-password', data)
 
 // パッケージ関連
 export const fetchPackages = () => api.get('/packages')

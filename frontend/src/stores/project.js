@@ -27,7 +27,7 @@ export const useProjectStore = defineStore('project', () => {
       const response = await api.fetchPackages()
       packages.value = response.data
     } catch (e) {
-      error.value = e.response?.data?.message || 'パッケージの取得に失敗しました'
+      error.value = e.response?.data?.message || e.response?.data?.error || 'パッケージの取得に失敗しました'
       throw e
     } finally {
       loading.value = false
@@ -48,7 +48,7 @@ export const useProjectStore = defineStore('project', () => {
       currentProject.value = response.data
       return currentProject.value
     } catch (e) {
-      error.value = e.response?.data?.message || 'プロジェクトの作成に失敗しました'
+      error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの作成に失敗しました'
       throw e
     } finally {
       loading.value = false
@@ -74,7 +74,7 @@ export const useProjectStore = defineStore('project', () => {
       aiReading.value = response.data.parsedData || response.data
       return aiReading.value
     } catch (e) {
-      error.value = e.response?.data?.message || '図面のアップロードに失敗しました'
+      error.value = e.response?.data?.message || e.response?.data?.error || '図面のアップロードに失敗しました'
       throw e
     } finally {
       loading.value = false
@@ -98,7 +98,7 @@ export const useProjectStore = defineStore('project', () => {
       await api.saveOverrides(currentProject.value.id, overrideArray)
       overrides.value = overrideData
     } catch (e) {
-      error.value = e.response?.data?.message || '仕様変更の保存に失敗しました'
+      error.value = e.response?.data?.message || e.response?.data?.error || '仕様変更の保存に失敗しました'
       throw e
     } finally {
       loading.value = false
@@ -128,7 +128,7 @@ export const useProjectStore = defineStore('project', () => {
       }
       return materials.value
     } catch (e) {
-      error.value = e.response?.data?.message || '資材計算に失敗しました'
+      error.value = e.response?.data?.message || e.response?.data?.error || '資材計算に失敗しました'
       throw e
     } finally {
       loading.value = false
@@ -171,7 +171,7 @@ export const useProjectStore = defineStore('project', () => {
       link.click()
       window.URL.revokeObjectURL(url)
     } catch (e) {
-      error.value = e.response?.data?.message || 'Excelエクスポートに失敗しました'
+      error.value = e.response?.data?.message || e.response?.data?.error || 'Excelエクスポートに失敗しました'
       throw e
     }
   }

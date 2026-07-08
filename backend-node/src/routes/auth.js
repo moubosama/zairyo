@@ -40,6 +40,8 @@ router.post('/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     // 会社作成
+    // ※ 標準単価のコピーはしない。計算時に標準単価へ自社単価を重ねる方式のため、
+    //   カスタムしない限り常に最新の標準単価が適用される
     const company = await prisma.company.create({
       data: {
         name,
@@ -47,21 +49,6 @@ router.post('/register', async (req, res) => {
         passwordHash
       }
     });
-
-    // 標準単価をコピー
-    const defaultPrices = await prisma.defaultUnitPrice.findMany();
-    if (defaultPrices.length > 0) {
-      await prisma.unitPrice.createMany({
-        data: defaultPrices.map(dp => ({
-          companyId: company.id,
-          materialName: dp.materialName,
-          spec: dp.spec,
-          category: dp.category,
-          unitPrice: dp.unitPrice,
-          unit: dp.unit
-        }))
-      });
-    }
 
     // JWT発行
     const token = jwt.sign(
@@ -156,6 +143,46 @@ router.get('/me', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Get me error:', error);
     res.status(500).json({ error: '情報の取得に失敗しました' });
+  }
+});
+
+// POST /api/auth/change-password - パスワード変更（本人用）
+router.post('/change-password', authenticateToken, async (req, res) => {
+  try {
+    const prisma = req.app.get('prisma');
+    const { current_password, new_password } = req.body;
+
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: '現在のパスワードと新しいパスワードを入力してください' });
+    }
+
+    if (new_password.length < 6) {
+      return res.status(400).json({ error: '新しいパスワードは6文字以上で入力してください' });
+    }
+
+    const company = await prisma.company.findUnique({
+      where: { id: req.companyId }
+    });
+
+    if (!company) {
+      return res.status(404).json({ error: '会社が見つかりません' });
+    }
+
+    const isValid = await bcrypt.compare(current_password, company.passwordHash);
+    if (!isValid) {
+      return res.status(401).json({ error: '現在のパスワードが間違っています' });
+    }
+
+    const passwordHash = await bcrypt.hash(new_password, 10);
+    await prisma.company.update({
+      where: { id: company.id },
+      data: { passwordHash }
+    });
+
+    res.json({ message: 'パスワードを変更しました' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'パスワードの変更に失敗しました' });
   }
 });
 

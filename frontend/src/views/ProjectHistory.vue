@@ -45,8 +45,8 @@
               </span>
             </div>
             <div class="flex items-center gap-6 text-sm text-gray-400">
-              <span>パッケージ: {{ project.packageName }}</span>
               <span v-if="project.layoutType">間取り: {{ project.layoutType }}</span>
+              <span v-if="project.totalAmount">概算: ¥{{ project.totalAmount.toLocaleString() }}</span>
               <span>作成日: {{ formatDate(project.createdAt) }}</span>
             </div>
           </div>
@@ -104,7 +104,7 @@ async function loadProjects() {
     const response = await api.fetchProjects()
     projects.value = response.data
   } catch (e) {
-    error.value = e.response?.data?.message || 'プロジェクトの取得に失敗しました'
+    error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの取得に失敗しました'
   } finally {
     loading.value = false
   }
@@ -152,7 +152,7 @@ async function viewProject(project) {
       router.push('/upload')
     }
   } catch (e) {
-    error.value = e.response?.data?.message || 'プロジェクトの読み込みに失敗しました'
+    error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの読み込みに失敗しました'
   }
 }
 
