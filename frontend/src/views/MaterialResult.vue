@@ -239,6 +239,26 @@
       </div>
     </div>
 
+    <!-- Added Rows (edit mode) -->
+    <div v-if="editMode" class="card mt-4">
+      <div class="flex items-center justify-between mb-3">
+        <h4 class="text-sm font-medium text-gold">独自項目の追加（特注造作・別途工事など）</h4>
+        <button @click="addRow" class="btn-secondary text-sm">＋ 行を追加</button>
+      </div>
+      <p v-if="addedRows.length === 0" class="text-sm text-gray-400">
+        「＋ 行を追加」で、自動計算にない項目を見積に足せます（保存後はExcelにも出力されます）
+      </p>
+      <div v-for="(row, i) in addedRows" :key="i" class="grid md:grid-cols-12 gap-2 items-center mb-2">
+        <input v-model="row.category" placeholder="カテゴリ" class="input text-sm py-1 px-2 md:col-span-2" />
+        <input v-model="row.name" placeholder="資材名 *" class="input text-sm py-1 px-2 md:col-span-3" />
+        <input v-model="row.spec" placeholder="規格" class="input text-sm py-1 px-2 md:col-span-2" />
+        <input v-model.number="row.quantity" type="number" min="0" step="0.1" placeholder="数量" class="input text-sm py-1 px-2 text-right md:col-span-1" />
+        <input v-model="row.unit" placeholder="単位" class="input text-sm py-1 px-2 md:col-span-1" />
+        <input v-model.number="row.unitPrice" type="number" min="0" step="1" placeholder="単価" class="input text-sm py-1 px-2 text-right md:col-span-2" />
+        <button @click="removeAddedRow(i)" class="text-red-400 hover:text-red-300 text-sm md:col-span-1">削除</button>
+      </div>
+    </div>
+
     <!-- Fixed Items Note -->
     <div class="card mt-6 bg-dark-600">
       <h4 class="text-sm font-medium text-gold mb-2">固定値について</h4>
@@ -253,13 +273,7 @@
       <button @click="startNew" class="btn-primary">新規作成</button>
     </div>
 
-    <!-- Toast -->
-    <div
-      v-if="showToast"
-      class="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg fade-in"
-    >
-      {{ toastMessage }}
-    </div>
+    <Toast :show="showToast" :message="toastMessage" />
   </div>
 </template>
 
@@ -267,24 +281,30 @@
 import { computed, ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
+import { useToast } from '@/composables/useToast'
+import Toast from '@/components/Toast.vue'
 
 const router = useRouter()
 const route = useRoute()
 const store = useProjectStore()
 
-// リロードや直接アクセスでstoreが空のときは壊れた画面（¥0・空テーブル）を見せない
-onMounted(() => {
+// リロードや直接アクセスでstoreが空のときは、セッション内の直近プロジェクトを復元する
+// （ゲストもX-Guest-Tokenで復元可能）。復元できなければホームへ
+onMounted(async () => {
   if (!store.hasMaterials) {
-    router.replace('/')
+    const restored = await store.restoreFromSession()
+    if (!restored) {
+      router.replace('/')
+    }
   }
 })
 
-const showToast = ref(false)
-const toastMessage = ref('')
+const { showToast, toastMessage, showToastMessage } = useToast()
 const showWarnings = ref(true)
 const showAdjust = ref(false)
 const editMode = ref(false)
 const editedMaterials = ref([])
+const addedRows = ref([])
 const adjustPartitionWall = ref('')
 const adjustCeilingHeight = ref('')
 
@@ -343,10 +363,11 @@ const rowAmount = (item) => {
   return Math.round(qty * price)
 }
 
-// 合計金額（編集モード中は入力値からリアルタイム算出）
+// 合計金額（編集モード中は入力値からリアルタイム算出、追加行も含む）
 const totalAmount = computed(() => {
   if (editMode.value) {
     return editedMaterials.value.reduce((sum, item) => sum + rowAmount(item), 0)
+      + addedRows.value.reduce((sum, item) => sum + rowAmount(item), 0)
   }
   return store.materials.reduce((sum, item) => sum + (item.amount || 0), 0)
 })
@@ -360,30 +381,37 @@ const formatArea = (value) => {
   return Number(value).toFixed(1)
 }
 
-const showToastMessage = (message) => {
-  toastMessage.value = message
-  showToast.value = true
-  setTimeout(() => {
-    showToast.value = false
-  }, 3000)
-}
-
 // --- 数量編集 ---
 const enterEdit = () => {
   editedMaterials.value = store.materials.map(item => ({ ...item }))
+  addedRows.value = []
   editMode.value = true
 }
 
 const cancelEdit = () => {
   editMode.value = false
   editedMaterials.value = []
+  addedRows.value = []
+}
+
+const addRow = () => {
+  addedRows.value.push({ category: '', name: '', spec: '', quantity: 1, unit: '式', unitPrice: 0 })
+}
+
+const removeAddedRow = (index) => {
+  addedRows.value.splice(index, 1)
 }
 
 const saveEdit = async () => {
+  const validAdded = addedRows.value.filter(r => String(r.name || '').trim() !== '')
+  if (addedRows.value.length > validAdded.length) {
+    showToastMessage('資材名が空の追加行は保存されません')
+  }
   try {
-    await store.updateMaterials(editedMaterials.value)
+    await store.updateMaterials(editedMaterials.value, validAdded)
     editMode.value = false
     editedMaterials.value = []
+    addedRows.value = []
     showToastMessage('資材リストを保存しました')
   } catch (e) {
     console.error(e)

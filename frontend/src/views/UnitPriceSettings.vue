@@ -171,13 +171,7 @@
       <p>{{ error }}</p>
     </div>
 
-    <!-- Toast -->
-    <div
-      v-if="showToast"
-      class="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg fade-in"
-    >
-      {{ toastMessage }}
-    </div>
+    <Toast :show="showToast" :message="toastMessage" />
   </div>
 </template>
 
@@ -185,13 +179,14 @@
 import { computed, ref, onMounted } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import * as api from '@/services/api'
+import { useToast } from '@/composables/useToast'
+import Toast from '@/components/Toast.vue'
 
 const rows = ref([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref(null)
-const showToast = ref(false)
-const toastMessage = ref('')
+const { showToast, toastMessage, showToastMessage } = useToast()
 const searchQuery = ref('')
 const showCustomOnly = ref(false)
 const showAddForm = ref(false)
@@ -220,7 +215,7 @@ async function load() {
       input: r.customPrice !== null ? String(r.customPrice) : '',
     }))
   } catch (e) {
-    error.value = e.response?.data?.error || '単価の取得に失敗しました'
+    error.value = api.apiErrorMessage(e, '単価の取得に失敗しました')
   } finally {
     loading.value = false
   }
@@ -260,12 +255,6 @@ function isDirty(row) {
 
 const dirtyCount = computed(() => rows.value.filter(isDirty).length)
 
-function showToastMessage(message) {
-  toastMessage.value = message
-  showToast.value = true
-  setTimeout(() => { showToast.value = false }, 3000)
-}
-
 async function saveAll() {
   saving.value = true
   error.value = null
@@ -294,7 +283,7 @@ async function saveAll() {
     await load()
     showToastMessage(`${prices.length}件の単価を保存しました`)
   } catch (e) {
-    error.value = e.response?.data?.error || '単価の保存に失敗しました'
+    error.value = api.apiErrorMessage(e, '単価の保存に失敗しました')
   } finally {
     saving.value = false
   }
@@ -324,7 +313,7 @@ async function addMaterial() {
     showAddForm.value = false
     showToastMessage('資材を追加しました')
   } catch (e) {
-    error.value = e.response?.data?.error || '資材の追加に失敗しました'
+    error.value = api.apiErrorMessage(e, '資材の追加に失敗しました')
   } finally {
     adding.value = false
   }
@@ -338,7 +327,7 @@ async function resetRow(row) {
     row.input = ''
     showToastMessage('標準単価に戻しました')
   } catch (e) {
-    error.value = e.response?.data?.error || 'リセットに失敗しました'
+    error.value = api.apiErrorMessage(e, 'リセットに失敗しました')
   }
 }
 
@@ -349,22 +338,14 @@ async function resetAll() {
     await load()
     showToastMessage('全て標準単価に戻しました')
   } catch (e) {
-    error.value = e.response?.data?.error || 'リセットに失敗しました'
+    error.value = api.apiErrorMessage(e, 'リセットに失敗しました')
   }
 }
 
 async function downloadExcel() {
   try {
     const response = await api.exportUnitPrices()
-    const blob = new Blob([response.data], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    })
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'unit_prices.xlsx'
-    link.click()
-    window.URL.revokeObjectURL(url)
+    api.downloadBlob(response, 'unit_prices.xlsx')
   } catch (e) {
     error.value = 'Excelエクスポートに失敗しました'
   }
@@ -387,7 +368,7 @@ async function importExcel(event) {
       : ''
     showToastMessage(msg + errs)
   } catch (e) {
-    error.value = e.response?.data?.error || 'インポートに失敗しました'
+    error.value = api.apiErrorMessage(e, 'インポートに失敗しました')
   }
 }
 </script>

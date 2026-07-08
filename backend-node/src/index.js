@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
@@ -16,6 +15,7 @@ const { default: unitPricesRouter } = await import('./routes/unitPrices.js');
 const { default: adminRouter } = await import('./routes/admin.js');
 const { default: productsRouter } = await import('./routes/products.js');
 const { startGuestCleanup } = await import('./services/projectCleanup.js');
+const { makeLimiter } = await import('./middleware/rateLimits.js');
 const { removeCopiedDefaults } = await import('../scripts/migrate-remove-copied-defaults.js');
 
 const app = express();
@@ -33,14 +33,11 @@ app.use(cors(ALLOWED_ORIGINS ? { origin: ALLOWED_ORIGINS } : {}));
 app.use(express.json());
 
 // 認証エンドポイントのレートリミット（ブルートフォース対策）
-const authLimiter = rateLimit({
+app.use('/api/auth', makeLimiter({
   windowMs: 15 * 60 * 1000,
   limit: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: '試行回数が多すぎます。しばらく待ってから再試行してください。' },
-});
-app.use('/api/auth', authLimiter);
+  message: '試行回数が多すぎます。しばらく待ってから再試行してください。',
+}));
 
 // Make prisma available to routes
 app.set('prisma', prisma);

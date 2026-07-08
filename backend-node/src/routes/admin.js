@@ -1,19 +1,16 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import rateLimit from 'express-rate-limit';
+import { makeLimiter } from '../middleware/rateLimits.js';
 
 const router = express.Router();
 
 // トークン総当たり対策（管理APIは人間が使う頻度しかない）
-const adminLimiter = rateLimit({
+router.use(makeLimiter({
   windowMs: 15 * 60 * 1000,
   limit: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests' },
-});
-router.use(adminLimiter);
+  message: 'Too many requests',
+}));
 
 /** タイミング攻撃を避けた固定時間比較 */
 function safeEqual(a, b) {

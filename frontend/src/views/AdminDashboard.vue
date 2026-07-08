@@ -122,19 +122,16 @@
       </div>
     </template>
 
-    <!-- Toast -->
-    <div
-      v-if="showToast"
-      class="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg fade-in"
-    >
-      {{ toastMessage }}
-    </div>
+    <Toast :show="showToast" :message="toastMessage" />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import * as api from '@/services/api'
+import { formatDate } from '@/utils/format'
+import { useToast } from '@/composables/useToast'
+import Toast from '@/components/Toast.vue'
 
 const TOKEN_KEY = 'zairyo_admin_token'
 
@@ -148,8 +145,7 @@ const guestProjectCount = ref(0)
 const expanded = ref(null)
 const resettingId = ref(null)
 const resetResult = ref(null)
-const showToast = ref(false)
-const toastMessage = ref('')
+const { showToast, toastMessage, showToastMessage } = useToast()
 
 onMounted(() => {
   if (adminToken.value) load()
@@ -202,7 +198,7 @@ async function resetPassword(company) {
     resetResult.value = response.data
     window.scrollTo({ top: 0, behavior: 'smooth' })
   } catch (e) {
-    error.value = e.response?.data?.error || 'パスワードリセットに失敗しました'
+    error.value = api.apiErrorMessage(e, 'パスワードリセットに失敗しました')
   } finally {
     resettingId.value = null
   }
@@ -211,17 +207,6 @@ async function resetPassword(company) {
 function copyPassword() {
   if (!resetResult.value) return
   navigator.clipboard.writeText(resetResult.value.newPassword)
-  toastMessage.value = 'パスワードをコピーしました'
-  showToast.value = true
-  setTimeout(() => { showToast.value = false }, 3000)
-}
-
-function formatDate(dateString) {
-  const date = new Date(dateString)
-  return date.toLocaleDateString('ja-JP', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
+  showToastMessage('パスワードをコピーしました')
 }
 </script>

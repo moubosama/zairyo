@@ -34,12 +34,12 @@
           />
         </div>
         <div>
-          <label class="block text-sm text-gray-400 mb-1">新しいパスワード（6文字以上）</label>
+          <label class="block text-sm text-gray-400 mb-1">新しいパスワード（8文字以上）</label>
           <input
             v-model="newPassword"
             type="password"
             required
-            minlength="6"
+            minlength="8"
             autocomplete="new-password"
             class="input w-full"
           />
@@ -100,7 +100,7 @@ async function submit() {
     newPassword.value = ''
     newPasswordConfirm.value = ''
   } catch (e) {
-    error.value = e.response?.data?.error || 'パスワードの変更に失敗しました'
+    error.value = api.apiErrorMessage(e, 'パスワードの変更に失敗しました')
   } finally {
     submitting.value = false
   }

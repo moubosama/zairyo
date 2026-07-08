@@ -57,7 +57,7 @@
         </div>
 
         <div>
-          <label class="text-sm text-gray-400 block mb-1">パスワード{{ mode === 'register' ? '（6文字以上）' : '' }}</label>
+          <label class="text-sm text-gray-400 block mb-1">パスワード{{ mode === 'register' ? '（8文字以上）' : '' }}</label>
           <input
             v-model="password"
             type="password"

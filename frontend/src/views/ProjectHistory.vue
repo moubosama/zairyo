@@ -85,6 +85,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import * as api from '@/services/api'
 import { useProjectStore } from '@/stores/project'
+import { formatDate } from '@/utils/format'
 
 const router = useRouter()
 const store = useProjectStore()
@@ -106,7 +107,7 @@ async function loadProjects() {
     const response = await api.fetchProjects()
     projects.value = response.data
   } catch (e) {
-    error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの取得に失敗しました'
+    error.value = api.apiErrorMessage(e, 'プロジェクトの取得に失敗しました')
   } finally {
     loading.value = false
   }
@@ -123,29 +124,9 @@ async function viewProject(project) {
     const response = await api.fetchProject(project.id)
     const data = response.data
 
-    // Store にデータをセット
-    store.currentProject = data
+    // Store にデータをセット（リロード復元と共通のロジック）
+    store.applyProjectData(data)
     store.selectedPackage = data.package
-
-    if (data.aiReadings && data.aiReadings.length > 0) {
-      store.aiReading = data.aiReadings[0].parsedData
-    }
-
-    // 保存済みの仕様上書きを復元（再計算時に消えないように）
-    if (data.overrides && data.overrides.length > 0) {
-      store.overrides = Object.fromEntries(data.overrides.map(o => [o.itemKey, o.value]))
-    } else {
-      store.overrides = {}
-    }
-
-    if (data.materialLists && data.materialLists.length > 0) {
-      store.materials = data.materialLists[0].materials
-      store.materialListId = data.materialLists[0].id
-      // summaryからareasをセット
-      if (data.materialLists[0].summary) {
-        store.areas = data.materialLists[0].summary
-      }
-    }
 
     // ステータスに応じて遷移
     // ※ /confirm・/upload は旧フローの廃止済みルート（遷移すると空白ページになる）
@@ -161,7 +142,7 @@ async function viewProject(project) {
       router.push('/')
     }
   } catch (e) {
-    error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの読み込みに失敗しました'
+    error.value = api.apiErrorMessage(e, 'プロジェクトの読み込みに失敗しました')
   } finally {
     openingId.value = null
   }
@@ -182,7 +163,7 @@ async function confirmDelete(project) {
       store.reset()
     }
   } catch (e) {
-    error.value = e.response?.data?.error || 'プロジェクトの削除に失敗しました'
+    error.value = api.apiErrorMessage(e, 'プロジェクトの削除に失敗しました')
   } finally {
     deletingId.value = null
   }
@@ -191,15 +172,7 @@ async function confirmDelete(project) {
 async function downloadExcel(project) {
   try {
     const response = await api.exportExcel(project.id)
-    const blob = new Blob([response.data], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    })
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${project.name}_材料リスト.xlsx`
-    link.click()
-    window.URL.revokeObjectURL(url)
+    api.downloadBlob(response, `${project.name}_材料リスト.xlsx`)
   } catch (e) {
     error.value = 'Excelダウンロードに失敗しました'
   }
@@ -223,12 +196,4 @@ function getStatusLabel(status) {
   return labels[status] || status
 }
 
-function formatDate(dateString) {
-  const date = new Date(dateString)
-  return date.toLocaleDateString('ja-JP', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
-}
 </script>

@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as api from '@/services/api'
 
+const SESSION_PROJECT_KEY = 'zairyo_current_project_id'
+
 export const useProjectStore = defineStore('project', () => {
   // State
   const packages = ref([])
@@ -28,7 +30,7 @@ export const useProjectStore = defineStore('project', () => {
       const response = await api.fetchPackages()
       packages.value = response.data
     } catch (e) {
-      error.value = e.response?.data?.message || e.response?.data?.error || 'パッケージの取得に失敗しました'
+      error.value = api.apiErrorMessage(e, 'パッケージの取得に失敗しました')
       throw e
     } finally {
       loading.value = false
@@ -51,9 +53,11 @@ export const useProjectStore = defineStore('project', () => {
       if (response.data.guestToken) {
         sessionStorage.setItem('zairyo_guest_token', response.data.guestToken)
       }
+      // リロード復元用に現在のプロジェクトIDを保持
+      sessionStorage.setItem(SESSION_PROJECT_KEY, String(response.data.id))
       return currentProject.value
     } catch (e) {
-      error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの作成に失敗しました'
+      error.value = api.apiErrorMessage(e, 'プロジェクトの作成に失敗しました')
       throw e
     } finally {
       loading.value = false
@@ -79,7 +83,7 @@ export const useProjectStore = defineStore('project', () => {
       aiReading.value = response.data.parsedData || response.data
       return aiReading.value
     } catch (e) {
-      error.value = e.response?.data?.message || e.response?.data?.error || '図面のアップロードに失敗しました'
+      error.value = api.apiErrorMessage(e, '図面のアップロードに失敗しました')
       throw e
     } finally {
       loading.value = false
@@ -103,7 +107,7 @@ export const useProjectStore = defineStore('project', () => {
       await api.saveOverrides(currentProject.value.id, overrideArray)
       overrides.value = overrideData
     } catch (e) {
-      error.value = e.response?.data?.message || e.response?.data?.error || '仕様変更の保存に失敗しました'
+      error.value = api.apiErrorMessage(e, '仕様変更の保存に失敗しました')
       throw e
     } finally {
       loading.value = false
@@ -134,14 +138,14 @@ export const useProjectStore = defineStore('project', () => {
       }
       return materials.value
     } catch (e) {
-      error.value = e.response?.data?.message || e.response?.data?.error || '資材計算に失敗しました'
+      error.value = api.apiErrorMessage(e, '資材計算に失敗しました')
       throw e
     } finally {
       loading.value = false
     }
   }
 
-  async function updateMaterials(editedMaterials) {
+  async function updateMaterials(editedMaterials, addedRows = []) {
     if (!currentProject.value) {
       throw new Error('プロジェクトが作成されていません')
     }
@@ -152,13 +156,14 @@ export const useProjectStore = defineStore('project', () => {
       const response = await api.updateMaterials(
         currentProject.value.id,
         editedMaterials,
-        materialListId.value
+        materialListId.value,
+        addedRows
       )
       materials.value = response.data.materials
       materialListId.value = response.data.id ?? materialListId.value
       return materials.value
     } catch (e) {
-      error.value = e.response?.data?.error || '資材リストの保存に失敗しました'
+      error.value = api.apiErrorMessage(e, '資材リストの保存に失敗しました')
       throw e
     } finally {
       loading.value = false
@@ -172,18 +177,49 @@ export const useProjectStore = defineStore('project', () => {
 
     try {
       const response = await api.exportExcel(currentProject.value.id)
-      const blob = new Blob([response.data], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      })
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `zairyo_${currentProject.value.id}_${new Date().toISOString().slice(0, 10)}.xlsx`
-      link.click()
-      window.URL.revokeObjectURL(url)
+      api.downloadBlob(response, `zairyo_${currentProject.value.id}_${new Date().toISOString().slice(0, 10)}.xlsx`)
     } catch (e) {
-      error.value = e.response?.data?.message || e.response?.data?.error || 'Excelエクスポートに失敗しました'
+      error.value = api.apiErrorMessage(e, 'Excelエクスポートに失敗しました')
       throw e
+    }
+  }
+
+  /**
+   * GET /projects/:id のレスポンスをstoreに展開する
+   * （履歴からの遷移とリロード復元で共用）
+   */
+  function applyProjectData(data) {
+    currentProject.value = data
+    if (data.aiReadings && data.aiReadings.length > 0) {
+      aiReading.value = data.aiReadings[0].parsedData
+    }
+    overrides.value = data.overrides && data.overrides.length > 0
+      ? Object.fromEntries(data.overrides.map(o => [o.itemKey, o.value]))
+      : {}
+    if (data.materialLists && data.materialLists.length > 0) {
+      materials.value = data.materialLists[0].materials
+      materialListId.value = data.materialLists[0].id
+      if (data.materialLists[0].summary) {
+        areas.value = data.materialLists[0].summary
+      }
+    }
+    sessionStorage.setItem(SESSION_PROJECT_KEY, String(data.id))
+  }
+
+  /**
+   * リロード等でstoreが空になったとき、セッション内の直近プロジェクトを復元する
+   * @returns 資材リストまで復元できたらtrue
+   */
+  async function restoreFromSession() {
+    const id = sessionStorage.getItem(SESSION_PROJECT_KEY)
+    if (!id) return false
+    try {
+      const response = await api.fetchProject(id)
+      applyProjectData(response.data)
+      return materials.value.length > 0
+    } catch {
+      sessionStorage.removeItem(SESSION_PROJECT_KEY)
+      return false
     }
   }
 
@@ -196,6 +232,7 @@ export const useProjectStore = defineStore('project', () => {
     materialListId.value = null
     areas.value = null
     error.value = null
+    sessionStorage.removeItem(SESSION_PROJECT_KEY)
   }
 
   return {
@@ -223,6 +260,8 @@ export const useProjectStore = defineStore('project', () => {
     calculateMaterials,
     updateMaterials,
     exportExcel,
+    applyProjectData,
+    restoreFromSession,
     reset,
   }
 })

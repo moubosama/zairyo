@@ -23,8 +23,8 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: '会社名、メールアドレス、パスワードは必須です' });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'パスワードは6文字以上で入力してください' });
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'パスワードは8文字以上で入力してください' });
     }
 
     // メールアドレスの重複チェック
@@ -156,8 +156,8 @@ router.post('/change-password', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: '現在のパスワードと新しいパスワードを入力してください' });
     }
 
-    if (new_password.length < 6) {
-      return res.status(400).json({ error: '新しいパスワードは6文字以上で入力してください' });
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: '新しいパスワードは8文字以上で入力してください' });
     }
 
     const company = await prisma.company.findUnique({

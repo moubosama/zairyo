@@ -29,7 +29,7 @@ export const useAuthStore = defineStore('auth', () => {
       setSession(res.data.token, res.data.company)
       return true
     } catch (e) {
-      error.value = e.response?.data?.error || 'ログインに失敗しました'
+      error.value = api.apiErrorMessage(e, 'ログインに失敗しました')
       return false
     } finally {
       loading.value = false
@@ -44,7 +44,7 @@ export const useAuthStore = defineStore('auth', () => {
       setSession(res.data.token, res.data.company)
       return true
     } catch (e) {
-      error.value = e.response?.data?.error || '登録に失敗しました'
+      error.value = api.apiErrorMessage(e, '登録に失敗しました')
       return false
     } finally {
       loading.value = false

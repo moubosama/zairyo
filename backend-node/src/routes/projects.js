@@ -4,7 +4,7 @@ import fsPromises from 'fs/promises';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import rateLimit from 'express-rate-limit';
+import { makeLimiter } from '../middleware/rateLimits.js';
 import { optionalAuth, projectScope } from '../middleware/auth.js';
 import { analyzeDrawing } from '../services/claudeApi.js';
 import { calculateMaterials } from '../services/materialCalculator.js';
@@ -171,12 +171,10 @@ router.get('/:id', async (req, res) => {
 
 // アップロードのレートリミット（デュアルAI課金の防御）
 // IPあたり1時間に20回まで。上限は環境変数で調整可能
-const uploadLimiter = rateLimit({
+const uploadLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   limit: parseInt(process.env.UPLOAD_RATE_LIMIT || '20', 10),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'アップロード回数の上限に達しました。しばらく待ってから再試行してください。' },
+  message: 'アップロード回数の上限に達しました。しばらく待ってから再試行してください。',
 });
 
 // POST /api/projects/:id/upload - 図面アップロード+AI解析
@@ -548,6 +546,37 @@ router.put('/:id/materials', async (req, res) => {
       totalAmount += next.amount;
       return next;
     });
+
+    // 手動追加行（特注造作等、計算対象外の独自項目）
+    const added = Array.isArray(req.body.added) ? req.body.added : [];
+    if (added.length > 20) {
+      return res.status(400).json({ error: '一度に追加できる行は20件までです' });
+    }
+    for (const row of added) {
+      const name = typeof row.name === 'string' ? row.name.trim() : '';
+      const quantity = parseEdit(row.quantity);
+      const unitPrice = parseEdit(row.unitPrice) ?? 0;
+      if (!name) {
+        return res.status(400).json({ error: '追加行の資材名は必須です' });
+      }
+      if (quantity === null) {
+        return res.status(400).json({ error: `追加行の数量が不正です: ${name}` });
+      }
+      const amount = Math.round(unitPrice * quantity);
+      totalAmount += amount;
+      merged.push({
+        category: (typeof row.category === 'string' && row.category.trim() ? row.category.trim() : '追加項目').slice(0, 50),
+        name: name.slice(0, 100),
+        spec: (typeof row.spec === 'string' ? row.spec.trim() : '').slice(0, 100),
+        quantity,
+        unit: (typeof row.unit === 'string' && row.unit.trim() ? row.unit.trim() : '式').slice(0, 20),
+        unitPrice,
+        amount,
+        custom: true,
+        edited: true,
+        calculation: '手動追加',
+      });
+    }
 
     const updated = await prisma.materialList.update({
       where: { id: materialList.id },

@@ -106,10 +106,10 @@ zairyo/
 | POST | /api/projects | 任意 | 新規作成（ログイン時は会社に紐付け） |
 | DELETE | /api/projects/{id} | 任意 | プロジェクト削除（関連データ+アップロードファイルも削除） |
 | POST | /api/projects/{id}/upload | 任意+UPLOAD_GUARD_TOKEN | 図面アップロード+AI解析（total_area_sqm任意） |
+| PUT | /api/projects/{id}/materials | 任意 | 数量・単価編集+独自行追加（added配列、materialListId必須） |
 | POST | /api/projects/{id}/overrides | 任意 | 仕様変更保存 |
 | POST | /api/projects/{id}/calculate | 任意 | 資材計算実行 |
 | GET | /api/projects/{id}/materials | 任意 | 資材リスト取得 |
-| PUT | /api/projects/{id}/materials | 任意 | 数量・単価の手動編集を保存（quantity/unitPriceのみマージ、金額は再計算） |
 | GET | /api/projects/{id}/export | 任意 | Excelダウンロード |
 | GET | /api/unit-prices/effective | 要ログイン | 実効単価一覧（標準+自社カスタムのマージ） |
 | PUT | /api/unit-prices/upsert | 要ログイン | 資材名+規格で自社単価を登録/更新 |

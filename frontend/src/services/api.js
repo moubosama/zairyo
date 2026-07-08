@@ -24,6 +24,29 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+/**
+ * APIエラーからユーザー向けメッセージを取り出す共通ヘルパー
+ * バックエンドは {error} 形式、一部（図面種別ゲート等）は {message} 形式を返す
+ */
+export function apiErrorMessage(e, fallback) {
+  return e?.response?.data?.message || e?.response?.data?.error || fallback
+}
+
+/**
+ * Excel等のblobレスポンスをファイルとしてダウンロードさせる共通ヘルパー
+ */
+export function downloadBlob(response, filename) {
+  const blob = new Blob([response.data], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  window.URL.revokeObjectURL(url)
+}
+
 // 認証関連
 export const register = (data) => api.post('/auth/register', data)
 export const login = (data) => api.post('/auth/login', data)
@@ -50,8 +73,8 @@ export const uploadPlan = (id, formData) => api.post(`/projects/${id}/upload`, f
 export const saveOverrides = (id, overrides) => api.post(`/projects/${id}/overrides`, { overrides })
 export const calculateMaterials = (id) => api.post(`/projects/${id}/calculate`)
 export const fetchMaterials = (id) => api.get(`/projects/${id}/materials`)
-export const updateMaterials = (id, materials, materialListId) =>
-  api.put(`/projects/${id}/materials`, { materials, materialListId })
+export const updateMaterials = (id, materials, materialListId, added = []) =>
+  api.put(`/projects/${id}/materials`, { materials, materialListId, added })
 export const exportExcel = (id) => api.get(`/projects/${id}/export`, { responseType: 'blob' })
 
 // オーバーライドオプション
