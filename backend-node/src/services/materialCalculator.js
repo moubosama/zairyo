@@ -595,6 +595,22 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     }
   });
 
+  // 専有面積（validatorが確定した値・ユーザー入力優先）を数量計算の基礎に反映する
+  // ※ AIが部屋を拾い落として部屋合計が専有面積より小さい場合、居室・天井が過小になる。
+  //   不足分は「専有面積×0.96（内法相当）」までを居室床として補い、天井もそれに追従させる。
+  //   部屋合計の方が大きい場合はvalidatorの按分補正済みなので触らない。
+  const declaredArea = data.total_floor_area_sqm || 0;
+  const netTarget = declaredArea > 0 ? declaredArea * 0.96 : 0;
+  if (netTarget > totalFloorArea && totalFloorArea > 0) {
+    const shortfall = netTarget - totalFloorArea;
+    flooringArea += shortfall; // 拾い落ちは廊下・居室など内装対象が大半
+    totalFloorArea = netTarget;
+  } else if (totalFloorArea === 0 && netTarget > 0) {
+    // 部屋を1つも拾えなかった場合は専有面積ベースで最低限の内装面積を確保
+    flooringArea = netTarget;
+    totalFloorArea = netTarget;
+  }
+
   // 天井面積 (UB・CLを除く)
   const ubArea = rooms.filter(r => r.name?.includes('UB') || r.name?.includes('浴室')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
   const closetArea = rooms.filter(r => r.name?.includes('クローゼット') || r.name?.includes('CL') || r.name?.includes('収納') || r.name?.includes('物入')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
@@ -648,12 +664,16 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   let windowCount = 0;
   let totalOpeningWidth = 0;
 
+  // 建具の型番はプロンプト改定で語彙が変わりうるため、
+  // 「窓」でないもの＝建具（ドア類）として扱う（片開き戸/片引き戸/引違い戸/折戸すべてを拾う）
   openings.forEach(opening => {
-    if (opening.type === 'door' || opening.type === '開き戸' || opening.type === '引戸' || opening.type === '折戸' || opening.type === '片引戸') {
+    const type = opening.type || '';
+    const isWindow = type === 'window' || type.includes('窓') || type.includes('サッシ') || type.includes('AW');
+    if (isWindow) {
+      windowCount++;
+    } else if (type) {
       doorCount++;
       totalOpeningWidth += (opening.width_mm || 800) / 1000;
-    } else if (opening.type === 'window' || opening.type === '窓') {
-      windowCount++;
     }
   });
 
@@ -1438,11 +1458,14 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // 設備関連
   const equipment = data.equipment || {};
+  // AIがサイズを数値（例: 1416）で返すことがあるため必ず文字列化する
+  // （文字列前提の .includes() 呼び出しがTypeErrorでcalculate全体を落とすのを防ぐ）
+  const asStr = (v) => (v == null ? '' : String(v));
 
   // UB（ユニットバス）
   // 意匠図設備リスト: LIXIL リノビオP / BW（Gタイプ等）、INAX BW（一部）
   // 54ファイル実績: 1216, 1317, 1416, 1418 の4サイズが多い
-  const ubSize = equipment.ub_size || '1216';
+  const ubSize = asStr(equipment.ub_size) || '1216';
   let ubSpec = packageSpecs?.ub || 'LIXIL リノビオP';
   if (ubSize.includes('1616') || ubSize.includes('1618')) {
     ubSpec = packageSpecs?.ub || 'LIXIL リノビオP 1616 電気式浴室乾燥機付 アクセントパネル';
@@ -1465,7 +1488,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   });
 
   // キッチン
-  const kitchenType = equipment.kitchen || 'I型 2550';
+  const kitchenType = asStr(equipment.kitchen) || 'I型 2550';
   let kitchenSpec = packageSpecs?.kitchen || 'LIXIL ES 2550 スライド・食洗機あり';
   if (kitchenType.includes('L型')) {
     kitchenSpec = 'LIXIL ES L型 シンク側1800×コンロ側2100 スライド・食洗機あり';
@@ -1490,7 +1513,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   });
 
   // 洗面台
-  const washstandSize = equipment.washstand || 'W750';
+  const washstandSize = asStr(equipment.washstand) || 'W750';
   let washstandSpec = packageSpecs?.washstand || 'LIXIL EV1000 (D500) フルスライド+三面鏡（スリムLED）ミドルグレード';
   if (washstandSize.includes('640') || washstandSize.includes('600')) {
     washstandSpec = 'TOTO 640角 PWP640N2W';

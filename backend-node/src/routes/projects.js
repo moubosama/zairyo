@@ -216,9 +216,21 @@ router.post('/:id/upload', uploadLimiter, upload.single('file'), async (req, res
     });
     console.log('AI analysis complete');
 
+    // AIが両方応答しなかった場合は503（一時的な障害・再試行可能）
+    if (analysisResult._ai_unavailable) {
+      // 保存していないアップロードファイルは掃除する
+      await fsPromises.unlink(req.file.path).catch(() => {});
+      return res.status(503).json({
+        error: 'ai_unavailable',
+        message: analysisResult.rejection_reason,
+      });
+    }
+
     // 図面種別ゲート: 両AIが非平面図と判定した場合は400エラー
     if (analysisResult.is_rejected) {
       console.log('Image rejected:', analysisResult.rejection_reason);
+      // 拒否された図面ファイルも掃除（孤児ファイル防止）
+      await fsPromises.unlink(req.file.path).catch(() => {});
       return res.status(400).json({
         error: 'invalid_document_type',
         message: analysisResult.rejection_reason || 'この画像は計画平面図ではありません。資材計算には計画平面図をアップロードしてください。',
@@ -284,23 +296,30 @@ router.post('/:id/overrides', async (req, res) => {
     const projectId = project.id;
     const { overrides } = req.body;
 
-    // 既存のオーバーライドを削除して新規作成
-    await prisma.override.deleteMany({ where: { projectId } });
-
-    const createdOverrides = [];
-    for (const override of overrides) {
-      const created = await prisma.override.create({
-        data: {
-          projectId,
-          category: override.category,
-          itemKey: override.itemKey,
-          value: override.value
-        }
-      });
-      createdOverrides.push(created);
+    // 検証を削除より先に（不正bodyで既存オーバーライドが消える事故を防ぐ）
+    if (!Array.isArray(overrides)) {
+      return res.status(400).json({ error: 'overrides must be an array' });
+    }
+    if (overrides.length > 100) {
+      return res.status(400).json({ error: 'overridesは100件までです' });
+    }
+    const rows = overrides.map((o) => ({
+      projectId,
+      category: String(o?.category ?? 'spec').slice(0, 50),
+      itemKey: String(o?.itemKey ?? '').slice(0, 100),
+      value: String(o?.value ?? '').slice(0, 200),
+    }));
+    if (rows.some((r) => !r.itemKey)) {
+      return res.status(400).json({ error: 'itemKeyは必須です' });
     }
 
-    res.json(createdOverrides);
+    // 全置換を1トランザクションで（途中失敗で中途半端に残らない）
+    await prisma.$transaction([
+      prisma.override.deleteMany({ where: { projectId } }),
+      ...rows.map((data) => prisma.override.create({ data })),
+    ]);
+
+    res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -347,15 +366,9 @@ router.post('/:id/calculate', async (req, res) => {
     // ※ 自社単価を「1件だけ」登録した場合でも他の資材は標準単価が使われる
     const companyId = req.companyId; // 認証ミドルウェアから取得
     let companyPrices = [];
-    let productSelections = [];
 
     if (companyId) {
       companyPrices = await prisma.unitPrice.findMany({
-        where: { companyId }
-      });
-
-      // 会社の商品選択を取得
-      productSelections = await prisma.companyProductSelection.findMany({
         where: { companyId }
       });
     }
@@ -364,62 +377,23 @@ router.post('/:id/calculate', async (req, res) => {
     // findは先頭一致を返すため、自社単価を前に置いて優先させる
     const unitPrices = [...companyPrices, ...defaultPrices];
 
-    // 選択商品のカタログ情報を取得
-    const selectedProducts = {};
-    for (const sel of productSelections) {
-      const product = await prisma.productCatalog.findUnique({
-        where: { id: sel.productCatalogId }
-      });
-      if (product) {
-        selectedProducts[sel.category] = {
-          ...product,
-          customPrice: sel.customPrice
-        };
-      }
-    }
-
-    // 資材に単価と金額を追加（選択商品があればそれを優先）
+    // 資材に単価と金額を追加
     let totalAmount = 0;
     const materialsWithPrice = result.materials.map(material => {
-      // 設備カテゴリの場合、選択商品をチェック
-      const categoryMap = {
-        'トイレ': '設備',
-        'ユニットバス': '設備',
-        'キッチン': '設備',
-        '洗面台': '設備',
-        'フローリング': '床材',
-        '建具': '建具'
-      };
-
-      let unitPrice = 0;
-      let productName = material.name;
-      let productSpec = material.spec;
-
-      // 選択商品があるかチェック
-      const selectedProduct = selectedProducts[material.category];
-      if (selectedProduct) {
-        // 選択商品の情報で置き換え
-        productName = `${selectedProduct.manufacturer} ${selectedProduct.productName}`;
-        productSpec = selectedProduct.spec;
-        unitPrice = selectedProduct.customPrice || selectedProduct.unitPrice;
-      } else {
-        // 通常の単価マッチング（2段階）
-        // 1. 資材名+規格の完全一致を優先（自社単価が配列先頭のため自社優先）
-        // 2. なければ規格未指定同士のゆるい一致にフォールバック
-        //    ※ 1段のゆるい一致だと、規格なしのカスタム単価1件が
-        //      同名の全規格違い（例: ダイノックシート貼り 玄関扉/窓枠）を乗っ取る
-        const priceInfo =
-          unitPrices.find(p => p.materialName === material.name && p.spec === material.spec) ||
-          unitPrices.find(p => p.materialName === material.name && (!p.spec || !material.spec));
-        unitPrice = priceInfo?.unitPrice || 0;
-      }
+      // 単価マッチング（2段階）
+      // 1. 資材名+規格の完全一致を優先（自社単価が配列先頭のため自社優先）
+      // 2. なければ規格未指定同士のゆるい一致にフォールバック
+      //    ※ 1段のゆるい一致だと、規格なしのカスタム単価1件が
+      //      同名の全規格違い（例: ダイノックシート貼り 玄関扉/窓枠）を乗っ取る
+      const priceInfo =
+        unitPrices.find(p => p.materialName === material.name && p.spec === material.spec) ||
+        unitPrices.find(p => p.materialName === material.name && (!p.spec || !material.spec));
+      const unitPrice = priceInfo?.unitPrice || 0;
 
       const amount = unitPrice * material.quantity;
       totalAmount += amount;
       return {
         ...material,
-        name: selectedProduct ? productName : material.name,
-        spec: selectedProduct ? productSpec : material.spec,
         unitPrice,
         amount
       };

@@ -279,7 +279,10 @@ export function validateAndNormalize(raw, options = {}) {
 
   // ---------- 4. 床暖房: LDK面積×敷設率上限でクランプ ----------
   if (Array.isArray(data.special)) {
-    const ldk = (data.rooms || []).find((r) => r.name?.includes('LDK'));
+    // 部屋名は 'LDK' とは限らない（'リビング・ダイニング' 等）ので複数表記で照合
+    const ldk = (data.rooms || []).find((r) =>
+      ['LDK', 'リビング', 'ダイニング', 'ＬＤＫ'].some((k) => r.name?.includes(k))
+    );
     const ldkArea = ldk?.area_sqm || null;
     for (const sp of data.special) {
       const isFloorHeating = sp.type === '床暖房' || sp.type === 'floor_heating';

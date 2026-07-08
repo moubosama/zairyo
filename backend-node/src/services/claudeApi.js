@@ -426,8 +426,16 @@ export async function analyzeDrawing(filePath, options = {}) {
   const results = [geminiResult, claudeResult].filter(r => r !== null);
 
   if (results.length === 0) {
-    console.log('All APIs failed, using mock data...');
-    return getMockAnalysisResult();
+    // 両AIが失敗（APIキー失効・障害・レスポンス解析失敗）した場合、
+    // モックの架空物件を返すと本物の見積として保存されてしまう。
+    // 明示的に拒否して、アップロード側で500として扱わせる。
+    console.error('All AI APIs failed — refusing to fabricate analysis');
+    return {
+      is_rejected: true,
+      document_type: 'unknown',
+      rejection_reason: 'AI解析に失敗しました（両AIが応答しませんでした）。時間をおいて再試行してください。',
+      _ai_unavailable: true,
+    };
   }
 
   // 結果を照合（平均化ではなくフィールド単位の突き合わせ）

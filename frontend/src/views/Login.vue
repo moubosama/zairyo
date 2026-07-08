@@ -58,13 +58,23 @@
 
         <div>
           <label class="text-sm text-gray-400 block mb-1">パスワード{{ mode === 'register' ? '（8文字以上）' : '' }}</label>
-          <input
-            v-model="password"
-            type="password"
-            :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
-            class="w-full bg-dark-600 border border-dark-400 rounded px-3 py-2 focus:border-gold focus:outline-none"
-            @keyup.enter="submit"
-          />
+          <div class="relative">
+            <input
+              v-model="password"
+              :type="showPassword ? 'text' : 'password'"
+              :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
+              class="w-full bg-dark-600 border border-dark-400 rounded px-3 py-2 pr-12 focus:border-gold focus:outline-none"
+              @keyup.enter="submit"
+            />
+            <button
+              type="button"
+              @click="showPassword = !showPassword"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gold px-1"
+              :aria-label="showPassword ? 'パスワードを隠す' : 'パスワードを表示'"
+            >
+              {{ showPassword ? '隠す' : '表示' }}
+            </button>
+          </div>
         </div>
 
         <p v-if="auth.error" class="text-sm text-red-400">{{ auth.error }}</p>
@@ -99,6 +109,7 @@ const name = ref('')
 const inviteCode = ref('')
 const email = ref('')
 const password = ref('')
+const showPassword = ref(false)
 
 const canSubmit = computed(() => {
   if (!email.value.trim() || !password.value) return false

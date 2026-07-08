@@ -83,12 +83,17 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
+import { useProjectStore } from './stores/project'
 
 const router = useRouter()
 const auth = useAuthStore()
+const store = useProjectStore()
 
 function handleLogout() {
   auth.logout()
+  // 前アカウントのプロジェクトが残らないようstore+セッションもクリア
+  store.reset()
+  sessionStorage.removeItem('zairyo_guest_token')
   router.push('/login')
 }
 

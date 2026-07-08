@@ -77,8 +77,6 @@ export const updateMaterials = (id, materials, materialListId, added = []) =>
   api.put(`/projects/${id}/materials`, { materials, materialListId, added })
 export const exportExcel = (id) => api.get(`/projects/${id}/export`, { responseType: 'blob' })
 
-// オーバーライドオプション
-export const fetchOverrideOptions = () => api.get('/override-options')
 
 // 運営者用admin API（X-Admin-Tokenヘッダで認証、JWTとは独立）
 export const adminFetchCompanies = (adminToken) =>
