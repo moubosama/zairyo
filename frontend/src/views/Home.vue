@@ -39,7 +39,8 @@
       <!-- Loading State -->
       <div v-if="loading" class="flex flex-col items-center">
         <div class="spinner mb-4"></div>
-        <p class="text-gold">AIが解析中...</p>
+        <p class="text-gold">{{ loadingStep }}</p>
+        <p class="text-xs text-gray-400 mt-2">図面の解析には30秒〜1分ほどかかります</p>
       </div>
 
       <!-- Default State -->
@@ -76,8 +77,8 @@
     </div>
 
     <!-- Error -->
-    <div v-if="store.error" class="card mt-6 text-red-400">
-      <p>{{ store.error }}</p>
+    <div v-if="uiError || store.error" class="card mt-6 text-red-400">
+      <p>{{ uiError || store.error }}</p>
     </div>
 
     <!-- Navigation -->
@@ -88,19 +89,24 @@
       >
         📋 過去の見積もりを見る
       </button>
-      <button
-        @click="goNext"
-        :disabled="!selectedFile || loading"
-        class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        資材リストを計算
-      </button>
+      <div class="flex items-center gap-3">
+        <span v-if="!canSubmit && !loading" class="text-xs text-gray-500">
+          {{ !projectName.trim() ? '現場名を入力してください' : '図面をアップロードしてください' }}
+        </span>
+        <button
+          @click="goNext"
+          :disabled="!canSubmit || loading"
+          class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          資材リストを計算
+        </button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 
@@ -113,6 +119,10 @@ const isDragging = ref(false)
 const projectName = ref('')
 const totalAreaSqm = ref(null)
 const loading = ref(false)
+const loadingStep = ref('')
+const uiError = ref(null)
+
+const canSubmit = computed(() => !!selectedFile.value && !!projectName.value.trim())
 
 onMounted(() => {
   store.reset()
@@ -140,18 +150,18 @@ const handleDrop = (event) => {
 }
 
 const processFile = (file) => {
-  console.log('processFile called:', file.name, file.type)
+  uiError.value = null
 
   // Validate file type
   const validTypes = ['application/pdf', 'image/png', 'image/jpeg']
   if (!validTypes.includes(file.type)) {
-    alert('PDF, PNG, または JPG ファイルを選択してください')
+    uiError.value = 'PDF, PNG, または JPG ファイルを選択してください'
     return
   }
 
   // Validate file size (10MB)
   if (file.size > 10 * 1024 * 1024) {
-    alert('ファイルサイズは10MB以下にしてください')
+    uiError.value = 'ファイルサイズは10MB以下にしてください'
     return
   }
 
@@ -170,31 +180,24 @@ const goToHistory = () => {
 }
 
 const goNext = async () => {
-  // 現場名チェック
-  if (!projectName.value.trim()) {
-    alert('現場名を入力してください')
-    return
-  }
-
-  // ファイルチェック
-  if (!selectedFile.value) {
-    alert('図面ファイルをアップロードしてください')
-    return
-  }
+  if (!canSubmit.value) return
 
   loading.value = true
+  uiError.value = null
   try {
-    // プロジェクト作成
+    loadingStep.value = 'プロジェクトを作成中...'
     await store.createProject(projectName.value.trim())
-    // アップロード
+    loadingStep.value = 'AIが図面を解析中...'
     await store.uploadPlan(selectedFile.value, totalAreaSqm.value)
-    // 計算
+    loadingStep.value = '資材数量を計算中...'
     await store.calculateMaterials()
     router.push('/result')
   } catch (e) {
+    // エラー詳細はstore.errorに入り、画面のエラーカードに表示される
     console.error('Error:', e)
   } finally {
     loading.value = false
+    loadingStep.value = ''
   }
 }
 </script>

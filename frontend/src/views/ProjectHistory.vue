@@ -34,6 +34,7 @@
         v-for="project in projects"
         :key="project.id"
         class="card hover:border-gold transition-colors duration-200 cursor-pointer"
+        :class="{ 'opacity-50 pointer-events-none': openingId === project.id }"
         @click="viewProject(project)"
       >
         <div class="flex items-center justify-between">
@@ -66,7 +67,7 @@
             >
               {{ deletingId === project.id ? '削除中...' : '削除' }}
             </button>
-            <span class="text-gray-400">→</span>
+            <span class="text-gray-400">{{ openingId === project.id ? '読み込み中...' : '→' }}</span>
           </div>
         </div>
       </div>
@@ -92,6 +93,7 @@ const projects = ref([])
 const loading = ref(false)
 const error = ref(null)
 const deletingId = ref(null)
+const openingId = ref(null)
 
 onMounted(async () => {
   await loadProjects()
@@ -116,6 +118,7 @@ function goToNewProject() {
 }
 
 async function viewProject(project) {
+  openingId.value = project.id
   try {
     const response = await api.fetchProject(project.id)
     const data = response.data
@@ -159,6 +162,8 @@ async function viewProject(project) {
     }
   } catch (e) {
     error.value = e.response?.data?.message || e.response?.data?.error || 'プロジェクトの読み込みに失敗しました'
+  } finally {
+    openingId.value = null
   }
 }
 

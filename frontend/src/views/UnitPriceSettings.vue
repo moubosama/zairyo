@@ -183,6 +183,7 @@
 
 <script setup>
 import { computed, ref, onMounted } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import * as api from '@/services/api'
 
 const rows = ref([])
@@ -200,6 +201,13 @@ const newMaterial = ref({ name: '', spec: '', category: '', unit: '', unitPrice:
 const rowKey = (row) => `${row.materialName}|${row.spec || ''}`
 
 onMounted(load)
+
+// 未保存の変更を破棄して離脱しようとしたら確認する
+onBeforeRouteLeave(() => {
+  if (dirtyCount.value > 0 && !window.confirm(`保存していない変更が${dirtyCount.value}件あります。破棄して移動しますか？`)) {
+    return false
+  }
+})
 
 async function load() {
   loading.value = true

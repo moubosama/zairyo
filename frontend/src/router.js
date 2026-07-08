@@ -47,6 +47,11 @@ const routes = [
     name: 'admin-dashboard',
     component: AdminDashboard,
   },
+  {
+    // 未定義URLは空白ページにせずホームへ
+    path: '/:pathMatch(.*)*',
+    redirect: '/',
+  },
 ]
 
 const router = createRouter({

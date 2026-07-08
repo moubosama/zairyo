@@ -49,6 +49,7 @@
           <input
             v-model="email"
             type="email"
+            autocomplete="email"
             placeholder="info@example.com"
             class="w-full bg-dark-600 border border-dark-400 rounded px-3 py-2 focus:border-gold focus:outline-none"
             @keyup.enter="submit"
@@ -60,6 +61,7 @@
           <input
             v-model="password"
             type="password"
+            :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
             class="w-full bg-dark-600 border border-dark-400 rounded px-3 py-2 focus:border-gold focus:outline-none"
             @keyup.enter="submit"
           />

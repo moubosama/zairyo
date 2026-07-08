@@ -264,13 +264,20 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 
 const router = useRouter()
 const route = useRoute()
 const store = useProjectStore()
+
+// リロードや直接アクセスでstoreが空のときは壊れた画面（¥0・空テーブル）を見せない
+onMounted(() => {
+  if (!store.hasMaterials) {
+    router.replace('/')
+  }
+})
 
 const showToast = ref(false)
 const toastMessage = ref('')
@@ -423,6 +430,7 @@ const exportExcel = async () => {
     showToastMessage('Excelファイルをダウンロードしました')
   } catch (e) {
     console.error(e)
+    showToastMessage(store.error || 'Excel出力に失敗しました')
   }
 }
 
