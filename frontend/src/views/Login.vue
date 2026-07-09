@@ -84,8 +84,25 @@
           :disabled="auth.loading || !canSubmit"
           class="btn-primary w-full"
         >
-          {{ auth.loading ? '処理中...' : mode === 'login' ? 'ログイン' : '登録する' }}
+          {{ auth.loading ? '接続中...' : mode === 'login' ? 'ログイン' : '登録する' }}
         </button>
+
+        <!-- 接続プログレス（コールドスタート対策） -->
+        <div v-if="auth.loading" class="pt-1">
+          <div class="h-2 bg-dark-600 rounded-full overflow-hidden">
+            <div
+              class="h-full bg-gold transition-all duration-300 ease-out"
+              :style="{ width: progress + '%' }"
+            ></div>
+          </div>
+          <p class="text-xs text-gray-400 mt-2 text-center">
+            {{ progressMessage }}
+          </p>
+        </div>
+
+        <p v-else class="text-xs text-gray-500 text-center pt-1">
+          ⏳ 初回のログインはサーバー起動のため最大1分ほどかかることがあります
+        </p>
 
         <button @click="continueAsGuest" class="w-full text-sm text-gray-400 hover:text-gold transition-colors pt-2">
           ログインせずに使う（履歴は保存されません）
@@ -96,7 +113,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -111,6 +128,39 @@ const email = ref('')
 const password = ref('')
 const showPassword = ref(false)
 
+// 接続プログレス（疑似）
+// サーバーのコールドスタート完了は検知できないため、想定時間で0→95%まで進め、
+// 応答が返ったら100%に飛ばす。0.5秒ごとに残り(95-現在)の一定割合を詰めるので、
+// 序盤は速く進み後半はゆっくりになり、体感の待ち時間が短く感じられる
+const progress = ref(0)
+let progressTimer = null
+
+const progressMessage = computed(() => {
+  if (progress.value < 40) return 'サーバーに接続しています...'
+  if (progress.value < 80) return 'サーバーを起動しています（初回は時間がかかります）...'
+  if (progress.value < 100) return 'もう少しで完了します...'
+  return '完了'
+})
+
+function startProgress() {
+  progress.value = 0
+  clearInterval(progressTimer)
+  progressTimer = setInterval(() => {
+    if (progress.value < 95) {
+      // 残り幅の約4%ずつ詰める → 60秒程度で95%手前に漸近
+      progress.value = Math.min(95, progress.value + (95 - progress.value) * 0.04 + 0.5)
+    }
+  }, 500)
+}
+
+function finishProgress() {
+  clearInterval(progressTimer)
+  progressTimer = null
+  progress.value = 100
+}
+
+onUnmounted(() => clearInterval(progressTimer))
+
 const canSubmit = computed(() => {
   if (!email.value.trim() || !password.value) return false
   if (mode.value === 'register' && !name.value.trim()) return false
@@ -119,11 +169,17 @@ const canSubmit = computed(() => {
 
 async function submit() {
   if (!canSubmit.value) return
-  const ok = mode.value === 'login'
-    ? await auth.login(email.value.trim(), password.value)
-    : await auth.register(name.value.trim(), email.value.trim(), password.value, inviteCode.value.trim())
-  if (ok) {
-    router.push(route.query.redirect || '/')
+  startProgress()
+  try {
+    const ok = mode.value === 'login'
+      ? await auth.login(email.value.trim(), password.value)
+      : await auth.register(name.value.trim(), email.value.trim(), password.value, inviteCode.value.trim())
+    finishProgress()
+    if (ok) {
+      router.push(route.query.redirect || '/')
+    }
+  } catch (e) {
+    finishProgress()
   }
 }
 
