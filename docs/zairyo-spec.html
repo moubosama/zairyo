@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZAIRYO 資材拾いアシスタント｜仕様書</title>
+<style>
+  :root {
+    --ink: #10243a;
+    --ink-soft: #4a5a6b;
+    --ground: #f7f4ec;
+    --panel: #ffffff;
+    --rule: #d7d1c2;
+    --blueprint: #1b3a5c;
+    --gold: #b8892e;
+    --gold-soft: #f0e2c4;
+    --alert: #a5432a;
+    --ok: #2f6a4a;
+    --on-blueprint: #f7f4ec;
+
+    --sans: "Hiragino Kaku Gothic ProN", "Yu Gothic Medium", "Meiryo", system-ui, sans-serif;
+    --mono: "SFMono-Regular", "Consolas", "Yu Gothic", monospace;
+
+    --measure: 68ch;
+    --step: 1.5rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e8e3d6;
+      --ink-soft: #a8a294;
+      --ground: #14171c;
+      --panel: #1c2027;
+      --rule: #333a44;
+      --blueprint: #7fb0dd;
+      --gold: #d4a853;
+      --gold-soft: #3a3120;
+      --alert: #d97a5e;
+      --ok: #6cb18c;
+    --on-blueprint: #12161b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e8e3d6;
+    --ink-soft: #a8a294;
+    --ground: #14171c;
+    --panel: #1c2027;
+    --rule: #333a44;
+    --blueprint: #7fb0dd;
+    --gold: #d4a853;
+    --gold-soft: #3a3120;
+    --alert: #d97a5e;
+    --ok: #6cb18c;
+    --on-blueprint: #12161b;
+  }
+  :root[data-theme="light"] {
+    --ink: #10243a;
+    --ink-soft: #4a5a6b;
+    --ground: #f7f4ec;
+    --panel: #ffffff;
+    --rule: #d7d1c2;
+    --blueprint: #1b3a5c;
+    --gold: #b8892e;
+    --gold-soft: #f0e2c4;
+    --alert: #a5432a;
+    --ok: #2f6a4a;
+    --on-blueprint: #f7f4ec;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.85;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  /* ---- 表題欄（図面の右下にある枠を模す） ---- */
+  .titleblock {
+    margin: 3rem 0 4rem;
+    border: 2px solid var(--blueprint);
+    background: var(--panel);
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .titleblock-main {
+    padding: 2rem 1.75rem 1.5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--gold);
+    font-family: var(--mono);
+    margin: 0 0 0.75rem;
+  }
+  h1 {
+    font-size: clamp(1.7rem, 4vw, 2.4rem);
+    line-height: 1.3;
+    margin: 0 0 0.75rem;
+    text-wrap: balance;
+    letter-spacing: 0.01em;
+  }
+  .lede {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--ink-soft);
+  }
+  .titleblock-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  }
+  .titleblock-meta div {
+    padding: 0.9rem 1.75rem;
+    border-right: 1px solid var(--rule);
+  }
+  .titleblock-meta div:last-child { border-right: 0; }
+  .titleblock-meta dt {
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    color: var(--ink-soft);
+    font-family: var(--mono);
+    margin: 0 0 0.2rem;
+  }
+  .titleblock-meta dd {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+
+  /* ---- 見出し ---- */
+  section { margin-top: 4.5rem; }
+  h2 {
+    font-size: 1.4rem;
+    margin: 0 0 1.5rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 2px solid var(--blueprint);
+    display: flex;
+    align-items: baseline;
+    gap: 0.9rem;
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--gold);
+    letter-spacing: 0.1em;
+    flex: none;
+  }
+  h3 {
+    font-size: 1.05rem;
+    margin: 2.25rem 0 0.75rem;
+    color: var(--blueprint);
+  }
+  p, li { max-width: var(--measure); }
+  p { margin: 0 0 1rem; }
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.35rem; }
+  strong { font-weight: 700; }
+
+  /* ---- 表 ---- */
+  .table-scroll { overflow-x: auto; margin: 1.25rem 0 1.5rem; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 30rem;
+    font-size: 0.94rem;
+    background: var(--panel);
+  }
+  th, td {
+    text-align: left;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  thead th {
+    background: var(--blueprint);
+    color: var(--on-blueprint);
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td.num, .num-cell { font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; font-family: var(--mono); }
+  .yes { color: var(--ok); font-weight: 700; }
+  .no { color: var(--ink-soft); }
+
+  /* ---- ステップ（手順） ---- */
+  .steps { display: flex; flex-direction: column; gap: 1rem; margin: 1.5rem 0; }
+  .step {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--gold);
+    padding: 1.25rem 1.5rem;
+  }
+  .step-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.8rem;
+    margin-bottom: 0.6rem;
+  }
+  .step-n {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    color: var(--gold);
+    flex: none;
+  }
+  .step-title { font-weight: 700; font-size: 1.02rem; }
+  .step p:last-child, .step ul:last-child { margin-bottom: 0; }
+
+  /* ---- フロー図 ---- */
+  .flow {
+    margin: 1.75rem 0;
+    padding: 1.75rem 1.5rem;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    overflow-x: auto;
+  }
+  .flow-inner { min-width: 22rem; }
+  .node {
+    border: 1.5px solid var(--blueprint);
+    background: var(--ground);
+    padding: 0.7rem 1.1rem;
+    text-align: center;
+    font-size: 0.92rem;
+    font-weight: 600;
+    max-width: 26rem;
+    margin: 0 auto;
+  }
+  .node small { display: block; font-weight: 400; font-size: 0.78rem; color: var(--ink-soft); margin-top: 0.15rem; }
+  .node.decision {
+    border-style: dashed;
+    border-color: var(--gold);
+    background: var(--gold-soft);
+    border-radius: 2rem;
+  }
+  .node.terminal { background: var(--blueprint); color: var(--on-blueprint); border-color: var(--blueprint); }
+  .node.alert { border-color: var(--alert); color: var(--alert); }
+
+  .arrow {
+    width: 1.5px;
+    height: 1.6rem;
+    background: var(--ink-soft);
+    margin: 0 auto;
+    position: relative;
+  }
+  .arrow::after {
+    content: "";
+    position: absolute;
+    bottom: -1px; left: 50%;
+    transform: translateX(-50%);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 6px solid var(--ink-soft);
+  }
+  .arrow .lbl {
+    position: absolute;
+    left: 0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    background: var(--panel);
+    padding: 0 0.3rem;
+    font-family: var(--mono);
+  }
+  .branch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 0.4rem 0;
+    align-items: start;
+  }
+  .branch-col { display: flex; flex-direction: column; align-items: center; }
+  .branch-lbl {
+    font-size: 0.72rem;
+    font-family: var(--mono);
+    color: var(--ink-soft);
+    margin-bottom: 0.4rem;
+    text-align: center;
+  }
+  .branch-lbl b { color: var(--gold); font-weight: 700; }
+
+  /* ---- コールアウト ---- */
+  .callout {
+    border-left: 3px solid var(--gold);
+    background: var(--gold-soft);
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout-title { font-weight: 700; margin-bottom: 0.35rem; }
+  .callout.warn { border-color: var(--alert); background: transparent; border: 1px solid var(--alert); }
+
+  /* ---- カテゴリチップ ---- */
+  .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0 1.5rem; max-width: var(--measure); }
+  .chip {
+    border: 1px solid var(--rule);
+    background: var(--panel);
+    padding: 0.28rem 0.7rem;
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+  }
+
+  /* ---- FAQ ---- */
+  .faq { border-top: 1px solid var(--rule); }
+  .faq details {
+    border-bottom: 1px solid var(--rule);
+    background: var(--panel);
+  }
+  .faq summary {
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::before {
+    content: "Q";
+    font-family: var(--mono);
+    color: var(--gold);
+    font-size: 0.85rem;
+    flex: none;
+  }
+  .faq summary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+  .faq details[open] summary { border-bottom: 1px dashed var(--rule); }
+  .faq .answer { padding: 1rem 1.25rem 1.25rem 2.9rem; color: var(--ink-soft); }
+  .faq .answer p:last-child { margin-bottom: 0; }
+
+  footer {
+    margin-top: 5rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid var(--blueprint);
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    font-family: var(--mono);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  @media (max-width: 34rem) {
+    .branch { grid-template-columns: 1fr; }
+    .titleblock-meta div { border-right: 0; border-bottom: 1px solid var(--rule); }
+  }
+
+  /* ---- 印刷（PDF保存）用 ---- */
+  @page { size: A4 portrait; margin: 14mm 12mm; }
+  @media print {
+    :root {
+      --ink: #10243a; --ink-soft: #4a5a6b; --ground: #ffffff; --panel: #ffffff;
+      --rule: #c9c3b4; --blueprint: #1b3a5c; --gold: #9a7226; --gold-soft: #f5ecda;
+      --alert: #a5432a; --ok: #2f6a4a; --on-blueprint: #ffffff;
+    }
+    body { background: #fff; font-size: 10.5pt; line-height: 1.6; }
+    .wrap { max-width: none; padding: 0; }
+    .theme-toggle, .print-hint { display: none !important; }
+    section { margin-top: 1.6rem; page-break-inside: auto; }
+    h2 { page-break-after: avoid; }
+    h3 { page-break-after: avoid; }
+    .step, .callout, .node, tr, .titleblock { page-break-inside: avoid; }
+    .flow { page-break-inside: avoid; page-break-before: always; }
+    .faq details { page-break-inside: avoid; }
+    .faq details > .answer { display: block !important; }  /* 折りたたみを開いた状態で印刷 */
+    .table-scroll, .flow { overflow: visible; }
+    table { min-width: 0; }
+    a { text-decoration: none; color: inherit; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="titleblock">
+    <div class="titleblock-main">
+      <p class="eyebrow">製品仕様書</p>
+      <h1>ZAIRYO 資材拾いアシスタント</h1>
+      <p class="lede">
+        図面をアップロードすると、AIが読み取って資材の数量と概算金額を自動で算出します。
+        手作業で半日かかっていた資材拾いを、数分に短縮します。
+      </p>
+    </div>
+    <dl class="titleblock-meta">
+      <div><dt>利用形態</dt><dd>Webブラウザ（インストール不要）</dd></div>
+      <div><dt>対象図面</dt><dd>計画平面図・平面詳細図</dd></div>
+      <div><dt>出力</dt><dd>資材リスト・Excel</dd></div>
+      <div><dt>算出項目</dt><dd class="num-cell">19分野 / 約130項目</dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <h2><span class="num">01</span>できること</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>できること</th><th>内容</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>図面の自動読み取り</strong></td><td>部屋の面積・間取り・天井高・建具・設備を図面から読み取ります</td></tr>
+          <tr><td><strong>資材数量の自動計算</strong></td><td>石膏ボード、フローリング、クロス、巾木など19分野・約130項目を算出します</td></tr>
+          <tr><td><strong>概算金額の算出</strong></td><td>登録済みの単価をかけ合わせ、合計金額の目安を表示します</td></tr>
+          <tr><td><strong>数量の手直し</strong></td><td>AIの読み取りが不安なときは、画面上で数量や単価を直せます</td></tr>
+          <tr><td><strong>独自項目の追加</strong></td><td>特注造作など、自動計算にない項目を見積に足せます</td></tr>
+          <tr><td><strong>Excel出力</strong></td><td>資材リストをExcelファイルでダウンロードできます</td></tr>
+          <tr><td><strong>過去の見積の保存</strong></td><td>ログインすると、現場ごとに見積を保存し、あとから見返せます</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>算出できる資材の分野</h3>
+    <div class="chips">
+      <span class="chip">解体工事</span><span class="chip">仮設工事</span><span class="chip">左官工事</span>
+      <span class="chip">大工工事</span><span class="chip">下地材</span><span class="chip">床材</span>
+      <span class="chip">造作材</span><span class="chip">仕上材</span><span class="chip">建具</span>
+      <span class="chip">家具</span><span class="chip">設備</span><span class="chip">設備工事</span>
+      <span class="chip">ガス工事</span><span class="chip">電気工事</span><span class="chip">電材</span>
+      <span class="chip">サッシ工事</span><span class="chip">内装材</span><span class="chip">現場管理</span>
+      <span class="chip">諸経費</span>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">02</span>使い方の流れ</h2>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-head"><span class="step-n">STEP 1</span><span class="step-title">図面をアップロードする</span></div>
+        <ul>
+          <li>現場名を入力します（例：○○マンション101号室）</li>
+          <li>図面ファイルをドラッグ＆ドロップ、またはクリックして選択します</li>
+          <li><strong>専有面積がわかる場合は入力します</strong>（任意ですが、入力すると精度が上がります）</li>
+          <li>「資材リストを計算」を押します</li>
+        </ul>
+        <p><small>解析には30秒〜1分ほどかかります。画面に進行状況が表示されます。</small></p>
+      </div>
+
+      <div class="step">
+        <div class="step-head"><span class="step-n">STEP 2</span><span class="step-title">資材リストを確認する</span></div>
+        <p>概算合計金額、壁面積・天井面積・床面積、そして<strong>要確認項目</strong>が表示されます。</p>
+        <div class="callout">
+          <p class="callout-title">要確認項目とは</p>
+          <p>図面の書き方によっては、AIが数値を読み違えることがあります。システムはそれを検知して自動で補正し、「何をどう直したか」を黄色いパネルで教えてくれます。補正済みなのでそのまま使えますが、心配な項目は次のステップで直せます。</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-head"><span class="step-n">STEP 3</span><span class="step-title">必要なら手直しする</span></div>
+        <ul>
+          <li><strong>計算条件の調整</strong>：間仕切壁の長さ・天井高を入れ直して再計算できます</li>
+          <li><strong>数量・単価の編集</strong>：表の数字を直接書き換えられます</li>
+          <li><strong>行の追加</strong>：自動計算にない独自項目を足せます</li>
+        </ul>
+        <p>手直しした行には「調整済」の印が付き、元の数量も記録に残ります。</p>
+      </div>
+
+      <div class="step">
+        <div class="step-head"><span class="step-n">STEP 4</span><span class="step-title">Excelに出力する</span></div>
+        <p>カテゴリ・資材名・仕様・数量・単位・計算根拠が入った表としてダウンロードできます。</p>
+      </div>
+
+      <div class="step">
+        <div class="step-head"><span class="step-n">STEP 5</span><span class="step-title">過去の見積を見返す（任意）</span></div>
+        <p>ログインしている場合、見積は自動で保存されます。「履歴」から過去の現場を開き、内容の確認やExcelの再出力ができます。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">03</span>操作フロー</h2>
+    <div class="flow">
+      <div class="flow-inner">
+        <div class="node terminal">図面を用意する<small>PDF・PNG・JPG／10MBまで</small></div>
+        <div class="arrow"></div>
+        <div class="node">現場名を入力する</div>
+        <div class="arrow"></div>
+        <div class="node">図面をアップロードする</div>
+        <div class="arrow"></div>
+        <div class="node decision">専有面積を入力する？</div>
+        <div class="arrow"><span class="lbl">どちらでも進める</span></div>
+        <div class="node">AIが図面を解析する<small>30秒〜1分</small></div>
+        <div class="arrow"></div>
+        <div class="node decision">図面として読み取れた？</div>
+
+        <div class="branch">
+          <div class="branch-col">
+            <div class="branch-lbl"><b>いいえ</b>（平面図でない）</div>
+            <div class="arrow"></div>
+            <div class="node alert">エラー表示<small>別の図面を試す</small></div>
+          </div>
+          <div class="branch-col">
+            <div class="branch-lbl"><b>はい</b></div>
+            <div class="arrow"></div>
+            <div class="node">資材リストが表示される</div>
+          </div>
+        </div>
+
+        <div class="arrow"></div>
+        <div class="node decision">要確認項目が出ている？</div>
+
+        <div class="branch">
+          <div class="branch-col">
+            <div class="branch-lbl"><b>出ている</b></div>
+            <div class="arrow"></div>
+            <div class="node">内容を確認し<br>必要なら手直しする<small>再計算／数量編集</small></div>
+          </div>
+          <div class="branch-col">
+            <div class="branch-lbl"><b>出ていない</b></div>
+            <div class="arrow"></div>
+            <div class="node">そのまま進む</div>
+          </div>
+        </div>
+
+        <div class="arrow"></div>
+        <div class="node terminal">Excelに出力する</div>
+        <div class="arrow"></div>
+        <div class="node decision">ログインしている？</div>
+
+        <div class="branch">
+          <div class="branch-col">
+            <div class="branch-lbl"><b>している</b></div>
+            <div class="arrow"></div>
+            <div class="node">履歴に保存される<small>あとから再表示できる</small></div>
+          </div>
+          <div class="branch-col">
+            <div class="branch-lbl"><b>していない</b></div>
+            <div class="arrow"></div>
+            <div class="node">保存されない<small>24時間で自動削除</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">04</span>ログインとゲスト利用</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>機能</th><th>ゲスト（ログインなし）</th><th>ログイン（会社アカウント）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>図面のアップロード</td><td class="yes">できる</td><td class="yes">できる</td></tr>
+          <tr><td>資材リストの計算</td><td class="yes">できる</td><td class="yes">できる</td></tr>
+          <tr><td>Excel出力</td><td class="yes">できる</td><td class="yes">できる</td></tr>
+          <tr><td>見積の保存・履歴</td><td class="no">できない（その場限り）</td><td class="yes">会社ごとに保存</td></tr>
+          <tr><td>自社単価の登録</td><td class="no">できない</td><td class="yes">できる</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>アカウントの発行には<strong>招待コード</strong>が必要です（運営者が発行します）</li>
+      <li>会社ごとにデータは完全に分離され、他社の見積は一切見えません</li>
+      <li>パスワードを忘れた場合は運営者にご連絡ください（再発行できます）</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">05</span>単価の設定</h2>
+    <p>システムには<strong>標準単価</strong>があらかじめ登録されています。会社ごとに仕入れ値が違うため、「単価設定」画面で自社の単価に上書きできます。</p>
+    <ul>
+      <li>上書きした資材だけが「カスタム」になり、それ以外は標準単価が使われます</li>
+      <li>「標準に戻す」でいつでも元に戻せます</li>
+      <li>Excelで一括編集して読み込むこともできます</li>
+      <li>画面から独自の資材を追加登録することもできます</li>
+    </ul>
+    <div class="callout warn">
+      <p class="callout-title">現在の制約</p>
+      <p>自動計算が出す約130項目のうち、標準単価が登録されているのは約40項目です。残りの項目は<strong>数量は正しく出ますが、単価が「-」と表示され、合計金額には含まれません</strong>。実勢価格のリストをいただければ登録できます。</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">06</span>精度について</h2>
+    <p>プロの手作業による拾い出しと比較して検証しています。以下はマンション1タイプで、<strong>専有面積を入力しない</strong>という不利な条件での結果です。</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>項目</th><th>手作業の実績との差</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>専有面積</td><td class="num">0%（一致）</td></tr>
+          <tr><td>天井面積</td><td class="num">+2.2%</td></tr>
+          <tr><td>天井石膏ボード</td><td class="num">+4%</td></tr>
+          <tr><td>際根太</td><td class="num">-1%</td></tr>
+          <tr><td>遮音壁ボード</td><td class="num">0%（一致）</td></tr>
+          <tr><td>グラスウール</td><td class="num">-3%</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>精度を上げるコツ</h3>
+    <ul>
+      <li><strong>専有面積を入力する</strong> — 最も効果があります。物件資料の値を入れてください</li>
+      <li><strong>寸法や面積が書かれた図面を使う</strong> — 平面詳細図が最適です</li>
+      <li><strong>要確認項目に目を通す</strong> — システムが「自信のない箇所」を教えてくれます</li>
+    </ul>
+
+    <h3>苦手なこと</h3>
+    <p>面積が書かれていない区画（廊下・キッチン・水回りなど）は、AIが目測するため誤差が出ます。特に<strong>間仕切壁の長さ</strong>は読み取りにばらつきが出やすく、同じ図面でも回によって値が変わることがあります。この項目は要確認項目に表示されるので、実測値がわかる場合は手動で入力してください。</p>
+  </section>
+
+  <section>
+    <h2><span class="num">07</span>安全性について</h2>
+    <ul>
+      <li>通信はすべて暗号化されています</li>
+      <li>パスワードは暗号化して保存され、運営者にも見えません</li>
+      <li>アップロードされた図面は外部から取得できない場所に保管されます</li>
+      <li>ログインしていない状態でアップロードした図面と見積は、<strong>24時間後に自動削除</strong>されます</li>
+      <li>会社ごとにデータは分離され、他社のデータには一切アクセスできません</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">08</span>よくある質問</h2>
+    <div class="faq">
+      <details open>
+        <summary>最初のログインに時間がかかります</summary>
+        <div class="answer"><p>しばらく使われていないとサーバーが休止するため、起動に最大1分ほどかかります。2回目以降は速くなります。画面に進行状況のバーが表示されます。</p></div>
+      </details>
+      <details open>
+        <summary>平面図以外をアップロードするとどうなりますか</summary>
+        <div class="answer"><p>立面図や仕上表など、平面図でない画像はシステムが検知して「この画像は計画平面図ではありません」とエラーを返します。誤った見積が作られることはありません。</p></div>
+      </details>
+      <details open>
+        <summary>金額が「-」になっている項目があります</summary>
+        <div class="answer"><p>その資材の単価がまだ登録されていません（単価の設定を参照）。数量は正しく計算されています。</p></div>
+      </details>
+      <details open>
+        <summary>数量を直したら、元の数字はわからなくなりますか</summary>
+        <div class="answer"><p>いいえ。手直しした行には「調整済」と表示され、Excelの計算根拠欄に「手動調整（元: ○○）」と記録されます。</p></div>
+      </details>
+      <details open>
+        <summary>途中でブラウザを閉じてしまいました</summary>
+        <div class="answer"><p>同じタブで戻れば、直前の見積が復元されます。ログインしている場合は履歴からも開けます。</p></div>
+      </details>
+      <details open>
+        <summary>AIが図面を読めなかったらどうなりますか</summary>
+        <div class="answer"><p>読み取れない場合はエラーになり、架空の数値で見積が作られることはありません。図面の解像度を上げるか、寸法の入った図面をお試しください。</p></div>
+      </details>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">09</span>動作環境</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>項目</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td>端末</td><td>PC・タブレット（Windows / Mac / iPad）</td></tr>
+          <tr><td>ブラウザ</td><td>Chrome / Edge / Safari（最新版）</td></tr>
+          <tr><td>インストール</td><td>不要（URLにアクセスするだけ）</td></tr>
+          <tr><td>図面ファイル</td><td>PDF / PNG / JPG、1ファイル10MBまで</td></tr>
+          <tr><td>インターネット接続</td><td>必須</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <span>ZAIRYO 資材拾いアシスタント</span>
+    <span>製品仕様書</span>
+  </footer>
+</div>
+
+</body>
+</html>
