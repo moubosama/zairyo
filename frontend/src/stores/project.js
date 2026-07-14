@@ -64,7 +64,7 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  async function uploadPlan(file, totalAreaSqm = null) {
+  async function uploadPlan(file, totalAreaSqm = null, aux = {}) {
     if (!currentProject.value) {
       throw new Error('プロジェクトが作成されていません')
     }
@@ -74,6 +74,13 @@ export const useProjectStore = defineStore('project', () => {
     try {
       const formData = new FormData()
       formData.append('file', file)
+      // 補助図面（任意）: 展開図=壁・巾木の実測、建具表=開口の実寸
+      if (aux.elevationFile) {
+        formData.append('elevation', aux.elevationFile)
+      }
+      if (aux.doorScheduleFile) {
+        formData.append('door_schedule', aux.doorScheduleFile)
+      }
       if (totalAreaSqm) {
         formData.append('total_area_sqm', totalAreaSqm)
       }

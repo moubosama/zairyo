@@ -250,6 +250,83 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
 
 JSONのみを返してください。説明文やマークダウンは含めないでください。`;
 
+// ============================================================
+// 展開図（室内立面）読み取りプロンプト
+// 各部屋のA〜D面の壁幅・高さ・仕上げ・巾木種別を転記させる
+// ============================================================
+const ELEVATION_PROMPT = `あなたはマンションリノベーション専門の建築士です。展開図（室内立面図）から資材計算に必要な情報をJSON形式で抽出してください。
+
+【展開図の読み方】
+- 1部屋につきA〜D面（4方向の壁）の立面が並んでいる
+- 各面の下に書かれた数字 = その壁の幅(mm)。複数区間に分かれる場合は合計する
+- 左端の数字 = 高さ(mm)。最大値が階高、途中の値（2,400や2,200など）が天井高
+- 左端の表 = 室名と仕上げ（床/巾木/壁/天井/備考）
+- 面の中に描かれた建具（ドア・窓・引戸）は開口。寸法記載があれば転記する
+
+【最重要】数値は図面の記載を転記すること。目測での推定は記載が無い場合のみ。
+
+以下のJSON形式のみを返してください（説明文・マークダウン不要）:
+{
+  "drawing_type": "elevation",
+  "unit_type": "Gタイプ",
+  "rooms": [
+    {
+      "name": "洋室(1)",
+      "ceiling_height_mm": 2400,
+      "skirting": "木製巾木H=40",
+      "wall_finish": "PB t9.5ノ上ビニールクロス貼",
+      "faces": [
+        { "face": "A", "width_mm": 2875,
+          "openings": [ { "type": "片開き戸", "width_mm": 800, "height_mm": 2000 } ] },
+        { "face": "B", "width_mm": 4840, "openings": [] },
+        { "face": "C", "width_mm": 2875, "openings": [] },
+        { "face": "D", "width_mm": 4840, "openings": [] }
+      ]
+    }
+  ]
+}
+
+ルール:
+- roomsにはページ内の全部屋を列挙（玄関・廊下、トイレ、キッチン、パウダールーム等も省略しない）
+- 面が分割表記（例: 3,591+1,249）の場合はwidth_mmに合計値を入れる
+- skirtingは表の記載を転記（木製巾木H=40 / ソフト巾木H=40 / 樹脂巾木H=35 等）。記載が無ければnull
+- 開口の寸法が読めない場合は width_mm: null（捏造禁止）
+- 展開図でないページの場合は {"drawing_type": "not_elevation"} を返す`;
+
+// ============================================================
+// 建具表読み取りプロンプト
+// 符号・名称・W×H・取付位置を転記させる
+// ============================================================
+const DOOR_SCHEDULE_PROMPT = `あなたはマンションリノベーション専門の建築士です。建具表から資材計算に必要な情報をJSON形式で抽出してください。
+
+【建具表の読み方】
+- 表の各列が1つの建具。符号（WD-1、SD-101A、AWD-102等）で識別される
+- 形式欄の姿図の下や横に幅(mm)、左に高さ(mm)が書かれている
+- 「取付位置」= どの部屋に付くか。「数量」= 箇所数
+
+【最重要】数値は表の記載を転記すること。推定・捏造禁止。
+
+以下のJSON形式のみを返してください（説明文・マークダウン不要）:
+{
+  "drawing_type": "door_schedule",
+  "doors": [
+    {
+      "symbol": "WD-2A",
+      "name": "片開き戸",
+      "width_mm": 800,
+      "height_mm": 2080,
+      "location": "洋室",
+      "quantity": 1,
+      "material": "木製"
+    }
+  ]
+}
+
+ルール:
+- ページ内の全建具を列挙する。共用部の建具（管理事務室・ゴミ置場・階段等）も含めてよい（locationで区別できる）
+- materialは 木製/鋼製/アルミ を姿図・材質欄から判定。不明ならnull
+- 建具表でないページの場合は {"drawing_type": "not_door_schedule"} を返す`;
+
 /**
  * Gemini APIで図面解析
  */
@@ -283,7 +360,7 @@ async function analyzeWithGemini(filePath, base64Data, mimeType) {
 /**
  * Claude APIで図面解析
  */
-async function analyzeWithClaude(filePath, base64Data, mimeType) {
+async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SYSTEM_PROMPT) {
   const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
   console.log('Claude API key exists:', !!claudeKey);
   console.log('Claude API key length:', claudeKey ? claudeKey.length : 0);
@@ -326,7 +403,7 @@ async function analyzeWithClaude(filePath, base64Data, mimeType) {
             mediaBlock,
             {
               type: 'text',
-              text: SYSTEM_PROMPT + '\n\nこの図面を解析して、JSON形式で情報を抽出してください。'
+              text: promptText + '\n\nこの図面を解析して、JSON形式で情報を抽出してください。'
             }
           ]
         }
@@ -368,6 +445,33 @@ function parseJsonResponse(text) {
  * メイン解析関数
  * Gemini と Claude の両方で解析し、結果をマージ
  */
+/**
+ * ファイルをBase64+mimeTypeに読み込む共通ヘルパー
+ */
+function readDrawingFile(filePath) {
+  const fileBuffer = fs.readFileSync(filePath);
+  const base64Data = fileBuffer.toString('base64');
+  const ext = path.extname(filePath).toLowerCase();
+  let mimeType = 'image/png';
+  if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+  else if (ext === '.pdf') mimeType = 'application/pdf';
+  return { base64Data, mimeType };
+}
+
+/**
+ * 補助図面（展開図・建具表）の解析
+ * 表形式の転記は読み取りブレが小さいためClaude単体で解析する（コスト・時間の抑制）
+ * @param kind 'elevation' | 'door_schedule'
+ * @returns { parsed, rawText } | null（失敗時）
+ */
+export async function analyzeAuxDrawing(filePath, kind) {
+  const prompt = kind === 'elevation' ? ELEVATION_PROMPT : DOOR_SCHEDULE_PROMPT;
+  const { base64Data, mimeType } = readDrawingFile(filePath);
+  const res = await analyzeWithClaude(filePath, base64Data, mimeType, prompt);
+  if (!res?.parsed) return null;
+  return res;
+}
+
 export async function analyzeDrawing(filePath, options = {}) {
   const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
   const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;

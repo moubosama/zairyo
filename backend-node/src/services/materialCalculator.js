@@ -782,12 +782,57 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     calculation: '標準4枚（実績値）'
   });
 
+  // 一部界壁PB t-9.5（キッチンパネル下）
+  // アルファステイツ実績: 200枚/67戸 = 約3枚/戸
+  materials.push({
+    category: '下地材',
+    name: '一部界壁石膏ボード t-9.5',
+    spec: '吉野石膏 キッチンパネル下 910×1820mm',
+    unit: '枚',
+    quantity: 3,
+    calculation: '標準3枚（67戸実績）'
+  });
+
+  // 一部界壁耐水PB t-9.5（キッチンパネル下）
+  // アルファステイツ実績: 50枚/67戸 = 約1枚/戸
+  materials.push({
+    category: '下地材',
+    name: '一部界壁耐水石膏ボード t-9.5',
+    spec: '吉野石膏 耐水 キッチンパネル下 910×1820mm',
+    unit: '枚',
+    quantity: 1,
+    calculation: '標準1枚（67戸実績）'
+  });
+
+  // EV廻り壁PB t-9.5
+  // アルファステイツ実績: 150枚/67戸 = 約2.2枚/戸
+  materials.push({
+    category: '下地材',
+    name: 'EV廻り壁石膏ボード t-9.5',
+    spec: '吉野石膏 910×1820mm',
+    unit: '枚',
+    quantity: 3,
+    calculation: '標準3枚（67戸実績2.2枚/戸切上げ）'
+  });
+
+  // 収納面PB t-9.5（マルチクロゼット・WIC・CLRC面）
+  // アルファステイツ実績: 340枚/67戸 = 約5.1枚/戸
+  materials.push({
+    category: '下地材',
+    name: '収納面石膏ボード t-9.5',
+    spec: '吉野石膏 マルチクロゼット・WIC・CLRC面 910×1820mm',
+    unit: '枚',
+    quantity: 5,
+    calculation: '標準5枚（67戸実績）'
+  });
+
   // キッチンパネル 3'×8'
   // アルファステイツ実績: 170枚/67戸 = 約3枚/戸
+  // ※ 2026-07 アイカセラール → キョーライト アーバンSマリアパールへ仕様変更
   materials.push({
     category: '下地材',
     name: 'キッチンパネル',
-    spec: 'アイカセラール t-3.0 3×8',
+    spec: 'キョーライト アーバンSマリアパール t-3.0 3×8',
     unit: '枚',
     quantity: 3,
     calculation: '標準3枚（実績値）'
@@ -920,16 +965,16 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // EV面グラスウール（マンション向け）
   // 実績: 8.995㎡/戸
   // リノベでは省略可能だが、新築マンション向けに追加
-  if (overrides.ev_insulation === 'あり') {
-    materials.push({
-      category: '下地材',
-      name: 'EV面グラスウール',
-      spec: 'PBt9.5+木胴縁',
-      unit: '㎡',
-      quantity: 9,
-      calculation: '標準9㎡（実績値）'
-    });
-  }
+  // EV廻り壁グラスウール充填
+  // アルファステイツ実績: 140㎡/67戸 = 約2.1㎡/戸（EVに面する住戸はより多い。overrides.ev_insulation='あり'で9㎡）
+  materials.push({
+    category: '下地材',
+    name: 'EV廻り壁グラスウール充填',
+    spec: 't-50 PBt9.5+木胴縁',
+    unit: '㎡',
+    quantity: overrides.ev_insulation === 'あり' ? 9 : 2,
+    calculation: overrides.ev_insulation === 'あり' ? 'EV面あり 9㎡（実績値）' : '標準2㎡（67戸実績）'
+  });
 
   // 間仕切下地(木) 45×30 @450ピッチ
   // 実績: 84m/戸

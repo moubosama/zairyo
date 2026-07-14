@@ -6,8 +6,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { makeLimiter } from '../middleware/rateLimits.js';
 import { optionalAuth, projectScope } from '../middleware/auth.js';
-import { analyzeDrawing } from '../services/claudeApi.js';
+import { analyzeDrawing, analyzeAuxDrawing } from '../services/claudeApi.js';
 import { calculateMaterials } from '../services/materialCalculator.js';
+import { computeElevationTakeoff, applyElevationTakeoff, filterKenzaiScope } from '../services/buildupCalculator.js';
 import { deleteProjectDeep } from '../services/projectCleanup.js';
 import ExcelJS from 'exceljs';
 
@@ -177,8 +178,22 @@ const uploadLimiter = makeLimiter({
   message: 'アップロード回数の上限に達しました。しばらく待ってから再試行してください。',
 });
 
+// アップロード3種: file=平面詳細図（必須）, elevation=展開図（任意）, door_schedule=建具表（任意）
+const uploadFields = upload.fields([
+  { name: 'file', maxCount: 1 },
+  { name: 'elevation', maxCount: 1 },
+  { name: 'door_schedule', maxCount: 1 },
+]);
+
 // POST /api/projects/:id/upload - 図面アップロード+AI解析
-router.post('/:id/upload', uploadLimiter, upload.single('file'), async (req, res) => {
+router.post('/:id/upload', uploadLimiter, uploadFields, async (req, res) => {
+  // エラー時に全アップロードファイルを掃除するためのヘルパー
+  const allFiles = () => ['file', 'elevation', 'door_schedule']
+    .map((k) => req.files?.[k]?.[0])
+    .filter(Boolean);
+  const cleanupFiles = async (files) => {
+    for (const f of files) await fsPromises.unlink(f.path).catch(() => {});
+  };
   try {
     // 簡易アップロードガード（テスト版の課金露出対策）
     // UPLOAD_GUARD_TOKEN が設定されている場合のみ有効
@@ -195,15 +210,23 @@ router.post('/:id/upload', uploadLimiter, upload.single('file'), async (req, res
     const projectId = project.id;
     console.log('Upload request for project:', projectId);
 
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-    console.log('File uploaded:', req.file.path);
+    const mainFile = req.files?.file?.[0];
+    const elevationFile = req.files?.elevation?.[0];
+    const doorScheduleFile = req.files?.door_schedule?.[0];
 
-    // マジックバイト検証: 拡張子偽装（例: exeを.pdfにリネーム）を拒否
-    if (!(await isValidFileSignature(req.file.path))) {
-      await fsPromises.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ error: 'ファイルの内容がPDF/PNG/JPGではありません' });
+    if (!mainFile) {
+      await cleanupFiles(allFiles());
+      return res.status(400).json({ error: '平面詳細図（file）は必須です' });
+    }
+    console.log('File uploaded:', mainFile.path,
+      elevationFile ? '+展開図' : '', doorScheduleFile ? '+建具表' : '');
+
+    // マジックバイト検証: 拡張子偽装（例: exeを.pdfにリネーム）を拒否（全ファイル）
+    for (const f of allFiles()) {
+      if (!(await isValidFileSignature(f.path))) {
+        await cleanupFiles(allFiles());
+        return res.status(400).json({ error: `ファイルの内容がPDF/PNG/JPGではありません: ${f.originalname}` });
+      }
     }
 
     // Claude APIで解析（専有面積のユーザー入力があれば最優先で採用）
@@ -211,15 +234,14 @@ router.post('/:id/upload', uploadLimiter, upload.single('file'), async (req, res
       ? parseFloat(req.body.total_area_sqm)
       : null;
     console.log('Starting AI analysis...', userTotalAreaSqm ? `(専有面積入力: ${userTotalAreaSqm}㎡)` : '');
-    const analysisResult = await analyzeDrawing(req.file.path, {
+    const analysisResult = await analyzeDrawing(mainFile.path, {
       userTotalAreaSqm: userTotalAreaSqm && userTotalAreaSqm > 0 ? userTotalAreaSqm : undefined,
     });
     console.log('AI analysis complete');
 
     // AIが両方応答しなかった場合は503（一時的な障害・再試行可能）
     if (analysisResult._ai_unavailable) {
-      // 保存していないアップロードファイルは掃除する
-      await fsPromises.unlink(req.file.path).catch(() => {});
+      await cleanupFiles(allFiles());
       return res.status(503).json({
         error: 'ai_unavailable',
         message: analysisResult.rejection_reason,
@@ -229,14 +251,45 @@ router.post('/:id/upload', uploadLimiter, upload.single('file'), async (req, res
     // 図面種別ゲート: 両AIが非平面図と判定した場合は400エラー
     if (analysisResult.is_rejected) {
       console.log('Image rejected:', analysisResult.rejection_reason);
-      // 拒否された図面ファイルも掃除（孤児ファイル防止）
-      await fsPromises.unlink(req.file.path).catch(() => {});
+      await cleanupFiles(allFiles());
       return res.status(400).json({
         error: 'invalid_document_type',
         message: analysisResult.rejection_reason || 'この画像は計画平面図ではありません。資材計算には計画平面図をアップロードしてください。',
         document_type: analysisResult.document_type,
       });
     }
+
+    // 補助図面（展開図・建具表）の解析。失敗しても平面図の結果は生かす（警告のみ）
+    const auxWarnings = [];
+    if (elevationFile) {
+      const elevRes = await analyzeAuxDrawing(elevationFile.path, 'elevation').catch(() => null);
+      if (elevRes?.parsed?.drawing_type === 'elevation' && Array.isArray(elevRes.parsed.rooms)) {
+        analysisResult.elevations = elevRes.parsed;
+      } else {
+        auxWarnings.push({
+          field: 'elevation',
+          message: '展開図の読み取りに失敗したため、壁面積は平面図からの推定値を使用します',
+          before: elevationFile.originalname, after: null,
+        });
+      }
+    }
+    if (doorScheduleFile) {
+      const doorRes = await analyzeAuxDrawing(doorScheduleFile.path, 'door_schedule').catch(() => null);
+      if (doorRes?.parsed?.drawing_type === 'door_schedule' && Array.isArray(doorRes.parsed.doors)) {
+        analysisResult.door_schedule = doorRes.parsed.doors;
+      } else {
+        auxWarnings.push({
+          field: 'door_schedule',
+          message: '建具表の読み取りに失敗したため、開口は標準サイズを使用します',
+          before: doorScheduleFile.originalname, after: null,
+        });
+      }
+    }
+    if (auxWarnings.length > 0) {
+      analysisResult._warnings = [...(analysisResult._warnings || []), ...auxWarnings];
+    }
+    // 補助図面ファイルはデータ抽出後に削除（AiReadingはfilePathを1つしか持たないため孤児化を防ぐ）
+    await cleanupFiles([elevationFile, doorScheduleFile].filter(Boolean));
 
     // AI生テキストはrawResponseへ、正規化済みJSONはparsedDataへ
     // （生テキストは後日のevalセット作成・デバッグの一次資料になる）
@@ -246,8 +299,8 @@ router.post('/:id/upload', uploadLimiter, upload.single('file'), async (req, res
     const aiReading = await prisma.aiReading.create({
       data: {
         projectId,
-        fileName: req.file.originalname,
-        filePath: req.file.path,
+        fileName: mainFile.originalname,
+        filePath: mainFile.path,
         rawResponse: JSON.stringify(rawResponses),
         parsedData: JSON.stringify(analysisResult)
       }
@@ -360,6 +413,20 @@ router.post('/:id/calculate', async (req, res) => {
       packageSpecs,
       overridesObj
     );
+
+    // 展開図データがあればボトムアップ実測で壁・巾木・PB・クロス系を置き換える
+    // （プロの拾い出しと同じ「部屋×面×部位」方式。buildupCalculator参照）
+    let parsedObj = null;
+    try { parsedObj = JSON.parse(project.aiReadings[0].parsedData); } catch { /* 破損時は推定のまま */ }
+    if (parsedObj?.elevations?.rooms?.length) {
+      const takeoff = computeElevationTakeoff(parsedObj.elevations, parsedObj.door_schedule || []);
+      applyElevationTakeoff(result, takeoff);
+      console.log('展開図実測モード適用:', JSON.stringify({
+        wall_pb: takeoff.wall_pb_sqm, cloth: takeoff.cloth_sqm, skirting: takeoff.skirting_m,
+      }));
+    }
+    // 【一旦】表示は建材リスト（PB・パネル・GW・下地合板）のみに絞る（ユーザー指定 2026-07-10）
+    result.materials = filterKenzaiScope(result.materials);
     console.log('Calculation result:', JSON.stringify(result.summary));
 
     // 単価を適用（標準単価をベースに、ログイン会社のカスタム単価を重ねる）
