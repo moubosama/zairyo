@@ -185,8 +185,22 @@ const uploadFields = upload.fields([
   { name: 'door_schedule', maxCount: 1 },
 ]);
 
+// multerエラー（サイズ超過・不正フィールド等）は500でなく400+理由で返す
+// ※ multer自身が保存済みファイルを削除するため孤児化はしない
+const uploadFieldsWith400 = (req, res, next) => {
+  uploadFields(req, res, (err) => {
+    if (err) {
+      const message = err.code === 'LIMIT_FILE_SIZE'
+        ? 'ファイルサイズは10MB以下にしてください'
+        : `アップロードエラー: ${err.message}`;
+      return res.status(400).json({ error: message });
+    }
+    next();
+  });
+};
+
 // POST /api/projects/:id/upload - 図面アップロード+AI解析
-router.post('/:id/upload', uploadLimiter, uploadFields, async (req, res) => {
+router.post('/:id/upload', uploadLimiter, uploadFieldsWith400, async (req, res) => {
   // エラー時に全アップロードファイルを掃除するためのヘルパー
   const allFiles = () => ['file', 'elevation', 'door_schedule']
     .map((k) => req.files?.[k]?.[0])
@@ -194,17 +208,20 @@ router.post('/:id/upload', uploadLimiter, uploadFields, async (req, res) => {
   const cleanupFiles = async (files) => {
     for (const f of files) await fsPromises.unlink(f.path).catch(() => {});
   };
+  let mainFilePersisted = false; // aiReading保存後はメインファイルを消さない
   try {
     // 簡易アップロードガード（テスト版の課金露出対策）
     // UPLOAD_GUARD_TOKEN が設定されている場合のみ有効
     const guardToken = process.env.UPLOAD_GUARD_TOKEN;
     if (guardToken && req.headers['x-upload-token'] !== guardToken) {
+      await cleanupFiles(allFiles()); // multerは保存済みのため掃除必須
       return res.status(403).json({ error: 'アップロードが許可されていません' });
     }
 
     const prisma = req.app.get('prisma');
     const project = await findOwnedProject(prisma, req);
     if (!project) {
+      await cleanupFiles(allFiles());
       return res.status(404).json({ error: 'Project not found' });
     }
     const projectId = project.id;
@@ -263,8 +280,20 @@ router.post('/:id/upload', uploadLimiter, uploadFields, async (req, res) => {
     const auxWarnings = [];
     if (elevationFile) {
       const elevRes = await analyzeAuxDrawing(elevationFile.path, 'elevation').catch(() => null);
-      if (elevRes?.parsed?.drawing_type === 'elevation' && Array.isArray(elevRes.parsed.rooms)) {
+      if (elevRes?.parsed?.drawing_type === 'elevation' &&
+          Array.isArray(elevRes.parsed.rooms) && elevRes.parsed.rooms.length > 0) {
         analysisResult.elevations = elevRes.parsed;
+        // 平面詳細図から抽出した壁仕上記号を部屋名でマージ（buildupの部位振り分けに使う）
+        if (Array.isArray(analysisResult.wall_finish_codes)) {
+          for (const room of analysisResult.elevations.rooms) {
+            const match = analysisResult.wall_finish_codes.find(
+              (w) => w.room && room.name && (w.room === room.name || room.name.includes(w.room) || w.room.includes(room.name))
+            );
+            if (match && Array.isArray(match.codes)) {
+              room.plan_codes = match.codes;
+            }
+          }
+        }
       } else {
         auxWarnings.push({
           field: 'elevation',
@@ -305,6 +334,7 @@ router.post('/:id/upload', uploadLimiter, uploadFields, async (req, res) => {
         parsedData: JSON.stringify(analysisResult)
       }
     });
+    mainFilePersisted = true;
 
     // プロジェクトステータス更新
     await prisma.project.update({
@@ -318,6 +348,10 @@ router.post('/:id/upload', uploadLimiter, uploadFields, async (req, res) => {
     });
   } catch (error) {
     console.error('Upload error:', error);
+    // 例外パスでも孤児ファイルを残さない（DB保存済みのメインファイルは残す）
+    if (!mainFilePersisted) {
+      await cleanupFiles(allFiles());
+    }
     res.status(500).json({ error: error.message });
   }
 });

@@ -584,12 +584,12 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     const area = room.area_sqm || (room.area_tsubo ? room.area_tsubo * 3.306 : 0);
     totalFloorArea += area;
 
-    if (room.name?.includes('クローゼット') || room.name?.includes('クロゼット') || room.name?.includes('WIC') || room.name?.includes('収納') || room.name?.includes('物入')) {
+    if (room.name?.includes('クローゼット') || room.name?.includes('クロゼット') || room.name?.includes('WIC') || room.name?.includes('CL') || room.name?.includes('収納') || room.name?.includes('物入')) {
       // 収納の床仕上げは「一部置床」として別計上（プロの拾いではフローリングに含めない）
       // totalFloorAreaには算入済み（面積・天井計算用）
     } else if (room.floor_type === 'flooring' || room.name?.includes('LDK') || room.name?.includes('洋室') || room.name?.includes('リビング') || room.name?.includes('廊下') || room.name?.includes('ホール')) {
       flooringArea += area;
-    } else if (room.floor_type === 'cf' || room.name?.includes('洗面') || room.name?.includes('トイレ') || room.name?.includes('UB') || room.name?.includes('脱衣') || room.name?.includes('パウダー')) {
+    } else if (room.floor_type === 'cf' || room.name?.includes('洗面') || room.name?.includes('トイレ') || room.name?.includes('UB') || room.name?.includes('浴室') || room.name?.includes('脱衣') || room.name?.includes('パウダー')) {
       cfArea += area;
     } else if (room.floor_type === 'tile' || room.name?.includes('玄関')) {
       tileArea += area;

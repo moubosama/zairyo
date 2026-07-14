@@ -88,6 +88,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = []) {
     let floorOpeningWidth = 0;
     let roomWallNet = 0;
 
+    // 平面詳細図から抽出した部屋の壁記号（plan_codes）。
+    // その部屋の記号が1種類だけなら、記号未指定の面のデフォルトとして使う
+    // （複数種の場合は面との対応が曖昧なため安全側のG14デフォルトを維持）
+    const planCodes = Array.isArray(room.plan_codes)
+      ? [...new Set(room.plan_codes.map((c) => String(c).toUpperCase()).filter((c) => parseWallCode(c)))]
+      : [];
+    const roomDefaultCode = planCodes.length === 1 ? parseWallCode(planCodes[0]) : null;
+
     for (const face of faces) {
       const w = (face.width_mm || 0) / 1000;
       if (w <= 0) continue;
@@ -101,8 +109,9 @@ export function computeElevationTakeoff(elevations, doorSchedule = []) {
         const ow = (op.width_mm || 0) / 1000;
         const oh = (op.height_mm || 0) / 1000;
         if (ow <= 0) continue;
-        // 高さ不明の開口はドア標準2.0mとみなす（過大控除を避けつつ現実的に）
-        const effH = oh > 0 ? Math.min(oh, h) : 2.0;
+        // 高さ不明の開口: 窓=腰窓標準1.1m / 戸=2.0m。面の高さは超えない
+        const fallbackH = isWindow(op) ? 1.1 : 2.0;
+        const effH = Math.min(oh > 0 ? oh : fallbackH, h);
         openingArea += ow * effH;
         const reachesFloor = !isWindow(op) || (op.height_mm || 0) >= FLOOR_OPENING_MIN_HEIGHT_MM;
         if (reachesFloor) floorOpeningWidth += ow;
@@ -112,8 +121,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = []) {
       t.opening_area_sqm += openingArea;
       roomWallNet += net;
 
-      // 部位振り分け（記号なし = 間仕切+PB9.5+クロスのデフォルト）
-      const code = parseWallCode(face.wall_code) || { base: 'G', mid: 1, surf: 4 };
+      // 部位振り分け（面の記号 > 部屋の単一記号 > 間仕切+PB9.5+クロスのデフォルト）
+      const code = parseWallCode(face.wall_code) || roomDefaultCode || { base: 'G', mid: 1, surf: 4 };
 
       // 下地
       if (['L', 'O', 'W'].includes(code.base)) {
@@ -173,6 +182,7 @@ export function computeElevationTakeoff(elevations, doorSchedule = []) {
  */
 const KENZAI_SCOPE_PATTERNS = [
   '石膏ボード',            // 壁・耐水・天井・下り天井・一部界壁・EV廻り・収納面すべて
+  '遮音壁PB',              // 遮音壁PB張り（t9.5+GW）— PB系なので建材スコープに含める
   'キッチンパネル',        // 本体+見切り
   'グラスウール充填',      // 間仕切+EV廻り
   '下地補強合板',
@@ -207,7 +217,8 @@ export function applyElevationTakeoff(result, takeoff) {
 
   set((m) => m.name.includes('石膏ボード') && !m.name.includes('耐水') && String(m.spec).includes('壁用'),
     wallPbSheets, `壁PB ${takeoff.wall_pb_sqm}㎡ ÷ ${PB_SQM_PER_SHEET}㎡/枚`);
-  set((m) => m.name.includes('耐水石膏ボード'),
+  // ※ '一部界壁耐水石膏ボード' への誤マッチ（二重計上）を防ぐため一部界壁を除外
+  set((m) => m.name.includes('耐水石膏ボード') && !m.name.includes('一部界壁'),
     waterPbSheets, `耐水PB ${takeoff.waterproof_pb_sqm}㎡ ÷ ${PB_SQM_PER_SHEET}㎡/枚`);
   set((m) => m.name.includes('遮音壁PB'),
     takeoff.sound_wall_pb_sqm, `遮音壁面 Σ幅×高さ−開口`);
@@ -219,8 +230,8 @@ export function applyElevationTakeoff(result, takeoff) {
     Math.round(takeoff.skirting_m.木製), `Σ周長−開口幅（木製巾木の部屋）`);
   set((m) => m.name.includes('樹脂巾木'),
     Math.round(takeoff.skirting_m.樹脂 * 10) / 10, `Σ周長−開口幅（樹脂巾木の部屋）`);
-  set((m) => m.name.includes('間仕切下地'),
-    Math.round(takeoff.partition_face_length_m), `間仕切系の面延長（両面計上）`);
+  // 間仕切下地(木)は「@450ピッチの下地材長」であり面延長とは単位が異なる（G正解84m vs 面延長≈50m）。
+  // 材積換算層を実装するまで上書きしない（推定値のままにする）
 
   // サマリーにも反映
   if (result.summary) {

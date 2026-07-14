@@ -34,6 +34,12 @@ const SYSTEM_PROMPT = `あなたはマンションリノベーション専門の
   - 天井面積・水回り床面積の計算はこのリストが唯一の情報源のため、
     列挙漏れ＝そのまま数量の欠落になる
 
+■ 壁仕上記号の転記（平面詳細図の各壁面にある楕円記号）
+  - 各壁面付近の楕円内に「英字1文字+数字2桁」の記号（例: D14, C04, I14, L14, G24）が
+    書かれていることがある。読み取れたものを部屋ごとに転記する
+  - JSONの wall_finish_codes に [{"room": "洋室(1)", "codes": ["I14", "C04"]}] の形式で入れる
+  - 読める記号だけ転記する（推測・補完禁止）。無ければ空配列
+
 ■ 寸法の扱い
   - 図面上の寸法線に書かれた数値（mm）を最優先で転記する
   - 目測による寸法推定は寸法線が読めない場合のみ
@@ -276,7 +282,7 @@ const ELEVATION_PROMPT = `あなたはマンションリノベーション専門
       "skirting": "木製巾木H=40",
       "wall_finish": "PB t9.5ノ上ビニールクロス貼",
       "faces": [
-        { "face": "A", "width_mm": 2875,
+        { "face": "A", "width_mm": 2875, "wall_code": null,
           "openings": [ { "type": "片開き戸", "width_mm": 800, "height_mm": 2000 } ] },
         { "face": "B", "width_mm": 4840, "openings": [] },
         { "face": "C", "width_mm": 2875, "openings": [] },
@@ -291,6 +297,7 @@ const ELEVATION_PROMPT = `あなたはマンションリノベーション専門
 - 面が分割表記（例: 3,591+1,249）の場合はwidth_mmに合計値を入れる
 - skirtingは表の記載を転記（木製巾木H=40 / ソフト巾木H=40 / 樹脂巾木H=35 等）。記載が無ければnull
 - 開口の寸法が読めない場合は width_mm: null（捏造禁止）
+- wall_code: 面に壁仕上記号（D14・C04・I14のような英字1+数字2の楕円記号）が読める場合のみ転記。無ければnull
 - 展開図でないページの場合は {"drawing_type": "not_elevation"} を返す`;
 
 // ============================================================
@@ -477,8 +484,14 @@ export async function analyzeDrawing(filePath, options = {}) {
   const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
 
   if (!geminiKey && !claudeKey) {
-    console.log('No API keys found, using mock data...');
-    return getMockAnalysisResult();
+    // キー未設定でもモック（架空物件）は返さない。設定ミスを503で顕在化させる
+    console.error('No AI API keys configured — refusing to fabricate analysis');
+    return {
+      is_rejected: true,
+      document_type: 'unknown',
+      rejection_reason: 'AI解析の設定が完了していません（APIキー未設定）。運営者にご連絡ください。',
+      _ai_unavailable: true,
+    };
   }
 
   // ファイルを読み込んでBase64エンコード
