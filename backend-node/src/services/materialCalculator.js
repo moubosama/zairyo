@@ -584,7 +584,10 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     const area = room.area_sqm || (room.area_tsubo ? room.area_tsubo * 3.306 : 0);
     totalFloorArea += area;
 
-    if (room.floor_type === 'flooring' || room.name?.includes('LDK') || room.name?.includes('洋室') || room.name?.includes('リビング') || room.name?.includes('廊下') || room.name?.includes('ホール')) {
+    if (room.name?.includes('クローゼット') || room.name?.includes('クロゼット') || room.name?.includes('WIC') || room.name?.includes('収納') || room.name?.includes('物入')) {
+      // 収納の床仕上げは「一部置床」として別計上（プロの拾いではフローリングに含めない）
+      // totalFloorAreaには算入済み（面積・天井計算用）
+    } else if (room.floor_type === 'flooring' || room.name?.includes('LDK') || room.name?.includes('洋室') || room.name?.includes('リビング') || room.name?.includes('廊下') || room.name?.includes('ホール')) {
       flooringArea += area;
     } else if (room.floor_type === 'cf' || room.name?.includes('洗面') || room.name?.includes('トイレ') || room.name?.includes('UB') || room.name?.includes('脱衣') || room.name?.includes('パウダー')) {
       cfArea += area;
@@ -613,7 +616,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // 天井面積 (UB・CLを除く)
   const ubArea = rooms.filter(r => r.name?.includes('UB') || r.name?.includes('浴室')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
-  const closetArea = rooms.filter(r => r.name?.includes('クローゼット') || r.name?.includes('CL') || r.name?.includes('収納') || r.name?.includes('物入')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
+  const closetArea = rooms.filter(r => r.name?.includes('クローゼット') || r.name?.includes('クロゼット') || r.name?.includes('CL') || r.name?.includes('収納') || r.name?.includes('物入')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
   let ceilingArea = totalFloorArea - ubArea - closetArea;
   // 天井面積が0以下の場合、床面積の90%として推定（最低50㎡）
   if (ceilingArea <= 0) {
@@ -1238,16 +1241,17 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // - 乾式置床 H200: 251㎡/67戸 = 約3.75㎡/戸 (トイレ・パウダールーム)
   // - 床下地合板 t-9.0: 323㎡/67戸 = 約4.8㎡/戸
 
-  // 乾式置床（水回り用）
-  const okiyukaArea = Math.ceil(cfArea * LOSS_RATE_20);
-  const okiyukaQty = Math.max(okiyukaArea, 4);
+  // 乾式置床（パウダールーム・トイレ用）
+  // ※ UBはユニットバス架台のため置床対象外（cfAreaから除く）。G正解3.9㎡/戸
+  const okiyukaBase = Math.max(cfArea - ubArea, 0);
+  const okiyukaQty = Math.max(Math.round(okiyukaBase * 10) / 10, 3);
   materials.push({
     category: '床材',
     name: '乾式置床',
     spec: 'H200 トイレ・パウダールーム用',
     unit: '㎡',
     quantity: okiyukaQty,
-    calculation: `水回り面積 ${cfArea.toFixed(1)}㎡ × ${LOSS_RATE_20}`
+    calculation: `パウダールーム・トイレ床 ${okiyukaBase.toFixed(1)}㎡（UB除く）`
   });
 
   // 床下地合板（置床上）
@@ -1256,8 +1260,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     name: '床下地合板',
     spec: 't-9.0 3×6 置床上',
     unit: '㎡',
-    quantity: Math.ceil(okiyukaQty * LOSS_RATE_10),
-    calculation: `置床面積 ${okiyukaQty}㎡ + ロス${(LOSS_RATE_10 - 1) * 100}%`
+    quantity: Math.round(okiyukaQty * LOSS_RATE_5 * 10) / 10,
+    calculation: `置床面積 ${okiyukaQty}㎡ + ロス${Math.round((LOSS_RATE_5 - 1) * 100)}%`
   });
 
   // === 建具沓摺 ===
