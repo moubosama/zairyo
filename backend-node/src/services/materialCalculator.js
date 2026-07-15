@@ -770,8 +770,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // 天井PB t-9.5 (3'×6')
   // アルファステイツ実績: 2,810枚/67戸 = 約42枚/戸
   // 床面積係数: 42枚 / 65.8㎡ ≒ 0.64枚/㎡
-  const ceilingPbCoeff = 0.64;
-  let ceilingPb95Sheets = Math.ceil(ceilingArea / PB_SHEET_SIZE_3x6 * LOSS_RATE_5);
+  // 換算はプロXLS集計表のX列係数1.4㎡/枚（端材ロス込み。1.6562=ロスなし理論値は使わない）
+  let ceilingPb95Sheets = Math.ceil(ceilingArea / 1.4);
   ceilingPb95Sheets = Math.min(Math.max(ceilingPb95Sheets, 20), 50);
   materials.push({
     category: '下地材',
@@ -779,7 +779,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     spec: "t-9.5（3'×6'）",
     unit: '枚',
     quantity: ceilingPb95Sheets,
-    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE_3x6.toFixed(2)}㎡ × ${LOSS_RATE_5}`
+    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ 1.4㎡/枚（プロ実績係数）`
   });
 
   // 下り天井PB t-9.5
