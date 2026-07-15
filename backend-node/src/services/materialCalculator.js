@@ -80,6 +80,10 @@
  * - 3LDK 70㎡ (535万): PB12.5=35枚, PB9.5=30枚, Mクロス=7枚, 垂木=20束
  */
 
+import {
+  TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, ceilingFrameLengthM, dobuchiLengthM,
+} from './timberVolume.js';
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 【計算用定数】
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -941,13 +945,13 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // 際根太 45×30
   // 実績: 18.2m/戸
-  const kiwaneta = Math.ceil(totalFloorArea * KIWANETA_RATIO);
+  const kiwanetaLength = Math.max(Math.ceil(totalFloorArea * KIWANETA_RATIO), 18);
   materials.push({
     category: '下地材',
     name: '際根太',
     spec: '45×30 米栂1等',
     unit: 'm',
-    quantity: Math.max(kiwaneta, 18),
+    quantity: kiwanetaLength,
     calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${KIWANETA_RATIO}（実績18.2m/戸）`
   });
 
@@ -988,15 +992,63 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   });
 
   // 間仕切下地(木) 45×30 @450ピッチ
-  // 実績: 84m/戸
-  const majikiriShitaji = Math.ceil(partitionWallLength * 4.2);
+  // 実績: 84m/戸（XLS拾い量。"m"表記だが実態は壁1枚あたり片面の下地面積㎡ — timberVolume.js解読メモ）
+  const majikiriLength = Math.max(Math.ceil(partitionWallLength * 4.2), 80);
   materials.push({
     category: '下地材',
     name: '間仕切下地(木)',
     spec: '45×30 @450ピッチ 米栂1等',
     unit: 'm',
-    quantity: Math.max(majikiriShitaji, 80),
+    quantity: majikiriLength,
     calculation: `間仕切壁 ${partitionWallLength.toFixed(1)}m × 4.2（実績84m/戸）`
+  });
+
+  // === 造作材の材積発注（m³）===
+  // XLS造作材集計の数式を踏襲: 材積(m³) = 断面H×D×材長×10⁻⁹（timberVolume.js）。
+  // 名称/摘要は見積明細・木材ブロックの表記（際根太/間仕切木軸/木胴縁（界壁面）/天井下地）。
+  // 単価は未整備（¥0）— m単価・㎡単価の同名行と混ざらないよう unit_price を明示する。
+  // 展開図がある場合は applyElevationTakeoff が実測ベースで上書きする。
+  materials.push({
+    category: '下地材',
+    name: '際根太',
+    spec: 'LVL 30×45',
+    unit: 'm³',
+    quantity: timberVolumeM3(TIMBER_SECTIONS.kiwaneta, kiwanetaLength),
+    unit_price: 0,
+    calculation: `際根太 ${kiwanetaLength}m × 断面45×30（実績0.027m³/戸）`
+  });
+  const majikiriTimberLen = majikiriTimberLengthM(majikiriLength);
+  materials.push({
+    category: '下地材',
+    name: '間仕切木軸',
+    spec: 'LVL 30×45',
+    unit: 'm³',
+    quantity: timberVolumeM3(TIMBER_SECTIONS.majikiri, majikiriTimberLen),
+    unit_price: 0,
+    calculation: `間仕切下地 ${majikiriLength} × 両面縦横@450 = ${Math.round(majikiriTimberLen)}m × 断面45×30（実績1.15m³/戸）`
+  });
+  // 木胴縁: RC面木の実績面積（収納内RC面7.5㎡ + 界壁面5㎡ + EV面）× 横胴縁@455
+  const dobuchiSqm = ALPHA_STATS.closet_rc_wall / 9 + ALPHA_STATS.kaibe_wall / 9
+    + (overrides.ev_insulation === 'あり' ? 9 : 2);
+  const dobuchiLen = dobuchiLengthM(dobuchiSqm);
+  materials.push({
+    category: '下地材',
+    name: '木胴縁（界壁面）',
+    spec: 'LVL 30×45',
+    unit: 'm³',
+    quantity: timberVolumeM3(TIMBER_SECTIONS.dobuchi, dobuchiLen),
+    unit_price: 0,
+    calculation: `RC面木 ${dobuchiSqm.toFixed(1)}㎡ × 横胴縁@455 = ${Math.round(dobuchiLen)}m × 断面45×30（実績0.054m³/戸）`
+  });
+  const ceilingFrameLen = ceilingFrameLengthM(ceilingArea);
+  materials.push({
+    category: '下地材',
+    name: '天井下地',
+    spec: 'LVL 30×40',
+    unit: 'm³',
+    quantity: timberVolumeM3(TIMBER_SECTIONS.ceiling, ceilingFrameLen),
+    unit_price: 0,
+    calculation: `天井 ${ceilingArea.toFixed(1)}㎡ × 野縁@303格子+吊木 = ${Math.round(ceilingFrameLen)}m × 断面40×30（実績0.57m³/戸）`
   });
 
   // 遮音壁PB張り
@@ -2350,6 +2402,12 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // === 単価・金額計算 ===
   // 各資材に単価と金額を追加
   const materialsWithPrice = materials.map(item => {
+    // 行が単価を明示している場合はそれを使う
+    // （材積(m³)行が同名のm単価・㎡単価（際根太350円/m等）を誤って拾うのを防ぐ。0=単価未整備）
+    if (typeof item.unit_price === 'number') {
+      return { ...item, unit_price: item.unit_price, amount: Math.round(item.unit_price * item.quantity) };
+    }
+
     // 資材名でUNIT_PRICESから単価を検索
     let unitPrice = UNIT_PRICES[item.name] || 0;
 

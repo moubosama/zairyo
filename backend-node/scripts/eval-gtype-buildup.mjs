@@ -11,7 +11,7 @@
  *   クロゼット内=D64（コンパネ） / EV側=D14 / 耐水はUB隣接面のみG24 /
  *   遮音壁L14は洋室(1)C面1,450で確認（UB裏側の面は展開図に現れないため部分計上）
  */
-import { computeElevationTakeoff } from '../src/services/buildupCalculator.js';
+import { computeElevationTakeoff, applyElevationTakeoff } from '../src/services/buildupCalculator.js';
 import { calculateMaterials } from '../src/services/materialCalculator.js';
 
 const F = (face, width_mm, wall_code, openings = []) => ({ face, width_mm, wall_code, openings });
@@ -114,7 +114,8 @@ const EXPECTED = [
   ['木製巾木 H=40',     56.44,    'm',  (t) => t.skirting_m.木製, 12],
   ['クロゼット内RC面',  7.51,     '㎡', (t) => t.konpane_sqm, 15],
   ['キッチンパネル面',  6.7,      '㎡', (t) => t.kitchen_panel_sqm, 20],
-  ['間仕切下地(木)',    84.082,   'm',  (t, m) => null, 999],            // 材積換算層とセットで今後実装
+  // XLS方式の拾い量（Σ幅×下地高(CH+370)−開口 の壁1枚換算 + 収納内推定。"m"表記はXLS慣行で実態㎡）
+  ['間仕切下地(木)',    84.082,   'm',  (t) => t.majikiri_shitaji_m, 10],
 ];
 
 const EXPECTED_FLOOR = [
@@ -125,14 +126,39 @@ const EXPECTED_FLOOR = [
   ['天井PB(面積換算)',   59.0874,'㎡', (mats, summary) => summary.ceiling_area, 8],
 ];
 
+// ============ 材積換算（m³・従来パス=平面図のみ） ============
+// Gタイプ正解があるのは際根太（18.2m×断面45×30）のみ。
+// 他は見積明細67戸平均（A〜H全タイプ）×Gタイプ規模のサニティ（広め許容帯）:
+//   間仕切木軸 77.3/67=1.1537、天井下地 38.5/67=0.5746、木胴縁 3.6/67=0.0537
+//   木胴縁はGの界壁がC04（打放・胴縁なし）のため平均より少なくて正 → 広めの帯
+const EXPECTED_VOLUME = [
+  ['際根太 材積',       0.0246, 'm³', (mats) => qtyM3(mats, '際根太'), 12],
+  ['間仕切木軸 材積',   1.1537, 'm³', (mats) => qtyM3(mats, '間仕切木軸'), 35],
+  ['木胴縁 材積(ｻﾆﾃｨ)', 0.0537, 'm³', (mats) => qtyM3(mats, '木胴縁'), 50],
+  ['天井下地 材積',     0.5746, 'm³', (mats) => qtyM3(mats, '天井下地'), 45],
+];
+
+// ============ 展開図実測適用後（applyElevationTakeoff） ============
+const EXPECTED_APPLIED = [
+  ['間仕切下地(木)適用後', 84.082, 'm',  (mats) => qty(mats, '間仕切下地(木)'), 10],
+  ['間仕切木軸 適用後',   1.1537, 'm³', (mats) => qtyM3(mats, '間仕切木軸'), 35],
+  ['木胴縁 適用後',       0.0537, 'm³', (mats) => qtyM3(mats, '木胴縁'), 999], // 界壁・EV面が展開図外（Gは界壁C04で胴縁なし）
+];
+
 function qty(materials, nameIncludes) {
   const m = materials.find((x) => x.name.includes(nameIncludes));
   return m ? m.quantity : null;
 }
 
+function qtyM3(materials, nameIncludes) {
+  const m = materials.find((x) => x.unit === 'm³' && x.name.includes(nameIncludes));
+  return m ? m.quantity : null;
+}
+
 // ============ 実行 ============
-const takeoff = computeElevationTakeoff(G_ELEVATIONS, []);
+const takeoff = computeElevationTakeoff(G_ELEVATIONS, [], { planRooms: G_FLOOR_PLAN.rooms });
 const calc = calculateMaterials(G_FLOOR_PLAN, {}, {});
+const applied = applyElevationTakeoff(JSON.parse(JSON.stringify(calc)), takeoff);
 
 const rows = [];
 for (const [label, expected, unit, getter, tol] of EXPECTED) {
@@ -141,6 +167,14 @@ for (const [label, expected, unit, getter, tol] of EXPECTED) {
 }
 for (const [label, expected, unit, getter, tol] of EXPECTED_FLOOR) {
   const actual = getter(calc.materials, calc.summary);
+  rows.push({ label, expected, actual, unit, tol });
+}
+for (const [label, expected, unit, getter, tol] of EXPECTED_VOLUME) {
+  const actual = getter(calc.materials);
+  rows.push({ label, expected, actual, unit, tol });
+}
+for (const [label, expected, unit, getter, tol] of EXPECTED_APPLIED) {
+  const actual = getter(applied.materials);
   rows.push({ label, expected, actual, unit, tol });
 }
 

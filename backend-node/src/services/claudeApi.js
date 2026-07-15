@@ -368,13 +368,17 @@ async function analyzeWithGemini(filePath, base64Data, mimeType) {
 /**
  * Claude APIで図面解析
  */
-async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SYSTEM_PROMPT) {
+async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SYSTEM_PROMPT, options = {}) {
   const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
   console.log('Claude API key exists:', !!claudeKey);
-  console.log('Claude API key length:', claudeKey ? claudeKey.length : 0);
 
   if (!claudeKey) {
     console.log('Claude API key not found, skipping...');
+    if (options.rethrowApiErrors) {
+      const err = new Error('ANTHROPIC_API_KEY is not configured');
+      err.status = 500;
+      throw err;
+    }
     return null;
   }
 
@@ -424,6 +428,11 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
   } catch (error) {
     console.error('Claude API error:', error.message);
     console.error('Claude API error details:', JSON.stringify(error, null, 2));
+    // API起因の失敗（401/429/529等・ネットワーク）を「図面が読めなかった」と区別したい
+    // 呼び出し元がある場合のみ再スロー（JSONパース失敗はstatusを持たないのでnullのまま）
+    if (options.rethrowApiErrors && (error.status || error.name === 'APIConnectionError')) {
+      throw error;
+    }
     return null;
   }
 }
@@ -580,7 +589,8 @@ export async function analyzeAuxDrawing(filePath, kind, context = {}) {
   let prompt = kind === 'elevation' ? ELEVATION_PROMPT : DOOR_SCHEDULE_PROMPT;
   if (kind === 'elevation') prompt += roomContextNote(context.roomNames);
   const { base64Data, mimeType } = readDrawingFile(filePath);
-  const res = await analyzeWithClaude(filePath, base64Data, mimeType, prompt);
+  // API障害はthrowで伝播させ、ルート側で503（再試行可能）として返す
+  const res = await analyzeWithClaude(filePath, base64Data, mimeType, prompt, { rethrowApiErrors: true });
   if (!res?.parsed) return null;
   return res;
 }

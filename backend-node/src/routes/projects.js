@@ -456,11 +456,30 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
     const parsedData = JSON.parse(aiReading.parsedData);
     const roomNames = (parsedData.rooms || []).map((r) => r.name).filter(Boolean);
 
+    // API障害（529等）と「図面種別が違う」を区別する。前者は503で再試行を促す
     let summary;
+    let auxApiError = null;
+    const analyzeWithErrorCapture = (kindArg, context) =>
+      analyzeAuxDrawing(auxFile.path, kindArg, context).catch((e) => {
+        auxApiError = e;
+        console.error(`Aux analyze API error (${kindArg}):`, e?.status || '', e?.message);
+        return null;
+      });
+
     if (kind === 'elevation') {
-      const elevRes = await analyzeAuxDrawing(auxFile.path, 'elevation', { roomNames }).catch(() => null);
+      const elevRes = await analyzeWithErrorCapture('elevation', { roomNames });
+      if (auxApiError) {
+        await cleanup();
+        return res.status(503).json({
+          error: 'ai_unavailable',
+          message: 'AI解析が一時的に失敗しました（混雑の可能性）。1分ほど待って再アップロードしてください。',
+        });
+      }
       if (!(elevRes?.parsed?.drawing_type === 'elevation' &&
             Array.isArray(elevRes.parsed.rooms) && elevRes.parsed.rooms.length > 0)) {
+        console.error('elevation_unreadable. drawing_type:', elevRes?.parsed?.drawing_type,
+          '/ rooms:', elevRes?.parsed?.rooms?.length,
+          '/ rawText先頭200字:', (elevRes?.rawText || '(なし)').slice(0, 200));
         await cleanup();
         return res.status(400).json({
           error: 'elevation_unreadable',
@@ -478,8 +497,17 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
         wall_code_rooms: Array.isArray(parsedData.wall_finish_codes) ? parsedData.wall_finish_codes.length : 0,
       };
     } else {
-      const doorRes = await analyzeAuxDrawing(auxFile.path, 'door_schedule').catch(() => null);
+      const doorRes = await analyzeWithErrorCapture('door_schedule');
+      if (auxApiError) {
+        await cleanup();
+        return res.status(503).json({
+          error: 'ai_unavailable',
+          message: 'AI解析が一時的に失敗しました（混雑の可能性）。1分ほど待って再アップロードしてください。',
+        });
+      }
       if (!(doorRes?.parsed?.drawing_type === 'door_schedule' && Array.isArray(doorRes.parsed.doors))) {
+        console.error('door_schedule_unreadable. drawing_type:', doorRes?.parsed?.drawing_type,
+          '/ rawText先頭200字:', (doorRes?.rawText || '(なし)').slice(0, 200));
         await cleanup();
         return res.status(400).json({
           error: 'door_schedule_unreadable',
@@ -617,7 +645,8 @@ router.post('/:id/calculate', async (req, res) => {
     let parsedObj = null;
     try { parsedObj = JSON.parse(project.aiReadings[0].parsedData); } catch { /* 破損時は推定のまま */ }
     if (parsedObj?.elevations?.rooms?.length) {
-      const takeoff = computeElevationTakeoff(parsedObj.elevations, parsedObj.door_schedule || []);
+      const takeoff = computeElevationTakeoff(parsedObj.elevations, parsedObj.door_schedule || [],
+        { planRooms: parsedObj.rooms || [] }); // 収納内の間仕切下地推定に平面図の部屋一覧を渡す
       applyElevationTakeoff(result, takeoff);
       console.log('展開図実測モード適用:', JSON.stringify({
         wall_pb: takeoff.wall_pb_sqm, cloth: takeoff.cloth_sqm, skirting: takeoff.skirting_m,
