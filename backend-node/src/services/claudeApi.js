@@ -344,7 +344,10 @@ async function analyzeWithGemini(filePath, base64Data, mimeType) {
 
   try {
     const genAI = new GoogleGenerativeAI(geminiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: { temperature: 0 }, // 転記タスクの再現性優先
+    });
 
     const result = await model.generateContent([
       {
@@ -409,6 +412,7 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
     const response = await anthropic.messages.create({
       model: 'claude-opus-4-8',
       max_tokens: 4096,
+      temperature: 0, // 図面の転記タスク: 同一図面で読み取りが回ごとにブレるのを抑える
       messages: [
         {
           role: 'user',
@@ -533,13 +537,20 @@ export async function analyzeWallCodesTiled(filePath, context = {}) {
     const wall = item.wall === '長辺' || item.wall === '短辺' ? item.wall : null;
     if (!byRoom.has(item.room)) byRoom.set(item.room, new Map());
     const m = byRoom.get(item.room);
-    // 同じ記号はwall情報ありを優先して1件に（タイルの重なりで重複発生）
-    const prev = m.get(code);
-    if (!prev || (!prev.wall && wall)) m.set(code, { code, wall });
+    // 記号+壁（長辺/短辺）単位でユニーク化: 同じ記号が長辺と短辺の両方に付く部屋
+    // （例: LDKの界壁C04と柱型C04）はそれぞれ別の面に割り付ける必要がある。
+    // wall=nullの重複はwall情報ありが1件でもあれば捨てる
+    const key = `${code}|${wall || ''}`;
+    if (!m.has(key)) m.set(key, { code, wall });
+  }
+  for (const m of byRoom.values()) {
+    for (const [key, p] of m) {
+      if (!p.wall && [...m.values()].some((q) => q.code === p.code && q.wall)) m.delete(key);
+    }
   }
   return [...byRoom.entries()].map(([room, m]) => {
     const placements = [...m.values()];
-    return { room, codes: placements.map((p) => p.code), placements };
+    return { room, codes: [...new Set(placements.map((p) => p.code))], placements };
   });
 }
 
