@@ -4,6 +4,9 @@ import { validateAndNormalize, reconcileDualResults } from './aiReadingValidator
 import fs from 'fs';
 import path from 'path';
 
+// 読み取りモデル（環境変数で切替可能。コスト比較用: claude-sonnet-5 はopusの約1/5）
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-8';
+
 /**
  * 図面解析用AIプロンプト
  * アルファスタイル新宮町67戸 + けいとさんの5現場実績データに基づいて最適化
@@ -387,7 +390,7 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
   }
 
   try {
-    console.log('Calling Claude API with model: claude-opus-4-8');
+    console.log(`Calling Claude API with model: ${CLAUDE_MODEL}`);
     const anthropic = new Anthropic({ apiKey: claudeKey });
 
     // PDFはdocumentブロック、画像はimageブロックで送信
@@ -410,7 +413,7 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
         };
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-8',
+      model: CLAUDE_MODEL,
       max_tokens: 4096,
       temperature: 0, // 図面の転記タスク: 同一図面で読み取りが回ごとにブレるのを抑える
       messages: [
