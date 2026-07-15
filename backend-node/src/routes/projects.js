@@ -255,6 +255,8 @@ async function attachElevationData(analysisResult, elevParsed, planPath, elevPat
       );
       if (match && Array.isArray(match.codes)) {
         room.plan_codes = match.codes;
+        // タイル読取の「記号＋長辺/短辺」割付（buildupが面幅とマッチングして面単位に割り付ける）
+        if (Array.isArray(match.placements)) room.plan_placements = match.placements;
       }
     }
   }
@@ -652,6 +654,25 @@ router.post('/:id/calculate', async (req, res) => {
         wall_pb: takeoff.wall_pb_sqm, cloth: takeoff.cloth_sqm, skirting: takeoff.skirting_m,
       }));
     }
+
+    // 計算由来の警告（applyElevationTakeoffが result._warnings に積む。例: 木胴縁の部分実測疑い）を
+    // AiReading.parsedData._warnings へマージして永続化する
+    // （フロントの警告パネルは aiReading の _warnings を参照するため、auxWarnings と同じ導線に乗せる）。
+    // /calculate は繰り返し実行されるので、計算由来分は source:'calculate' で識別して前回分を置換する
+    // （重複蓄積させない・警告が解消されたら消える）。展開図なしパスでは何も追加しない。
+    if (parsedObj) {
+      const CALC_WARNING_SOURCE = 'calculate';
+      const calcWarnings = (result._warnings || []).map((w) => ({ ...w, source: CALC_WARNING_SOURCE }));
+      const prevWarnings = parsedObj._warnings || [];
+      const otherWarnings = prevWarnings.filter((w) => w?.source !== CALC_WARNING_SOURCE);
+      if (calcWarnings.length > 0 || otherWarnings.length !== prevWarnings.length) {
+        parsedObj._warnings = [...otherWarnings, ...calcWarnings];
+        await prisma.aiReading.update({
+          where: { id: project.aiReadings[0].id },
+          data: { parsedData: JSON.stringify(parsedObj) },
+        });
+      }
+    }
     // 【一旦】表示は建材リスト（PB・パネル・GW・下地合板）のみに絞る（ユーザー指定 2026-07-10）
     result.materials = filterKenzaiScope(result.materials);
     console.log('Calculation result:', JSON.stringify(result.summary));
@@ -713,7 +734,9 @@ router.post('/:id/calculate', async (req, res) => {
       ...materialList,
       materials: materialsWithPrice,
       summary: result.summary,
-      totalAmount
+      totalAmount,
+      // 最新の警告一覧（AI読取由来+計算由来のマージ済み。フロントが直接使えるよう同梱）
+      warnings: parsedObj?._warnings || []
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

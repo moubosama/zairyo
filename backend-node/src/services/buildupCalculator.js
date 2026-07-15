@@ -63,6 +63,20 @@ function isWindow(opening) {
 }
 
 /**
+ * 部屋名の表記ゆれ吸収（平面図と展開図の突合用）
+ * 空白（全角含む）除去・長音「ー」除去（クローゼット/クロゼット）・括弧と数字の全角→半角
+ * ※ (1)等の番号は区別に必要なので除去しない（クロゼット(1)とクロゼット(2)は別部屋）
+ */
+function normalizeRoomName(name) {
+  return String(name || '')
+    .replace(/[\s　]/g, '')
+    .replace(/ー/g, '')
+    .replace(/（/g, '(')
+    .replace(/）/g, ')')
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+}
+
+/**
  * メイン: 展開図データから部位別数量を積み上げる
  * @param elevations { rooms: [{ name, ceiling_height_mm, skirting, faces: [{ width_mm, height_mm?, wall_code?, openings: [] }] }] }
  * @param doorSchedule [{ symbol, name, width_mm, height_mm }]
@@ -128,7 +142,36 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       if (isStandardPb) roomDefaultCode = c;
     }
 
-    for (const face of faces) {
+    // 平面図タイル読取の「記号＋長辺/短辺」を面に割り付ける。
+    // 展開図のA〜D面の向きは作図者次第でルールが無い（2026-07-14打ち合わせで確認）ため
+    // 方角ではなく面幅の長短でマッチさせる。面積の計算には「対面のどちらか」までの
+    // 特定は不要（同じ幅の対面なら面積が同じ）なので、該当クラスの未割付面に1つずつ充てる。
+    // これでC04（打放・PBなし）等の面がデフォルトPB扱いで過大計上されるのを防ぐ。
+    const placementByFace = new Map(); // faceIndex -> parsed code
+    if (Array.isArray(room.plan_placements) && faces.length >= 2) {
+      const widths = faces.map((f) => f.width_mm || 0).filter((w) => w > 0);
+      const wMax = Math.max(...widths);
+      const wMin = Math.min(...widths);
+      if (wMax > wMin * 1.05) { // ほぼ正方形の部屋は長短の区別が付かないため割付しない
+        const mid = (wMax + wMin) / 2;
+        const classOf = (w) => (w >= mid ? '長辺' : '短辺');
+        const used = new Set();
+        for (const pl of room.plan_placements) {
+          const c = parseWallCode(pl?.code);
+          if (!c || (pl.wall !== '長辺' && pl.wall !== '短辺')) continue;
+          const idx = faces.findIndex((f, i) => !used.has(i) &&
+            !parseWallCode(f.wall_code) && // 展開図で読めた面記号は実測として優先
+            (f.width_mm || 0) > 0 && classOf(f.width_mm) === pl.wall);
+          if (idx >= 0) {
+            used.add(idx);
+            placementByFace.set(idx, c);
+          }
+        }
+      }
+    }
+
+    for (let faceIdx = 0; faceIdx < faces.length; faceIdx++) {
+      const face = faces[faceIdx];
       const w = (face.width_mm || 0) / 1000;
       if (w <= 0) continue;
       const h = (face.height_mm ? face.height_mm : room.ceiling_height_mm || 2400) / 1000;
@@ -155,14 +198,21 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       t.opening_area_sqm += openingArea;
       roomWallNet += net;
 
-      // 部位振り分け（面の記号 > 部屋の単一記号 > 間仕切+PB9.5+クロスのデフォルト）
-      const code = parseWallCode(face.wall_code) || roomDefaultCode || { base: 'G', mid: 1, surf: 4 };
+      // 部位振り分け（面の記号 > 長辺/短辺割付 > 部屋の単一記号 > 間仕切+PB9.5+クロスのデフォルト）
+      const code = parseWallCode(face.wall_code) || placementByFace.get(faceIdx)
+        || roomDefaultCode || { base: 'G', mid: 1, surf: 4 };
 
       // 間仕切下地(木)の拾い（XLS方式: G下地のみ。遮音壁L/O/Wは「遮音壁PB張り」の部位で別拾い）
       if (code.base === 'G') {
         majikiriDouble += Math.max(0, w * studH - openingAreaStud);
-        // UB隣接面（耐水=中間2/5）は反対面がUB内で展開図に現れない → 鏡像分を加算（÷2で1枚に戻る）
-        if (code.mid === 2 || code.mid === 5) majikiriDouble += w * studH;
+        // 鏡像加算: 「耐水記号(中間2/5)の面=UB隣接で、反対面はUB内=展開図に現れない」という
+        // Gタイプ実測に基づく仮定で、不可視の反対面分を足す（÷2で壁1枚に戻る）。
+        // ※ 既知の限界: 両面とも展開図に現れる耐水壁（トイレ−洗面間等）ではこの加算が
+        //   壁2枚分の二重計上になる。面の隣接情報が無く反対面の可視判定はできないため、
+        //   開口分を鏡像からも控除して過大側を抑える（開口はUB側の面にも同様に無い想定）。
+        if (code.mid === 2 || code.mid === 5) {
+          majikiriDouble += Math.max(0, w * studH - openingAreaStud);
+        }
       }
       // RC面木(D下地)は木胴縁の対象面（D14=防露/EV面、D64=収納内コンパネ）
       if (code.base === 'D') {
@@ -214,11 +264,12 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 内側3面（両側+奥）≒ 3×√面積（正方形近似）。うちRC面（D6*で実測済み）は胴縁の部位なので幅を控除。
   // 部屋側の面は上のループで拾い済み（÷2対象）なので、収納側の面も両面計上の山に足してから÷2する。
   const CLOSET_NAME_RE = /クローゼット|クロゼット|WIC|CL|収納|物入|押入/;
-  const elevRoomNames = new Set(rooms.map((r) => r.name).filter(Boolean));
+  const elevRoomNames = new Set(rooms.map((r) => normalizeRoomName(r.name)).filter(Boolean));
   let closetSideWidth = 0;
   for (const pr of opts.planRooms || []) {
     if (!pr?.name || !CLOSET_NAME_RE.test(pr.name)) continue;
-    if (elevRoomNames.has(pr.name)) continue; // 展開図に実測がある収納は二重計上しない
+    // 展開図に実測がある収納は二重計上しない（表記ゆれを正規化して比較）
+    if (elevRoomNames.has(normalizeRoomName(pr.name))) continue;
     const a = pr.area_sqm || 0;
     if (a > 0) closetSideWidth += 3 * Math.sqrt(a);
   }
@@ -306,9 +357,21 @@ export function applyElevationTakeoff(result, takeoff) {
     `間仕切下地 ${Math.round(takeoff.majikiri_shitaji_m * 10) / 10} × 両面縦横@450 = ${Math.round(majikiriLen)}m × 断面45×30`);
   // 木胴縁: RC面木(D下地)の実測面積 → 横胴縁@455の材長 → 材積
   // ※ 界壁・EV面が展開図に現れないタイプでは実測が過少になりうる（Gは界壁C04=胴縁なしで正）
+  //   実測が従来推定の50%を切る場合は部分実測の疑いとして _warnings で要確認にする（実測値は採用）
   const dobuchiLen = dobuchiLengthM(takeoff.rc_furring_sqm);
-  set((m) => m.name === '木胴縁（界壁面）',
-    timberVolumeM3(TIMBER_SECTIONS.dobuchi, dobuchiLen),
+  const dobuchiVol = timberVolumeM3(TIMBER_SECTIONS.dobuchi, dobuchiLen);
+  const dobuchiRow = result.materials.find((m) => m.name === '木胴縁（界壁面）');
+  if (dobuchiRow && dobuchiVol > 0 && dobuchiRow.quantity > 0 && dobuchiVol < dobuchiRow.quantity * 0.5) {
+    result._warnings = result._warnings || [];
+    result._warnings.push({
+      field: '木胴縁（界壁面）',
+      message: `展開図実測の木胴縁材積(${dobuchiVol}m³)が実績ベース推定(${dobuchiRow.quantity}m³)の50%未満です。`
+        + '界壁・EV廻りのRC面が展開図に写っていない可能性があります（実測値を採用済み・要確認）',
+      before: dobuchiRow.quantity,
+      after: dobuchiVol,
+    });
+  }
+  set((m) => m.name === '木胴縁（界壁面）', dobuchiVol,
     `RC面木 ${takeoff.rc_furring_sqm}㎡ × 横胴縁@455 = ${Math.round(dobuchiLen)}m × 断面45×30`);
 
   // サマリーにも反映

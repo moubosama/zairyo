@@ -193,5 +193,5 @@ for (const r of rows) {
   if (status === '✅') ok++; else if (status === '✗') fail++; else warn++;
   console.log(r.label.padEnd(24) + r.expected.toFixed(2).padStart(9) + Number(r.actual).toFixed(2).padStart(9) + d.padStart(8) + '  ' + status);
 }
-console.log(`\n✅ ${ok} / ⏳ ${warn}（既知の未実装） / ✗ ${fail}`);
+console.log(`\n✅ ${ok} / ⏳ ${warn}（既知の限界: 展開図外の面など・実装済みの部分計上を含む） / ✗ ${fail}`);
 process.exit(fail > 0 ? 1 : 0);

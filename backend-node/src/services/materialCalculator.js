@@ -752,7 +752,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '壁 石膏ボード',
-    spec: "t-9.5（3'×6'）",
+    spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: wallPb95Sheets,
     calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${wallPbCoeff}枚/㎡ × 0.6（リノベ係数）`
@@ -765,7 +765,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '壁 耐水石膏ボード',
-    spec: "耐水t-9.5（3'×6'）",
+    spec: "耐水t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: wallPbWaterSheets,
     calculation: `水回り面積 ${cfArea.toFixed(1)}㎡から算出`
@@ -780,7 +780,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '天井 石膏ボード',
-    spec: "t-9.5（3'×6'）",
+    spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: ceilingPb95Sheets,
     calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ 1.4㎡/枚（プロ実績係数）`
@@ -791,7 +791,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '下り天井 石膏ボード',
-    spec: "t-9.5（3'×6'）",
+    spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: 4,
     calculation: '標準4枚（実績値）'
@@ -802,7 +802,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '一部界壁 石膏ボード',
-    spec: "t-9.5（3'×6'）キッチンパネル貼下のみ",
+    spec: "t-9.5（3'×6'）910×1820mm キッチンパネル貼下のみ",
     unit: '枚',
     quantity: 3,
     calculation: '標準3枚（67戸実績）'
@@ -813,7 +813,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '一部界壁 耐水石膏ボード',
-    spec: "耐水t-9.5（3'×6'）キッチンパネル貼下のみ",
+    spec: "耐水t-9.5（3'×6'）910×1820mm キッチンパネル貼下のみ",
     unit: '枚',
     quantity: 1,
     calculation: '標準1枚（67戸実績）'
@@ -824,7 +824,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: 'EV廻り壁 石膏ボード',
-    spec: "t-9.5（3'×6'）",
+    spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: 3,
     calculation: '標準3枚（67戸実績2.2枚/戸切上げ）'
@@ -835,7 +835,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: 'マルチクロゼット・WIC・CLRC面 石膏ボード',
-    spec: "t-9.5（3'×6'）",
+    spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: 5,
     calculation: '標準5枚（67戸実績）'
@@ -847,7 +847,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: '壁 キッチンパネル',
-    spec: "t-3.0（3'×8'）キョーライト アーバンSマリアパール",
+    spec: "t-3.0（3'×8'）910×2420mm キョーライト アーバンSマリアパール",
     unit: '枚',
     quantity: 3,
     calculation: '標準3枚（実績値）'
@@ -886,7 +886,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: 'カーテンレール・手摺・タオル掛 下地補強合板',
-    spec: "t-9.0（3'×6'）",
+    spec: "t-9.0（3'×6'）910×1820mm",
     unit: '枚',
     quantity: 6,
     calculation: '標準6枚（実績値）'
@@ -899,7 +899,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: 'エアコン下地補強合板',
-    spec: "t-9.0（3'×6'）",
+    spec: "t-9.0（3'×6'）910×1820mm",
     unit: '枚',
     quantity: airconBoardCount,
     calculation: `部屋数 ${roomCount}室 × ${AIRCON_PER_ROOM}`
