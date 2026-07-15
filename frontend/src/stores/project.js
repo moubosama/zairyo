@@ -97,6 +97,36 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  /**
+   * 補助図面（展開図/建具表）の段階式アップロード
+   * 平面図の解析結果（部屋一覧）をAIに渡すため、一括より読み取り精度が高い
+   * @param kind 'elevation' | 'door_schedule'
+   * @returns { aux: 読み取りサマリー, parsedData } のaux
+   */
+  async function uploadAux(kind, file) {
+    if (!currentProject.value) {
+      throw new Error('プロジェクトが作成されていません')
+    }
+    loading.value = true
+    error.value = null
+    try {
+      const formData = new FormData()
+      formData.append(kind, file)
+      const response = await api.uploadAux(currentProject.value.id, formData)
+      // 最新のparsedDataでstoreを更新（計算はこのデータで走る）
+      if (response.data.parsedData) {
+        aiReading.value = response.data.parsedData
+      }
+      return response.data.aux
+    } catch (e) {
+      const label = kind === 'elevation' ? '展開図' : '建具表'
+      error.value = api.apiErrorMessage(e, `${label}のアップロードに失敗しました`)
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function saveOverrides(overrideData) {
     if (!currentProject.value) {
       throw new Error('プロジェクトが作成されていません')
@@ -263,6 +293,7 @@ export const useProjectStore = defineStore('project', () => {
     selectPackage,
     createProject,
     uploadPlan,
+    uploadAux,
     saveOverrides,
     calculateMaterials,
     updateMaterials,

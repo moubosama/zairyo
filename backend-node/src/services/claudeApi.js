@@ -507,8 +507,8 @@ async function analyzeTiles(filePath, prompt, resultKey) {
  * 平面詳細図から壁仕上記号を抽出（タイル分割・詳細パス）
  * @returns [{room, codes:[...]}] 形式（wall_finish_codes互換）
  */
-export async function analyzeWallCodesTiled(filePath) {
-  const raw = await analyzeTiles(filePath, PLAN_CODE_TILE_PROMPT, 'codes');
+export async function analyzeWallCodesTiled(filePath, context = {}) {
+  const raw = await analyzeTiles(filePath, PLAN_CODE_TILE_PROMPT + roomContextNote(context.roomNames), 'codes');
   if (!raw || raw.length === 0) return null;
 
   // 部屋ごとにユニーク化して集約
@@ -527,8 +527,8 @@ export async function analyzeWallCodesTiled(filePath) {
  * 展開図から開口を抽出（タイル分割・詳細パス）
  * @returns [{room, face, type, symbol, width_mm, height_mm}]
  */
-export async function analyzeOpeningsTiled(filePath) {
-  const raw = await analyzeTiles(filePath, ELEV_OPENING_TILE_PROMPT, 'openings');
+export async function analyzeOpeningsTiled(filePath, context = {}) {
+  const raw = await analyzeTiles(filePath, ELEV_OPENING_TILE_PROMPT + roomContextNote(context.roomNames), 'openings');
   if (!raw || raw.length === 0) return null;
 
   // 重複排除（タイルの重なりで同じ開口が2回出る）: room+face+type+width で同一視
@@ -558,13 +558,27 @@ function readDrawingFile(filePath) {
 }
 
 /**
+ * 平面詳細図の読み取り結果（部屋一覧）をプロンプトに添付するヘルパー
+ * 段階式アップロードで①の結果を②③に渡すと、部屋名の表記ゆれと読み落としが減る
+ */
+function roomContextNote(roomNames) {
+  if (!Array.isArray(roomNames) || roomNames.length === 0) return '';
+  return `\n\n【この住戸の部屋一覧（平面詳細図の読み取り結果・確定情報）】\n${roomNames.join('、')}\n` +
+    '- 図面内の室がこの一覧のどれに当たるか対応づけ、部屋名(name/room)は上記の表記に揃えること' +
+    '（例: 図面が「LD」でも一覧に「リビング・ダイニング」があればそちらを使う）\n' +
+    '- 一覧にある部屋がページ内に描かれていれば読み落とさないこと（一覧に無い室があれば図面の表記のまま追加してよい）';
+}
+
+/**
  * 補助図面（展開図・建具表）の解析
  * 表形式の転記は読み取りブレが小さいためClaude単体で解析する（コスト・時間の抑制）
  * @param kind 'elevation' | 'door_schedule'
+ * @param context { roomNames?: string[] } 平面図から得た部屋一覧（展開図の読み取り精度向上用）
  * @returns { parsed, rawText } | null（失敗時）
  */
-export async function analyzeAuxDrawing(filePath, kind) {
-  const prompt = kind === 'elevation' ? ELEVATION_PROMPT : DOOR_SCHEDULE_PROMPT;
+export async function analyzeAuxDrawing(filePath, kind, context = {}) {
+  let prompt = kind === 'elevation' ? ELEVATION_PROMPT : DOOR_SCHEDULE_PROMPT;
+  if (kind === 'elevation') prompt += roomContextNote(context.roomNames);
   const { base64Data, mimeType } = readDrawingFile(filePath);
   const res = await analyzeWithClaude(filePath, base64Data, mimeType, prompt);
   if (!res?.parsed) return null;

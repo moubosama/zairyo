@@ -2,139 +2,181 @@
   <div class="fade-in">
     <div class="text-center mb-8">
       <h2 class="text-2xl font-bold mb-2">図面をアップロード</h2>
-      <p class="text-gray-400">計画平面図（PDF/PNG/JPG）をアップロードして資材を自動計算</p>
+      <p class="text-gray-400">1枚ずつ解析して進める段階式。①の読み取り結果を②③のAI解析に引き継ぐので精度が上がります</p>
     </div>
 
-    <!-- Project Name Input -->
-    <div class="card mb-6">
-      <label class="block text-sm text-gray-400 mb-2">現場名</label>
-      <input
-        v-model="projectName"
-        type="text"
-        placeholder="例: ○○マンション101号室"
-        class="w-full bg-dark-600 border border-dark-500 rounded-lg px-4 py-3 focus:border-gold focus:outline-none"
-      />
-    </div>
-
-    <!-- Upload Area: 平面詳細図（必須・床/天井/間取り） -->
-    <div class="mb-1">
-      <span class="text-sm text-gold font-medium">① 平面詳細図</span>
-      <span class="text-xs text-gray-400 ml-2">必須 ─ 床・天井・間取りを読み取ります</span>
-    </div>
-    <div
-      @dragover.prevent="isDragging = true"
-      @dragleave.prevent="isDragging = false"
-      @drop.prevent="handleDrop"
-      :class="[
-        'card border-2 border-dashed transition-colors duration-200 text-center py-10',
-        isDragging ? 'border-gold bg-dark-600' : 'border-dark-400',
-        loading ? 'pointer-events-none opacity-50' : 'cursor-pointer'
-      ]"
-      @click="triggerFileInput"
-    >
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".pdf,.png,.jpg,.jpeg"
-        class="hidden"
-        @change="handleFileSelect"
-      />
-
-      <!-- Loading State -->
-      <div v-if="loading" class="flex flex-col items-center">
-        <div class="spinner mb-4"></div>
-        <p class="text-gold">{{ loadingStep }}</p>
-        <p class="text-xs text-gray-400 mt-2">図面の解析には30秒〜1分ほどかかります（複数図面はさらに+30秒程度）</p>
-      </div>
-
-      <!-- Default State -->
-      <div v-else-if="!selectedFile">
-        <div class="text-5xl mb-4">📄</div>
-        <p class="text-lg mb-2">クリックまたはドラッグ&ドロップ</p>
-        <p class="text-sm text-gray-400">PDF, PNG, JPG（最大10MB）</p>
-      </div>
-
-      <!-- File Selected State -->
-      <div v-else>
-        <div class="text-5xl mb-4">✅</div>
-        <p class="text-lg mb-2">{{ selectedFile.name }}</p>
-        <p class="text-sm text-gray-400">{{ formatFileSize(selectedFile.size) }}</p>
-      </div>
-    </div>
-
-    <!-- 補助図面（任意）: 壁編=展開図 / 建具編=建具表 -->
-    <div class="grid md:grid-cols-2 gap-4 mt-4" :class="{ 'pointer-events-none opacity-50': loading }">
+    <!-- Project Name + 専有面積 -->
+    <div class="card mb-6 grid md:grid-cols-2 gap-4">
       <div>
-        <div class="mb-1">
-          <span class="text-sm text-gold font-medium">② 展開図</span>
-          <span class="text-xs text-gray-400 ml-2">任意 ─ 壁・巾木が実測になります</span>
-        </div>
-        <label class="card border border-dashed border-dark-400 hover:border-gold block cursor-pointer text-center py-4">
-          <input type="file" accept=".pdf,.png,.jpg,.jpeg" class="hidden" @change="e => selectAux(e, 'elevation')" />
-          <template v-if="elevationFile">
-            <span class="text-sm">✅ {{ elevationFile.name }}</span>
-            <button @click.prevent="elevationFile = null" class="ml-2 text-xs text-red-400">✕ 外す</button>
-          </template>
-          <span v-else class="text-sm text-gray-400">🧱 クリックして選択（壁編）</span>
-        </label>
+        <label class="block text-sm text-gray-400 mb-2">現場名</label>
+        <input
+          v-model="projectName"
+          type="text"
+          placeholder="例: ○○マンション101号室"
+          :disabled="planDone"
+          class="w-full bg-dark-600 border border-dark-500 rounded-lg px-4 py-3 focus:border-gold focus:outline-none disabled:opacity-60"
+        />
       </div>
       <div>
-        <div class="mb-1">
-          <span class="text-sm text-gold font-medium">③ 建具表</span>
-          <span class="text-xs text-gray-400 ml-2">任意 ─ 開口・建具が実寸になります</span>
-        </div>
-        <label class="card border border-dashed border-dark-400 hover:border-gold block cursor-pointer text-center py-4">
-          <input type="file" accept=".pdf,.png,.jpg,.jpeg" class="hidden" @change="e => selectAux(e, 'door')" />
-          <template v-if="doorScheduleFile">
-            <span class="text-sm">✅ {{ doorScheduleFile.name }}</span>
-            <button @click.prevent="doorScheduleFile = null" class="ml-2 text-xs text-red-400">✕ 外す</button>
-          </template>
-          <span v-else class="text-sm text-gray-400">🚪 クリックして選択（建具編）</span>
+        <label class="block text-sm text-gray-400 mb-2">
+          専有面積（㎡）<span class="text-xs ml-2">任意・入れると解析精度が上がります</span>
         </label>
+        <input
+          v-model.number="totalAreaSqm"
+          type="number"
+          step="0.01"
+          min="0"
+          placeholder="例: 67.30"
+          :disabled="planDone"
+          class="bg-dark-600 border border-dark-400 rounded px-3 py-2 w-48 focus:border-gold focus:outline-none disabled:opacity-60"
+        />
       </div>
     </div>
 
-    <!-- 専有面積入力（任意・AI読み取りより優先される） -->
-    <div class="card mt-6">
-      <label class="text-sm text-gray-400 block mb-2">
-        専有面積（㎡）
-        <span class="text-xs ml-2">任意・物件資料の値を入れると解析精度が上がります</span>
-      </label>
-      <input
-        v-model.number="totalAreaSqm"
-        type="number"
-        step="0.01"
-        min="0"
-        placeholder="例: 67.30"
-        class="bg-dark-600 border border-dark-400 rounded px-3 py-2 w-48 focus:border-gold focus:outline-none"
-        :disabled="loading"
-        @click.stop
-      />
+    <!-- STEP 1: 平面詳細図 -->
+    <div class="card mb-4" :class="planDone ? 'border border-green-700' : 'border border-dark-400'">
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <span class="text-sm text-gold font-medium">STEP 1　平面詳細図</span>
+          <span class="text-xs text-gray-400 ml-2">必須 ─ 間取り・床・天井を読み取ります</span>
+        </div>
+        <span v-if="planDone" class="text-green-400 text-sm">✓ 解析済み</span>
+      </div>
+
+      <div
+        v-if="!planDone"
+        @dragover.prevent="isDragging = true"
+        @dragleave.prevent="isDragging = false"
+        @drop.prevent="handleDrop"
+        :class="[
+          'border-2 border-dashed rounded-lg transition-colors duration-200 text-center py-8',
+          isDragging ? 'border-gold bg-dark-600' : 'border-dark-400',
+          planLoading ? 'pointer-events-none opacity-50' : 'cursor-pointer'
+        ]"
+        @click="triggerFileInput"
+      >
+        <input ref="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg" class="hidden" @change="handleFileSelect" />
+        <div v-if="planLoading" class="flex flex-col items-center">
+          <div class="spinner mb-4"></div>
+          <p class="text-gold">{{ loadingStep }}</p>
+          <p class="text-xs text-gray-400 mt-2">解析には30秒〜1分ほどかかります</p>
+        </div>
+        <div v-else-if="!selectedFile">
+          <div class="text-5xl mb-3">📄</div>
+          <p class="mb-1">クリックまたはドラッグ&ドロップ</p>
+          <p class="text-sm text-gray-400">PDF, PNG, JPG（最大10MB）</p>
+        </div>
+        <div v-else>
+          <div class="text-4xl mb-2">📄</div>
+          <p>{{ selectedFile.name }} <span class="text-sm text-gray-400">({{ formatFileSize(selectedFile.size) }})</span></p>
+        </div>
+      </div>
+
+      <div v-if="!planDone" class="flex justify-end mt-3">
+        <button
+          @click="analyzePlan"
+          :disabled="!canAnalyzePlan || planLoading"
+          class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          解析する
+        </button>
+      </div>
+
+      <!-- STEP 1 結果サマリー -->
+      <div v-if="planDone" class="text-sm">
+        <p class="mb-2">
+          <span class="text-gray-400">間取り:</span> {{ planSummary.layout || '-' }}
+          <span class="text-gray-400 ml-4">部屋数:</span> {{ planSummary.roomCount }}
+          <span v-if="planSummary.warnings > 0" class="text-yellow-400 ml-4">⚠ 要確認 {{ planSummary.warnings }}件（結果画面で表示）</span>
+        </p>
+        <div class="flex flex-wrap gap-1">
+          <span v-for="r in planSummary.roomNames" :key="r"
+                class="px-2 py-0.5 bg-dark-600 rounded text-xs text-gray-300">{{ r }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 2: 展開図 -->
+    <div class="card mb-4"
+         :class="[elevSummary ? 'border border-green-700' : 'border border-dark-400', !planDone ? 'opacity-50' : '']">
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <span class="text-sm text-gold font-medium">STEP 2　展開図</span>
+          <span class="text-xs text-gray-400 ml-2">任意 ─ 壁・巾木が実測になります（①の部屋一覧を引き継いで解析）</span>
+        </div>
+        <span v-if="elevSummary" class="text-green-400 text-sm">✓ 解析済み</span>
+      </div>
+
+      <div v-if="elevLoading" class="flex items-center gap-3 py-2">
+        <div class="spinner"></div>
+        <p class="text-gold text-sm">展開図を解析中（分割拡大読み取りを含む・1〜2分）...</p>
+      </div>
+      <template v-else>
+        <label v-if="planDone" class="border border-dashed border-dark-400 hover:border-gold rounded-lg block cursor-pointer text-center py-4">
+          <input type="file" accept=".pdf,.png,.jpg,.jpeg" class="hidden" @change="e => analyzeAux(e, 'elevation')" />
+          <span class="text-sm text-gray-400">🧱 {{ elevSummary ? '別の展開図で読み直す' : 'クリックして選択 → すぐ解析' }}</span>
+        </label>
+        <p v-else class="text-sm text-gray-500 py-2">STEP 1 の解析が終わると選べます</p>
+
+        <div v-if="elevSummary" class="text-sm mt-3">
+          <p>
+            <span class="text-gray-400">読み取った部屋:</span> {{ elevSummary.rooms }}室
+            <span class="text-gray-400 ml-4">開口:</span> {{ elevSummary.openings }}件
+            <span class="text-gray-400 ml-4">壁記号:</span> {{ elevSummary.wall_code_rooms }}部屋分
+          </p>
+          <div class="flex flex-wrap gap-1 mt-1">
+            <span v-for="r in (elevSummary.room_names || [])" :key="r"
+                  class="px-2 py-0.5 bg-dark-600 rounded text-xs text-gray-300">{{ r }}</span>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- STEP 3: 建具表 -->
+    <div class="card mb-4"
+         :class="[doorSummary ? 'border border-green-700' : 'border border-dark-400', !planDone ? 'opacity-50' : '']">
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <span class="text-sm text-gold font-medium">STEP 3　建具表</span>
+          <span class="text-xs text-gray-400 ml-2">任意 ─ 開口・建具が実寸になります。複数ページは順に追加</span>
+        </div>
+        <span v-if="doorSummary" class="text-green-400 text-sm">✓ {{ doorSummary.doors_total }}件 読み取り済み</span>
+      </div>
+
+      <div v-if="doorLoading" class="flex items-center gap-3 py-2">
+        <div class="spinner"></div>
+        <p class="text-gold text-sm">建具表を解析中...</p>
+      </div>
+      <template v-else>
+        <label v-if="planDone" class="border border-dashed border-dark-400 hover:border-gold rounded-lg block cursor-pointer text-center py-4">
+          <input type="file" accept=".pdf,.png,.jpg,.jpeg" class="hidden" @change="e => analyzeAux(e, 'door_schedule')" />
+          <span class="text-sm text-gray-400">🚪 {{ doorSummary ? '次のページを追加（例: 木製建具表 WD-*）' : 'クリックして選択 → すぐ解析' }}</span>
+        </label>
+        <p v-else class="text-sm text-gray-500 py-2">STEP 1 の解析が終わると選べます</p>
+
+        <p v-if="doorSummary" class="text-sm mt-2">
+          <span class="text-gray-400">建具:</span> 合計{{ doorSummary.doors_total }}件
+          <span v-if="doorSummary.added !== undefined" class="text-gray-400 ml-2">（今回のページで+{{ doorSummary.added }}件）</span>
+        </p>
+      </template>
     </div>
 
     <!-- Error -->
-    <div v-if="uiError || store.error" class="card mt-6 text-red-400">
+    <div v-if="uiError || store.error" class="card mt-2 mb-2 text-red-400">
       <p>{{ uiError || store.error }}</p>
     </div>
 
     <!-- Navigation -->
-    <div class="flex justify-between items-center mt-8">
-      <button
-        @click="goToHistory"
-        class="btn-secondary"
-      >
-        📋 過去の見積もりを見る
-      </button>
+    <div class="flex justify-between items-center mt-6">
+      <button @click="goToHistory" class="btn-secondary">📋 過去の見積もりを見る</button>
       <div class="flex items-center gap-3">
-        <span v-if="!canSubmit && !loading" class="text-xs text-gray-500">
-          {{ !projectName.trim() ? '現場名を入力してください' : '図面をアップロードしてください' }}
-        </span>
+        <span v-if="!planDone" class="text-xs text-gray-500">STEP 1 を解析すると計算できます（②③は後からでも可）</span>
         <button
-          @click="goNext"
-          :disabled="!canSubmit || loading"
+          @click="goResult"
+          :disabled="!planDone || calcLoading || elevLoading || doorLoading"
           class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          資材リストを計算
+          {{ calcLoading ? '計算中...' : '資材リストを計算' }}
         </button>
       </div>
     </div>
@@ -151,78 +193,105 @@ const store = useProjectStore()
 
 const fileInput = ref(null)
 const selectedFile = ref(null)
-const elevationFile = ref(null)      // 展開図（任意・壁編）
-const doorScheduleFile = ref(null)   // 建具表（任意・建具編）
 const isDragging = ref(false)
 const projectName = ref('')
 const totalAreaSqm = ref(null)
-const loading = ref(false)
 const loadingStep = ref('')
 const uiError = ref(null)
 
-const canSubmit = computed(() => !!selectedFile.value && !!projectName.value.trim())
+// 段階ごとの状態
+const planLoading = ref(false)
+const elevLoading = ref(false)
+const doorLoading = ref(false)
+const calcLoading = ref(false)
+const planSummary = ref(null)   // STEP1完了で {layout, roomCount, roomNames, warnings}
+const elevSummary = ref(null)   // STEP2完了で {rooms, room_names, openings, wall_code_rooms}
+const doorSummary = ref(null)   // STEP3完了で {doors_total, added}
+
+const planDone = computed(() => planSummary.value !== null)
+const canAnalyzePlan = computed(() => !!selectedFile.value && !!projectName.value.trim())
 
 onMounted(() => {
   store.reset()
 })
 
 const triggerFileInput = () => {
-  if (!loading.value) {
-    fileInput.value.click()
+  if (!planLoading.value) fileInput.value.click()
+}
+
+const validateFile = (file) => {
+  const validTypes = ['application/pdf', 'image/png', 'image/jpeg']
+  if (!validTypes.includes(file.type)) {
+    uiError.value = 'PDF, PNG, または JPG ファイルを選択してください'
+    return false
   }
+  if (file.size > 10 * 1024 * 1024) {
+    uiError.value = 'ファイルサイズは10MB以下にしてください'
+    return false
+  }
+  return true
 }
 
 const handleFileSelect = (event) => {
   const file = event.target.files[0]
-  if (file) {
-    processFile(file)
-  }
+  if (file) processFile(file)
 }
 
 const handleDrop = (event) => {
   isDragging.value = false
   const file = event.dataTransfer.files[0]
-  if (file) {
-    processFile(file)
-  }
+  if (file) processFile(file)
 }
 
 const processFile = (file) => {
   uiError.value = null
-
-  // Validate file type
-  const validTypes = ['application/pdf', 'image/png', 'image/jpeg']
-  if (!validTypes.includes(file.type)) {
-    uiError.value = 'PDF, PNG, または JPG ファイルを選択してください'
-    return
-  }
-
-  // Validate file size (10MB)
-  if (file.size > 10 * 1024 * 1024) {
-    uiError.value = 'ファイルサイズは10MB以下にしてください'
-    return
-  }
-
-  // ファイルを保存（現場名は後で入力可能）
+  if (!validateFile(file)) return
   selectedFile.value = file
 }
 
-const selectAux = (event, kind) => {
+// STEP 1: 平面詳細図の解析（プロジェクト作成込み）
+const analyzePlan = async () => {
+  if (!canAnalyzePlan.value) return
+  planLoading.value = true
+  uiError.value = null
+  try {
+    loadingStep.value = 'プロジェクトを作成中...'
+    await store.createProject(projectName.value.trim())
+    loadingStep.value = 'AIが平面詳細図を解析中...'
+    const parsed = await store.uploadPlan(selectedFile.value, totalAreaSqm.value)
+    planSummary.value = {
+      layout: parsed.layout_type || null,
+      roomCount: (parsed.rooms || []).length,
+      roomNames: (parsed.rooms || []).map(r => r.name).filter(Boolean),
+      warnings: (parsed._warnings || []).length,
+    }
+  } catch (e) {
+    console.error('Plan analyze error:', e)
+  } finally {
+    planLoading.value = false
+    loadingStep.value = ''
+  }
+}
+
+// STEP 2/3: 補助図面の解析（選択したら即実行。①の部屋一覧をサーバーがAIに渡す）
+const analyzeAux = async (event, kind) => {
   const file = event.target.files?.[0]
   event.target.value = ''
-  if (!file) return
+  if (!file || !planDone.value) return
   uiError.value = null
-  const validTypes = ['application/pdf', 'image/png', 'image/jpeg']
-  if (!validTypes.includes(file.type)) {
-    uiError.value = 'PDF, PNG, または JPG ファイルを選択してください'
-    return
+  if (!validateFile(file)) return
+
+  const loadingRef = kind === 'elevation' ? elevLoading : doorLoading
+  loadingRef.value = true
+  try {
+    const aux = await store.uploadAux(kind, file)
+    if (kind === 'elevation') elevSummary.value = aux
+    else doorSummary.value = aux
+  } catch (e) {
+    console.error('Aux analyze error:', e)
+  } finally {
+    loadingRef.value = false
   }
-  if (file.size > 10 * 1024 * 1024) {
-    uiError.value = 'ファイルサイズは10MB以下にしてください'
-    return
-  }
-  if (kind === 'elevation') elevationFile.value = file
-  else doorScheduleFile.value = file
 }
 
 const formatFileSize = (bytes) => {
@@ -235,28 +304,18 @@ const goToHistory = () => {
   router.push('/history')
 }
 
-const goNext = async () => {
-  if (!canSubmit.value) return
-
-  loading.value = true
+// 計算して結果画面へ（②③はあってもなくても可）
+const goResult = async () => {
+  if (!planDone.value) return
+  calcLoading.value = true
   uiError.value = null
   try {
-    loadingStep.value = 'プロジェクトを作成中...'
-    await store.createProject(projectName.value.trim())
-    loadingStep.value = 'AIが図面を解析中...'
-    await store.uploadPlan(selectedFile.value, totalAreaSqm.value, {
-      elevationFile: elevationFile.value,
-      doorScheduleFile: doorScheduleFile.value,
-    })
-    loadingStep.value = '資材数量を計算中...'
     await store.calculateMaterials()
     router.push('/result')
   } catch (e) {
-    // エラー詳細はstore.errorに入り、画面のエラーカードに表示される
-    console.error('Error:', e)
+    console.error('Calculate error:', e)
   } finally {
-    loading.value = false
-    loadingStep.value = ''
+    calcLoading.value = false
   }
 }
 </script>

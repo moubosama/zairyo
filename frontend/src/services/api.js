@@ -61,14 +61,19 @@ export const fetchProjects = () => api.get('/projects')
 export const createProject = (data) => api.post('/projects', data)
 export const fetchProject = (id) => api.get(`/projects/${id}`)
 export const deleteProject = (id) => api.delete(`/projects/${id}`)
+const uploadHeaders = () => ({
+  'Content-Type': 'multipart/form-data',
+  // 簡易アップロードガード（バックエンドのUPLOAD_GUARD_TOKENと一致させる）
+  ...(import.meta.env.VITE_UPLOAD_TOKEN
+    ? { 'X-Upload-Token': import.meta.env.VITE_UPLOAD_TOKEN }
+    : {}),
+})
 export const uploadPlan = (id, formData) => api.post(`/projects/${id}/upload`, formData, {
-  headers: {
-    'Content-Type': 'multipart/form-data',
-    // 簡易アップロードガード（バックエンドのUPLOAD_GUARD_TOKENと一致させる）
-    ...(import.meta.env.VITE_UPLOAD_TOKEN
-      ? { 'X-Upload-Token': import.meta.env.VITE_UPLOAD_TOKEN }
-      : {}),
-  },
+  headers: uploadHeaders(),
+})
+// 補助図面（展開図/建具表）の段階式アップロード
+export const uploadAux = (id, formData) => api.post(`/projects/${id}/aux`, formData, {
+  headers: uploadHeaders(),
 })
 export const saveOverrides = (id, overrides) => api.post(`/projects/${id}/overrides`, { overrides })
 export const calculateMaterials = (id) => api.post(`/projects/${id}/calculate`)

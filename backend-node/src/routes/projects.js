@@ -199,6 +199,67 @@ const uploadFieldsWith400 = (req, res, next) => {
   });
 };
 
+/**
+ * 展開図の解析結果をparsedDataへ統合する共通処理
+ * （タイル詳細パスの実行と、壁記号・開口のマージ。一括uploadと段階式auxの両方から使う）
+ * @param analysisResult 平面図の解析結果（elevations等を書き込む）
+ * @param elevParsed 展開図の解析結果（rooms必須）
+ * @param planPath 平面詳細図のファイルパス（壁記号タイル読取に使用。無ければスキップ）
+ * @param elevPath 展開図のファイルパス（開口タイル読取に使用）
+ */
+async function attachElevationData(analysisResult, elevParsed, planPath, elevPath) {
+  analysisResult.elevations = elevParsed;
+  const roomNames = (analysisResult.rooms || []).map((r) => r.name).filter(Boolean);
+
+  // タイル詳細パス: 全体画像では潰れる壁記号・開口を分割拡大で読み取る
+  // （失敗しても全体パスの結果で続行）
+  const planReadable = planPath
+    ? await fsPromises.access(planPath).then(() => true).catch(() => false)
+    : false;
+  const [tiledCodes, tiledOpenings] = await Promise.all([
+    (planReadable && (!analysisResult.wall_finish_codes || analysisResult.wall_finish_codes.length === 0))
+      ? analyzeWallCodesTiled(planPath, { roomNames }).catch(() => null)
+      : Promise.resolve(null),
+    analyzeOpeningsTiled(elevPath, { roomNames }).catch(() => null),
+  ]);
+  if (tiledCodes && tiledCodes.length > 0) {
+    analysisResult.wall_finish_codes = tiledCodes;
+    console.log('壁記号タイル読取:', JSON.stringify(tiledCodes));
+  }
+  if (tiledOpenings && tiledOpenings.length > 0) {
+    // 部屋名+面でマッチする面に開口をマージ（タイル読取の方が詳細）
+    let mergedCount = 0;
+    for (const op of tiledOpenings) {
+      const room = analysisResult.elevations.rooms.find(
+        (r) => r.name && op.room && (r.name === op.room || r.name.includes(op.room) || op.room.includes(r.name))
+      );
+      if (!room) continue;
+      const face = (room.faces || []).find((f) => f.face === op.face) || (room.faces || [])[0];
+      if (!face) continue;
+      face.openings = face.openings || [];
+      // 同一面に同タイプ・同幅の開口が既にあればスキップ
+      const dup = face.openings.some((o) => o.type === op.type && o.width_mm === op.width_mm);
+      if (!dup) {
+        face.openings.push({ type: op.type, symbol: op.symbol, width_mm: op.width_mm, height_mm: op.height_mm });
+        mergedCount++;
+      }
+    }
+    console.log(`開口タイル読取: ${tiledOpenings.length}件中${mergedCount}件をマージ`);
+  }
+
+  // 平面詳細図から抽出した壁仕上記号を部屋名でマージ（buildupの部位振り分けに使う）
+  if (Array.isArray(analysisResult.wall_finish_codes)) {
+    for (const room of analysisResult.elevations.rooms) {
+      const match = analysisResult.wall_finish_codes.find(
+        (w) => w.room && room.name && (w.room === room.name || room.name.includes(w.room) || w.room.includes(room.name))
+      );
+      if (match && Array.isArray(match.codes)) {
+        room.plan_codes = match.codes;
+      }
+    }
+  }
+}
+
 // POST /api/projects/:id/upload - 図面アップロード+AI解析
 router.post('/:id/upload', uploadLimiter, uploadFieldsWith400, async (req, res) => {
   // エラー時に全アップロードファイルを掃除するためのヘルパー
@@ -279,55 +340,11 @@ router.post('/:id/upload', uploadLimiter, uploadFieldsWith400, async (req, res) 
     // 補助図面（展開図・建具表）の解析。失敗しても平面図の結果は生かす（警告のみ）
     const auxWarnings = [];
     if (elevationFile) {
-      const elevRes = await analyzeAuxDrawing(elevationFile.path, 'elevation').catch(() => null);
+      const planRoomNames = (analysisResult.rooms || []).map((r) => r.name).filter(Boolean);
+      const elevRes = await analyzeAuxDrawing(elevationFile.path, 'elevation', { roomNames: planRoomNames }).catch(() => null);
       if (elevRes?.parsed?.drawing_type === 'elevation' &&
           Array.isArray(elevRes.parsed.rooms) && elevRes.parsed.rooms.length > 0) {
-        analysisResult.elevations = elevRes.parsed;
-
-        // タイル詳細パス: 全体画像では潰れる壁記号・開口を分割拡大で読み取る
-        // （全体パスと並行実行。失敗しても全体パスの結果で続行）
-        const [tiledCodes, tiledOpenings] = await Promise.all([
-          (!analysisResult.wall_finish_codes || analysisResult.wall_finish_codes.length === 0)
-            ? analyzeWallCodesTiled(mainFile.path).catch(() => null)
-            : Promise.resolve(null),
-          analyzeOpeningsTiled(elevationFile.path).catch(() => null),
-        ]);
-        if (tiledCodes && tiledCodes.length > 0) {
-          analysisResult.wall_finish_codes = tiledCodes;
-          console.log('壁記号タイル読取:', JSON.stringify(tiledCodes));
-        }
-        if (tiledOpenings && tiledOpenings.length > 0) {
-          // 部屋名+面でマッチする面に開口をマージ（タイル読取の方が詳細）
-          let mergedCount = 0;
-          for (const op of tiledOpenings) {
-            const room = analysisResult.elevations.rooms.find(
-              (r) => r.name && op.room && (r.name === op.room || r.name.includes(op.room) || op.room.includes(r.name))
-            );
-            if (!room) continue;
-            const face = (room.faces || []).find((f) => f.face === op.face) || (room.faces || [])[0];
-            if (!face) continue;
-            face.openings = face.openings || [];
-            // 同一面に同タイプ・同幅の開口が既にあればスキップ
-            const dup = face.openings.some((o) => o.type === op.type && o.width_mm === op.width_mm);
-            if (!dup) {
-              face.openings.push({ type: op.type, symbol: op.symbol, width_mm: op.width_mm, height_mm: op.height_mm });
-              mergedCount++;
-            }
-          }
-          console.log(`開口タイル読取: ${tiledOpenings.length}件中${mergedCount}件をマージ`);
-        }
-
-        // 平面詳細図から抽出した壁仕上記号を部屋名でマージ（buildupの部位振り分けに使う）
-        if (Array.isArray(analysisResult.wall_finish_codes)) {
-          for (const room of analysisResult.elevations.rooms) {
-            const match = analysisResult.wall_finish_codes.find(
-              (w) => w.room && room.name && (w.room === room.name || room.name.includes(w.room) || w.room.includes(room.name))
-            );
-            if (match && Array.isArray(match.codes)) {
-              room.plan_codes = match.codes;
-            }
-          }
-        }
+        await attachElevationData(analysisResult, elevRes.parsed, mainFile.path, elevationFile.path);
       } else {
         auxWarnings.push({
           field: 'elevation',
@@ -386,6 +403,119 @@ router.post('/:id/upload', uploadLimiter, uploadFieldsWith400, async (req, res) 
     if (!mainFilePersisted) {
       await cleanupFiles(allFiles());
     }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/projects/:id/aux - 補助図面の段階式アップロード（展開図 or 建具表を1枚ずつ）
+// 平面詳細図の解析済みプロジェクトに対して追加解析する。
+// ①の読み取り結果（部屋一覧）をプロンプトに渡すため、一括アップロードより部屋名の対応づけ精度が高い。
+// 建具表は符号単位でマージするため複数ページを順にアップロードできる。
+router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => {
+  const allFiles = () => ['file', 'elevation', 'door_schedule']
+    .map((k) => req.files?.[k]?.[0])
+    .filter(Boolean);
+  const cleanup = async () => {
+    for (const f of allFiles()) await fsPromises.unlink(f.path).catch(() => {});
+  };
+  try {
+    const guardToken = process.env.UPLOAD_GUARD_TOKEN;
+    if (guardToken && req.headers['x-upload-token'] !== guardToken) {
+      await cleanup();
+      return res.status(403).json({ error: 'アップロードが許可されていません' });
+    }
+
+    const prisma = req.app.get('prisma');
+    const project = await findOwnedProject(prisma, req);
+    if (!project) {
+      await cleanup();
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const elevationFile = req.files?.elevation?.[0];
+    const doorScheduleFile = req.files?.door_schedule?.[0];
+    const auxFile = elevationFile || doorScheduleFile;
+    const kind = elevationFile ? 'elevation' : (doorScheduleFile ? 'door_schedule' : null);
+    if (!auxFile || (elevationFile && doorScheduleFile)) {
+      await cleanup();
+      return res.status(400).json({ error: '展開図（elevation）か建具表（door_schedule）をどちらか1枚指定してください' });
+    }
+    if (!(await isValidFileSignature(auxFile.path))) {
+      await cleanup();
+      return res.status(400).json({ error: `ファイルの内容がPDF/PNG/JPGではありません: ${auxFile.originalname}` });
+    }
+
+    const aiReading = await prisma.aiReading.findFirst({
+      where: { projectId: project.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!aiReading) {
+      await cleanup();
+      return res.status(400).json({ error: 'plan_required', message: '先に平面詳細図をアップロードしてください' });
+    }
+    const parsedData = JSON.parse(aiReading.parsedData);
+    const roomNames = (parsedData.rooms || []).map((r) => r.name).filter(Boolean);
+
+    let summary;
+    if (kind === 'elevation') {
+      const elevRes = await analyzeAuxDrawing(auxFile.path, 'elevation', { roomNames }).catch(() => null);
+      if (!(elevRes?.parsed?.drawing_type === 'elevation' &&
+            Array.isArray(elevRes.parsed.rooms) && elevRes.parsed.rooms.length > 0)) {
+        await cleanup();
+        return res.status(400).json({
+          error: 'elevation_unreadable',
+          message: '展開図として読み取れませんでした。展開図のページか確認して再アップロードしてください。',
+        });
+      }
+      // 再アップロード時は前回の展開図を丸ごと置き換える（読み直しのリトライを可能にする）
+      await attachElevationData(parsedData, elevRes.parsed, aiReading.filePath, auxFile.path);
+      summary = {
+        kind,
+        rooms: parsedData.elevations.rooms.length,
+        room_names: parsedData.elevations.rooms.map((r) => r.name),
+        openings: parsedData.elevations.rooms.reduce(
+          (s, r) => s + (r.faces || []).reduce((t, f) => t + (f.openings || []).length, 0), 0),
+        wall_code_rooms: Array.isArray(parsedData.wall_finish_codes) ? parsedData.wall_finish_codes.length : 0,
+      };
+    } else {
+      const doorRes = await analyzeAuxDrawing(auxFile.path, 'door_schedule').catch(() => null);
+      if (!(doorRes?.parsed?.drawing_type === 'door_schedule' && Array.isArray(doorRes.parsed.doors))) {
+        await cleanup();
+        return res.status(400).json({
+          error: 'door_schedule_unreadable',
+          message: '建具表として読み取れませんでした。建具表のページか確認して再アップロードしてください。',
+        });
+      }
+      // 複数ページ対応: 符号単位でマージ（既存符号は寸法が埋まる場合のみ更新）
+      const existing = Array.isArray(parsedData.door_schedule) ? parsedData.door_schedule : [];
+      const bySymbol = new Map(existing.filter((d) => d?.symbol).map((d) => [d.symbol, d]));
+      let added = 0;
+      for (const d of doorRes.parsed.doors) {
+        if (!d?.symbol) continue;
+        const prev = bySymbol.get(d.symbol);
+        if (!prev) {
+          bySymbol.set(d.symbol, d);
+          added++;
+        } else if ((prev.width_mm == null || prev.height_mm == null) &&
+                   (d.width_mm != null || d.height_mm != null)) {
+          bySymbol.set(d.symbol, { ...prev, ...d });
+        }
+      }
+      parsedData.door_schedule = [...bySymbol.values()];
+      summary = { kind, doors_total: parsedData.door_schedule.length, added };
+    }
+
+    await prisma.aiReading.update({
+      where: { id: aiReading.id },
+      data: { parsedData: JSON.stringify(parsedData) },
+    });
+    // 補助図面ファイルはデータ抽出後に削除（AiReadingはfilePathを1つしか持たない）
+    await cleanup();
+
+    res.json({ aux: summary, parsedData });
+  } catch (error) {
+    console.error('Aux upload error:', error);
+    await cleanup();
     res.status(500).json({ error: error.message });
   }
 });
