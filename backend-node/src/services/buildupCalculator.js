@@ -22,10 +22,14 @@ const FLOOR_OPENING_MIN_HEIGHT_MM = 1800;
  * 壁仕上記号のパース。 'D14' -> { base: 'D', mid: 1, surf: 4 }
  * 不正・欠落は null（デフォルト構成で扱う）
  */
+// 図面凡例に存在する下地記号のみ有効（AIの誤読 T14 等を弾く）
+const VALID_BASE_CODES = 'ZCDGHILSOW';
+
 export function parseWallCode(code) {
   if (typeof code !== 'string') return null;
   const m = code.trim().toUpperCase().match(/^([A-Z])([0-9])([0-9])$/);
   if (!m) return null;
+  if (!VALID_BASE_CODES.includes(m[1])) return null;
   return { base: m[1], mid: parseInt(m[2], 10), surf: parseInt(m[3], 10) };
 }
 
@@ -89,12 +93,19 @@ export function computeElevationTakeoff(elevations, doorSchedule = []) {
     let roomWallNet = 0;
 
     // 平面詳細図から抽出した部屋の壁記号（plan_codes）。
-    // その部屋の記号が1種類だけなら、記号未指定の面のデフォルトとして使う
-    // （複数種の場合は面との対応が曖昧なため安全側のG14デフォルトを維持）
+    // その部屋の記号が1種類だけなら、記号未指定の面のデフォルトとして使う。
+    // ただし「PBを張らない/特殊な構成」（C=打放, D6*=コンパネ, Z=ナシ等）を全面に
+    // 適用するのは危険（記号の部屋帰属はタイル境界で誤りうる。トイレ全面コンパネ等の
+    // 誤分類を実測で確認済み）ため、全面適用は標準的なPB構成のみに限定する。
     const planCodes = Array.isArray(room.plan_codes)
       ? [...new Set(room.plan_codes.map((c) => String(c).toUpperCase()).filter((c) => parseWallCode(c)))]
       : [];
-    const roomDefaultCode = planCodes.length === 1 ? parseWallCode(planCodes[0]) : null;
+    let roomDefaultCode = null;
+    if (planCodes.length === 1) {
+      const c = parseWallCode(planCodes[0]);
+      const isStandardPb = c && ['G', 'I', 'H', 'L', 'O', 'W', 'S'].includes(c.base) && [1, 2, 4, 5].includes(c.mid);
+      if (isStandardPb) roomDefaultCode = c;
+    }
 
     for (const face of faces) {
       const w = (face.width_mm || 0) / 1000;

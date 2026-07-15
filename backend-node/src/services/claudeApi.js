@@ -265,7 +265,8 @@ const ELEVATION_PROMPT = `あなたはマンションリノベーション専門
 【展開図の読み方】
 - 1部屋につきA〜D面（4方向の壁）の立面が並んでいる
 - 各面の下に書かれた数字 = その壁の幅(mm)。複数区間に分かれる場合は合計する
-- 左端の数字 = 高さ(mm)。最大値が階高、途中の値（2,400や2,200など）が天井高
+- 左端の数字 = 高さ(mm)。最大値（2,810など）は**階高であり天井高ではない**。
+  ceiling_height_mmには途中の値（居室2,400 / 水回り・玄関・キッチン2,200など）を入れる
 - 左端の表 = 室名と仕上げ（床/巾木/壁/天井/備考）
 - 面の中に描かれた建具（ドア・窓・引戸）は開口。寸法記載があれば転記する
 
@@ -452,6 +453,97 @@ function parseJsonResponse(text) {
  * メイン解析関数
  * Gemini と Claude の両方で解析し、結果をマージ
  */
+// ============================================================
+// タイル解析（詳細読み取りパス）
+// A1図面全体だとAI側で縮小され記号・建具が潰れるため、
+// 分割+拡大したタイルごとに読み、結果を統合する
+// ============================================================
+const PLAN_CODE_TILE_PROMPT = `これはマンションの平面詳細図の一部（拡大タイル）です。
+
+この範囲に写っている「壁仕上記号」をすべて抽出してください。
+- 壁仕上記号 = 壁面の近くにある楕円の中の「英字1文字+数字2桁」（例: D14, C04, I14, L14, G24, D64）
+- 記号がどの部屋の壁に付いているか、周囲の室名表記から判定する
+- 図面右欄の凡例表の中の記号は対象外（実際の壁面に付いたものだけ）
+- WD-2TAのような建具符号、通り芯記号、寸法は対象外
+
+以下のJSONのみを返す（説明不要）:
+{"codes": [{"room": "洋室(1)", "code": "C04"}, {"room": "洋室(1)", "code": "I14"}]}
+このタイルに記号が無ければ {"codes": []} を返す。推測での補完は禁止。`;
+
+const ELEV_OPENING_TILE_PROMPT = `これはマンションの展開図（室内立面図）の一部（拡大タイル）です。
+
+この範囲に写っている立面の「開口（ドア・引戸・折戸・窓）」をすべて抽出してください。
+- 各立面の下のアルファベット（A/B/C/D）が面の記号、左の表の室名がその部屋
+- 立面の中に描かれた建具姿図（ドアの矩形+開き勝手、窓、折戸）が開口
+- 建具符号（WD-2TA等）や寸法（W=800, H=2,175等）が読めれば転記
+- 収納の中の棚・ハンガーパイプ・手摺下地は開口ではない
+
+以下のJSONのみを返す（説明不要）:
+{"openings": [
+  {"room": "洋室(1)", "face": "B", "type": "片開き戸", "symbol": "WD-2TA", "width_mm": 800, "height_mm": 2175}
+]}
+このタイルに開口が無ければ {"openings": []} を返す。寸法が読めない場合はnull（捏造禁止）。`;
+
+/**
+ * タイルを並列でClaude解析し、結果配列を返す（失敗タイルはスキップ）
+ */
+async function analyzeTiles(filePath, prompt, resultKey) {
+  const { makeTiles } = await import('./drawingTiles.js');
+  const tiles = await makeTiles(filePath).catch((e) => {
+    console.error('タイル分割失敗:', e.message);
+    return null;
+  });
+  if (!tiles) return null; // PDF等は分割不可
+
+  const results = await Promise.all(tiles.map((tile) =>
+    analyzeWithClaude(filePath, tile.base64Data, tile.mimeType, prompt)
+      .then((r) => r?.parsed?.[resultKey] || [])
+      .catch(() => [])
+  ));
+  return results.flat();
+}
+
+/**
+ * 平面詳細図から壁仕上記号を抽出（タイル分割・詳細パス）
+ * @returns [{room, codes:[...]}] 形式（wall_finish_codes互換）
+ */
+export async function analyzeWallCodesTiled(filePath) {
+  const raw = await analyzeTiles(filePath, PLAN_CODE_TILE_PROMPT, 'codes');
+  if (!raw || raw.length === 0) return null;
+
+  // 部屋ごとにユニーク化して集約
+  const byRoom = new Map();
+  for (const item of raw) {
+    if (!item?.room || !item?.code) continue;
+    const code = String(item.code).toUpperCase().trim();
+    if (!/^[A-Z][0-9][0-9]$/.test(code)) continue;
+    if (!byRoom.has(item.room)) byRoom.set(item.room, new Set());
+    byRoom.get(item.room).add(code);
+  }
+  return [...byRoom.entries()].map(([room, codes]) => ({ room, codes: [...codes] }));
+}
+
+/**
+ * 展開図から開口を抽出（タイル分割・詳細パス）
+ * @returns [{room, face, type, symbol, width_mm, height_mm}]
+ */
+export async function analyzeOpeningsTiled(filePath) {
+  const raw = await analyzeTiles(filePath, ELEV_OPENING_TILE_PROMPT, 'openings');
+  if (!raw || raw.length === 0) return null;
+
+  // 重複排除（タイルの重なりで同じ開口が2回出る）: room+face+type+width で同一視
+  const seen = new Set();
+  const openings = [];
+  for (const op of raw) {
+    if (!op?.room) continue;
+    const key = `${op.room}|${op.face || ''}|${op.type || ''}|${op.width_mm || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    openings.push(op);
+  }
+  return openings;
+}
+
 /**
  * ファイルをBase64+mimeTypeに読み込む共通ヘルパー
  */

@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { makeLimiter } from '../middleware/rateLimits.js';
 import { optionalAuth, projectScope } from '../middleware/auth.js';
-import { analyzeDrawing, analyzeAuxDrawing } from '../services/claudeApi.js';
+import { analyzeDrawing, analyzeAuxDrawing, analyzeWallCodesTiled, analyzeOpeningsTiled } from '../services/claudeApi.js';
 import { calculateMaterials } from '../services/materialCalculator.js';
 import { computeElevationTakeoff, applyElevationTakeoff, filterKenzaiScope } from '../services/buildupCalculator.js';
 import { deleteProjectDeep } from '../services/projectCleanup.js';
@@ -283,6 +283,40 @@ router.post('/:id/upload', uploadLimiter, uploadFieldsWith400, async (req, res) 
       if (elevRes?.parsed?.drawing_type === 'elevation' &&
           Array.isArray(elevRes.parsed.rooms) && elevRes.parsed.rooms.length > 0) {
         analysisResult.elevations = elevRes.parsed;
+
+        // タイル詳細パス: 全体画像では潰れる壁記号・開口を分割拡大で読み取る
+        // （全体パスと並行実行。失敗しても全体パスの結果で続行）
+        const [tiledCodes, tiledOpenings] = await Promise.all([
+          (!analysisResult.wall_finish_codes || analysisResult.wall_finish_codes.length === 0)
+            ? analyzeWallCodesTiled(mainFile.path).catch(() => null)
+            : Promise.resolve(null),
+          analyzeOpeningsTiled(elevationFile.path).catch(() => null),
+        ]);
+        if (tiledCodes && tiledCodes.length > 0) {
+          analysisResult.wall_finish_codes = tiledCodes;
+          console.log('壁記号タイル読取:', JSON.stringify(tiledCodes));
+        }
+        if (tiledOpenings && tiledOpenings.length > 0) {
+          // 部屋名+面でマッチする面に開口をマージ（タイル読取の方が詳細）
+          let mergedCount = 0;
+          for (const op of tiledOpenings) {
+            const room = analysisResult.elevations.rooms.find(
+              (r) => r.name && op.room && (r.name === op.room || r.name.includes(op.room) || op.room.includes(r.name))
+            );
+            if (!room) continue;
+            const face = (room.faces || []).find((f) => f.face === op.face) || (room.faces || [])[0];
+            if (!face) continue;
+            face.openings = face.openings || [];
+            // 同一面に同タイプ・同幅の開口が既にあればスキップ
+            const dup = face.openings.some((o) => o.type === op.type && o.width_mm === op.width_mm);
+            if (!dup) {
+              face.openings.push({ type: op.type, symbol: op.symbol, width_mm: op.width_mm, height_mm: op.height_mm });
+              mergedCount++;
+            }
+          }
+          console.log(`開口タイル読取: ${tiledOpenings.length}件中${mergedCount}件をマージ`);
+        }
+
         // 平面詳細図から抽出した壁仕上記号を部屋名でマージ（buildupの部位振り分けに使う）
         if (Array.isArray(analysisResult.wall_finish_codes)) {
           for (const room of analysisResult.elevations.rooms) {
