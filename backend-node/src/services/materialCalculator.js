@@ -138,12 +138,20 @@ const UNIT_PRICES = {
   '床左官補修': 20000,
 
   // === 下地材 ===
-  '石膏ボード t-9.5 3×6': 450,        // 枚
-  '耐水石膏ボード t-9.5 3×6': 550,    // 枚
-  'キッチンパネル': 8500,              // 枚
-  'キッチンパネル見切り': 1200,        // 箇所
-  'グラスウール充填': 1800,            // ㎡
-  '下地補強合板': 850,                 // 枚
+  '壁 石膏ボード': 450,                // 枚
+  '壁 耐水石膏ボード': 550,            // 枚
+  '天井 石膏ボード': 450,              // 枚
+  '下り天井 石膏ボード': 450,          // 枚
+  '一部界壁 石膏ボード': 450,          // 枚
+  '一部界壁 耐水石膏ボード': 550,      // 枚
+  'EV廻り壁 石膏ボード': 450,          // 枚
+  'マルチクロゼット・WIC・CLRC面 石膏ボード': 450, // 枚
+  'キッチンパネル': 8500,              // 枚（設備カテゴリの標準行）
+  '壁 キッチンパネル': 8500,           // 枚
+  '壁 キッチンパネル見切り': 1200,     // 箇所
+  '間仕切 グラスウール充填': 1800,     // ㎡
+  'EV廻り壁 グラスウール充填': 1800,   // ㎡
+  'カーテンレール・手摺・タオル掛 下地補強合板': 850, // 枚
   'エアコン下地補強合板': 850,         // 枚
   '壁出隅面木': 450,                   // 箇所
   '垂木 LVL 30×40 L3000': 3500,       // 束
@@ -739,8 +747,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   wallPb95Sheets = Math.min(Math.max(wallPb95Sheets, 30), 90);
   materials.push({
     category: '下地材',
-    name: '石膏ボード t-9.5 3×6',
-    spec: '吉野石膏 壁用 910×1820mm',
+    name: '壁 石膏ボード',
+    spec: "t-9.5（3'×6'）",
     unit: '枚',
     quantity: wallPb95Sheets,
     calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${wallPbCoeff}枚/㎡ × 0.6（リノベ係数）`
@@ -752,8 +760,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   wallPbWaterSheets = Math.min(Math.max(wallPbWaterSheets, 2), 7);
   materials.push({
     category: '下地材',
-    name: '耐水石膏ボード t-9.5 3×6',
-    spec: '吉野石膏 耐水 水回り壁用 910×1820mm',
+    name: '壁 耐水石膏ボード',
+    spec: "耐水t-9.5（3'×6'）",
     unit: '枚',
     quantity: wallPbWaterSheets,
     calculation: `水回り面積 ${cfArea.toFixed(1)}㎡から算出`
@@ -767,8 +775,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   ceilingPb95Sheets = Math.min(Math.max(ceilingPb95Sheets, 20), 50);
   materials.push({
     category: '下地材',
-    name: '石膏ボード t-9.5 3×6',
-    spec: '吉野石膏 天井用 910×1820mm',
+    name: '天井 石膏ボード',
+    spec: "t-9.5（3'×6'）",
     unit: '枚',
     quantity: ceilingPb95Sheets,
     calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${PB_SHEET_SIZE_3x6.toFixed(2)}㎡ × ${LOSS_RATE_5}`
@@ -778,8 +786,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 260枚/67戸 = 約4枚/戸
   materials.push({
     category: '下地材',
-    name: '石膏ボード t-9.5 3×6',
-    spec: '吉野石膏 下り天井用 910×1820mm',
+    name: '下り天井 石膏ボード',
+    spec: "t-9.5（3'×6'）",
     unit: '枚',
     quantity: 4,
     calculation: '標準4枚（実績値）'
@@ -789,8 +797,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 200枚/67戸 = 約3枚/戸
   materials.push({
     category: '下地材',
-    name: '一部界壁石膏ボード t-9.5',
-    spec: '吉野石膏 キッチンパネル下 910×1820mm',
+    name: '一部界壁 石膏ボード',
+    spec: "t-9.5（3'×6'）キッチンパネル貼下のみ",
     unit: '枚',
     quantity: 3,
     calculation: '標準3枚（67戸実績）'
@@ -800,8 +808,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 50枚/67戸 = 約1枚/戸
   materials.push({
     category: '下地材',
-    name: '一部界壁耐水石膏ボード t-9.5',
-    spec: '吉野石膏 耐水 キッチンパネル下 910×1820mm',
+    name: '一部界壁 耐水石膏ボード',
+    spec: "耐水t-9.5（3'×6'）キッチンパネル貼下のみ",
     unit: '枚',
     quantity: 1,
     calculation: '標準1枚（67戸実績）'
@@ -811,8 +819,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 150枚/67戸 = 約2.2枚/戸
   materials.push({
     category: '下地材',
-    name: 'EV廻り壁石膏ボード t-9.5',
-    spec: '吉野石膏 910×1820mm',
+    name: 'EV廻り壁 石膏ボード',
+    spec: "t-9.5（3'×6'）",
     unit: '枚',
     quantity: 3,
     calculation: '標準3枚（67戸実績2.2枚/戸切上げ）'
@@ -822,8 +830,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 340枚/67戸 = 約5.1枚/戸
   materials.push({
     category: '下地材',
-    name: '収納面石膏ボード t-9.5',
-    spec: '吉野石膏 マルチクロゼット・WIC・CLRC面 910×1820mm',
+    name: 'マルチクロゼット・WIC・CLRC面 石膏ボード',
+    spec: "t-9.5（3'×6'）",
     unit: '枚',
     quantity: 5,
     calculation: '標準5枚（67戸実績）'
@@ -834,8 +842,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // ※ 2026-07 アイカセラール → キョーライト アーバンSマリアパールへ仕様変更
   materials.push({
     category: '下地材',
-    name: 'キッチンパネル',
-    spec: 'キョーライト アーバンSマリアパール t-3.0 3×8',
+    name: '壁 キッチンパネル',
+    spec: "t-3.0（3'×8'）キョーライト アーバンSマリアパール",
     unit: '枚',
     quantity: 3,
     calculation: '標準3枚（実績値）'
@@ -845,8 +853,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 134箇所/67戸 = 約2箇所/戸
   materials.push({
     category: '下地材',
-    name: 'キッチンパネル見切り',
-    spec: 'ABSジョイナー H=2250',
+    name: '壁 キッチンパネル見切り',
+    spec: "樹脂製 アイカ：ABSジョイナー H=2250",
     unit: '箇所',
     quantity: 2,
     calculation: '標準2箇所（実績値）'
@@ -860,8 +868,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   glasswoolArea = Math.min(Math.max(glasswoolArea, 5), 15);
   materials.push({
     category: '下地材',
-    name: 'グラスウール充填',
-    spec: 't-50 24kg/m3 間仕切用',
+    name: '間仕切 グラスウール充填',
+    spec: "t-50 24kg/m3",
     unit: '㎡',
     quantity: glasswoolArea,
     calculation: `間仕切壁 ${partitionWallLength.toFixed(1)}m × ${ceilingHeight.toFixed(1)}m × ${GLASSWOOL_COVERAGE}`
@@ -873,8 +881,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 390枚/67戸 = 約6枚/戸
   materials.push({
     category: '下地材',
-    name: '下地補強合板',
-    spec: 't-9.0 3×6 カーテンレール・手摺・タオル掛用',
+    name: 'カーテンレール・手摺・タオル掛 下地補強合板',
+    spec: "t-9.0（3'×6'）",
     unit: '枚',
     quantity: 6,
     calculation: '標準6枚（実績値）'
@@ -887,7 +895,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   materials.push({
     category: '下地材',
     name: 'エアコン下地補強合板',
-    spec: 't-9.0 3×6',
+    spec: "t-9.0（3'×6'）",
     unit: '枚',
     quantity: airconBoardCount,
     calculation: `部屋数 ${roomCount}室 × ${AIRCON_PER_ROOM}`
@@ -972,8 +980,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 140㎡/67戸 = 約2.1㎡/戸（EVに面する住戸はより多い。overrides.ev_insulation='あり'で9㎡）
   materials.push({
     category: '下地材',
-    name: 'EV廻り壁グラスウール充填',
-    spec: 't-50 PBt9.5+木胴縁',
+    name: 'EV廻り壁 グラスウール充填',
+    spec: "t-50 24kg/m3",
     unit: '㎡',
     quantity: overrides.ev_insulation === 'あり' ? 9 : 2,
     calculation: overrides.ev_insulation === 'あり' ? 'EV面あり 9㎡（実績値）' : '標準2㎡（67戸実績）'

@@ -172,8 +172,8 @@
           <thead>
             <tr class="border-b border-dark-500 text-left">
               <th class="py-3 px-4 text-sm font-medium text-gray-400">カテゴリ</th>
-              <th class="py-3 px-4 text-sm font-medium text-gray-400">資材名</th>
-              <th class="py-3 px-4 text-sm font-medium text-gray-400">規格</th>
+              <th class="py-3 px-4 text-sm font-medium text-gray-400">名称</th>
+              <th class="py-3 px-4 text-sm font-medium text-gray-400">摘要</th>
               <th class="py-3 px-4 text-sm font-medium text-gray-400 text-right">数量</th>
               <th class="py-3 px-4 text-sm font-medium text-gray-400">単位</th>
               <th class="py-3 px-4 text-sm font-medium text-gray-400 text-right">単価</th>
@@ -250,8 +250,8 @@
       </p>
       <div v-for="(row, i) in addedRows" :key="i" class="grid md:grid-cols-12 gap-2 items-center mb-2">
         <input v-model="row.category" placeholder="カテゴリ" class="input text-sm py-1 px-2 md:col-span-2" />
-        <input v-model="row.name" placeholder="資材名 *" class="input text-sm py-1 px-2 md:col-span-3" />
-        <input v-model="row.spec" placeholder="規格" class="input text-sm py-1 px-2 md:col-span-2" />
+        <input v-model="row.name" placeholder="名称 *" class="input text-sm py-1 px-2 md:col-span-3" />
+        <input v-model="row.spec" placeholder="摘要" class="input text-sm py-1 px-2 md:col-span-2" />
         <input v-model.number="row.quantity" type="number" min="0" step="0.1" placeholder="数量" class="input text-sm py-1 px-2 text-right md:col-span-1" />
         <input v-model="row.unit" placeholder="単位" class="input text-sm py-1 px-2 md:col-span-1" />
         <input v-model.number="row.unitPrice" type="number" min="0" step="1" placeholder="単価" class="input text-sm py-1 px-2 text-right md:col-span-2" />

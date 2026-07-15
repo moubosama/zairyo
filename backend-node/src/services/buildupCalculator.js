@@ -226,14 +226,14 @@ export function applyElevationTakeoff(result, takeoff) {
   const wallPbSheets = Math.ceil(takeoff.wall_pb_sqm / PB_SQM_PER_SHEET);
   const waterPbSheets = Math.ceil(takeoff.waterproof_pb_sqm / PB_SQM_PER_SHEET);
 
-  set((m) => m.name.includes('石膏ボード') && !m.name.includes('耐水') && String(m.spec).includes('壁用'),
+  set((m) => m.name === '壁 石膏ボード',
     wallPbSheets, `壁PB ${takeoff.wall_pb_sqm}㎡ ÷ ${PB_SQM_PER_SHEET}㎡/枚`);
-  // ※ '一部界壁耐水石膏ボード' への誤マッチ（二重計上）を防ぐため一部界壁を除外
-  set((m) => m.name.includes('耐水石膏ボード') && !m.name.includes('一部界壁'),
+  set((m) => m.name === '壁 耐水石膏ボード',
     waterPbSheets, `耐水PB ${takeoff.waterproof_pb_sqm}㎡ ÷ ${PB_SQM_PER_SHEET}㎡/枚`);
   set((m) => m.name.includes('遮音壁PB'),
     takeoff.sound_wall_pb_sqm, `遮音壁面 Σ幅×高さ−開口`);
-  set((m) => m.name.includes('グラスウール充填'),
+  // ※ 'EV廻り壁 グラスウール充填' への誤マッチを防ぐため完全一致
+  set((m) => m.name === '間仕切 グラスウール充填',
     Math.round(takeoff.gw_sqm), `GW充填面 Σ幅×高さ−開口`);
   set((m) => m.name.includes('壁クロス'),
     Math.ceil(takeoff.cloth_sqm), `クロス面 Σ幅×高さ−開口`);

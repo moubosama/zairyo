@@ -728,8 +728,8 @@ router.get('/:id/export', async (req, res) => {
     // ヘッダー
     worksheet.columns = [
       { header: 'カテゴリ', key: 'category', width: 15 },
-      { header: '資材名', key: 'name', width: 30 },
-      { header: '仕様', key: 'spec', width: 35 },
+      { header: '名称', key: 'name', width: 30 },
+      { header: '摘要', key: 'spec', width: 35 },
       { header: '数量', key: 'quantity', width: 10 },
       { header: '単位', key: 'unit', width: 10 },
       { header: '計算根拠', key: 'calculation', width: 40 }
