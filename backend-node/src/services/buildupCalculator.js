@@ -42,18 +42,163 @@ export function parseWallCode(code) {
   return { base: m[1], mid: parseInt(m[2], 10), surf: parseInt(m[3], 10) };
 }
 
+// ============================================================
+// 開口×建具表マッチング層
+// 目的: タイル読取で増えた開口（寸法null多数）に建具表の実寸を補完する
+// 優先順位: ①符号の正規化マッチ（確定） > ②type+寸法帯+取付位置の推定マッチ
+// 安全側の原則:
+//   - 推定マッチは matched_by:'inferred' を付け、符号確定（'symbol'）と区別する
+//   - 図面から転記済みの寸法は上書きしない（補完のみ）
+//   - 候補が複数あり値が矛盾する寸法は補完しない（null維持=既存のfallback高さで控除）
+//   - 窓は推定対象外（住戸・面ごとにサイズ差が大きく誤マッチの害が大）
+//   - 玄関ドア・SD系鋼製建具も推定対象外（WD建具表への誤マッチ防止。符号マッチは可）
+// ============================================================
+
+// 建具表と図面読取の寸法ズレ許容。幅30mm=折戸803を800と読む等の作図/読取差、
+// 高さ15mm=2075と2080を別建具として区別できる幅（WD-8A/WD-2A実在寸法より）
+const OPENING_WIDTH_TOL_MM = 30;
+const OPENING_HEIGHT_TOL_MM = 15;
+
+/**
+ * 建具符号の正規化。'WD-2A' / 'WD2A' / 'wd-2a' / 'ＷＤ－２Ａ' / 長音・全角ハイフン → 'WD2A'
+ */
+export function normalizeDoorSymbol(sym) {
+  if (sym == null) return null;
+  const s = String(sym)
+    .replace(/[ａ-ｚＡ-Ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .toUpperCase()
+    .replace(/[\s　]/g, '')
+    .replace(/[-‐‑–—―ー−－_]/g, ''); // ハイフン類（全角・長音・ダッシュ）を除去
+  return s || null;
+}
+
+/**
+ * 開口タイプの分類（推定マッチ用）。片開き戸/片引き戸/引違い戸/折戸N/窓 等に正規化
+ * 分類できない表記（「開口」等）は null = 推定マッチしない
+ */
+function openingTypeClass(t) {
+  const s = String(t || '').replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  if (!s) return null;
+  if (/窓|サッシ|ガラリ|AW/.test(s)) return '窓';
+  const fold = s.match(/([0-9]+)\s*枚\s*折/);
+  if (fold) return `折戸${fold[1]}`;
+  if (s.includes('折戸') || s.includes('折れ戸')) return '折戸';
+  if (s.includes('引違')) return '引違い戸';
+  if (s.includes('引込')) return '引込み戸';
+  if (/両開/.test(s)) return '両開き戸';
+  if (/片引|引戸|引き戸/.test(s)) return '片引き戸';
+  if (/片開|開き戸|開戸|ドア/.test(s)) return '開き戸';
+  return null;
+}
+
+/** 「折戸」（枚数不明）と「折戸2」等は互換とみなす */
+function classCompatible(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.startsWith('折戸') && b.startsWith('折戸') && (a === '折戸' || b === '折戸');
+}
+
+/**
+ * 建具表から検索構造を作る
+ * - bySymbol: 正規化符号 → 建具。同符号が複数ページ等で重複した場合、寸法一致なら1件扱い、
+ *   矛盾したら null を立てて符号マッチ不可にする（どちらの寸法か確定できないため安全側）
+ * - doors: 全建具（符号なし行も推定マッチの候補に含める）
+ */
+export function buildDoorLookup(doorSchedule) {
+  const bySymbol = new Map();
+  const doors = [];
+  for (const d of doorSchedule || []) {
+    if (!d) continue;
+    doors.push(d);
+    const key = normalizeDoorSymbol(d.symbol);
+    if (!key) continue;
+    if (!bySymbol.has(key)) {
+      bySymbol.set(key, d);
+    } else {
+      const prev = bySymbol.get(key);
+      if (prev && !(prev.width_mm === d.width_mm && prev.height_mm === d.height_mm)) {
+        bySymbol.set(key, null); // 同符号で寸法矛盾 → マッチ失敗として扱う
+      }
+    }
+  }
+  return { bySymbol, doors };
+}
+
 /**
  * 建具表から開口寸法を補完する
- * openingにwidth/heightが無く、symbolがある場合に建具表の実寸を使う
+ * @param opening { type?, symbol?, width_mm?, height_mm?, room? }
+ * @param doorLookup buildDoorLookup() の戻り値
+ * @param roomName 開口が属する部屋名（openingにroomが無い場合の取付位置マッチ用）
+ * @returns 補完済みコピー。補完・確定マッチ時は matched_by: 'symbol'|'inferred' が付く
  */
-function resolveOpening(opening, doorIndex) {
+// 推定マッチの対象外とする建具タイプ（確定符号マッチは可）
+// 玄関ドア・SD系鋼製建具はWD建具表のみの典型運用で内部ドア（WD-1TA 850×2175等）に
+// 誤マッチし、fallback高さ2.0mより悪化する（玄関SD-101A真値は850×1900）ため推定しない
+const INFERENCE_EXCLUDE_RE = /玄関|SD|鋼製/;
+
+export function resolveOpening(opening, doorLookup, roomName = null) {
   const resolved = { ...opening };
-  if (opening.symbol && doorIndex.has(String(opening.symbol).toUpperCase())) {
-    const d = doorIndex.get(String(opening.symbol).toUpperCase());
-    if (!resolved.width_mm) resolved.width_mm = d.width_mm;
-    if (!resolved.height_mm) resolved.height_mm = d.height_mm;
-    if (!resolved.type) resolved.type = d.name;
+  delete resolved.matched_by; // 再解決時に古い印を引き継がない
+  const lookup = doorLookup || { bySymbol: new Map(), doors: [] };
+
+  // ① 符号の正規化マッチ（確定）
+  const key = normalizeDoorSymbol(opening.symbol);
+  const hit = key ? lookup.bySymbol.get(key) : undefined;
+  if (hit) {
+    if (!resolved.width_mm) resolved.width_mm = hit.width_mm;
+    if (!resolved.height_mm) resolved.height_mm = hit.height_mm;
+    if (!resolved.type) resolved.type = hit.name;
+    resolved.matched_by = 'symbol';
+    return resolved;
   }
+
+  // ② 推定マッチ（寸法が欠けている開口のみ。窓・玄関/SD/鋼製・分類不能タイプは対象外）
+  if (resolved.width_mm && resolved.height_mm) return resolved;
+  if (INFERENCE_EXCLUDE_RE.test(String(resolved.type || ''))) return resolved;
+  const cls = openingTypeClass(resolved.type);
+  if (!cls || cls === '窓' || isWindow(resolved)) return resolved;
+
+  let candidates = lookup.doors.filter((d) => d && classCompatible(openingTypeClass(d.name), cls));
+  // 取付位置照合（候補1件でも適用）:
+  //   - 対応する候補があればそちらに絞る
+  //   - 全候補が取付位置を持ち、どれも開口の部屋と対応しない → 推定しない（安全側）
+  //   - 取付位置未記載の候補は対象に残す（建具表のlocation欠落で推定を殺さない）
+  const rn = normalizeRoomName(resolved.room || roomName);
+  if (rn && candidates.length > 0) {
+    const locOf = (d) => normalizeRoomName(d.location);
+    const byLoc = candidates.filter((d) => {
+      const ln = locOf(d);
+      return ln && (ln.includes(rn) || rn.includes(ln));
+    });
+    if (byLoc.length > 0) candidates = byLoc;
+    else if (candidates.every((d) => locOf(d))) candidates = [];
+  }
+  // 読めている寸法で絞る
+  if (resolved.width_mm) {
+    candidates = candidates.filter((d) => d.width_mm != null &&
+      Math.abs(d.width_mm - resolved.width_mm) <= OPENING_WIDTH_TOL_MM);
+  }
+  if (resolved.height_mm) {
+    candidates = candidates.filter((d) => d.height_mm != null &&
+      Math.abs(d.height_mm - resolved.height_mm) <= OPENING_HEIGHT_TOL_MM);
+  }
+  if (candidates.length === 0) return resolved;
+
+  // 候補間で値が一意な寸法だけ採用（矛盾する寸法は補完しない）
+  const uniq = (vals) => {
+    const set = new Set(vals.filter((v) => v != null));
+    return set.size === 1 ? [...set][0] : null;
+  };
+  let filled = false;
+  if (!resolved.width_mm) {
+    const w = uniq(candidates.map((d) => d.width_mm));
+    if (w) { resolved.width_mm = w; filled = true; }
+  }
+  if (!resolved.height_mm) {
+    const h = uniq(candidates.map((d) => d.height_mm));
+    if (h) { resolved.height_mm = h; filled = true; }
+  }
+  if (filled) resolved.matched_by = 'inferred';
   return resolved;
 }
 
@@ -84,11 +229,7 @@ function normalizeRoomName(name) {
  */
 export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}) {
   const rooms = elevations?.rooms || [];
-  const doorIndex = new Map(
-    (doorSchedule || [])
-      .filter((d) => d.symbol)
-      .map((d) => [String(d.symbol).toUpperCase(), d])
-  );
+  const doorLookup = buildDoorLookup(doorSchedule);
 
   const t = {
     // 面積系（㎡）
@@ -110,6 +251,9 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     skirting_m: { 木製: 0, ソフト: 0, 樹脂: 0 },
     // 参考
     opening_area_sqm: 0,
+    // 開口×建具表マッチの内訳。symbol=符号確定 / inferred=推定補完 /
+    // unresolved=解決後も寸法欠けのままの開口数（符号マッチしたが建具表行に寸法が無い場合も含む）
+    opening_match: { symbol: 0, inferred: 0, unresolved: 0 },
     rooms: [],
   };
 
@@ -138,35 +282,43 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     let roomDefaultCode = null;
     if (planCodes.length === 1) {
       const c = parseWallCode(planCodes[0]);
-      const isStandardPb = c && ['G', 'I', 'H', 'L', 'O', 'W', 'S'].includes(c.base) && [1, 2, 4, 5].includes(c.mid);
+      // 全面適用は「通常PB（中間1/4）」のみ。耐水（2/5）はUB隣接の特定面にしか
+      // 張らないため全面適用しない（トイレ全面耐水などの過大計上を防ぐ。面単位の
+      // 割付はplan_placementsの寸法マッチで行う）
+      const isStandardPb = c && ['G', 'I', 'H', 'L', 'O', 'W', 'S'].includes(c.base) && [1, 4].includes(c.mid);
       if (isStandardPb) roomDefaultCode = c;
     }
 
-    // 平面図タイル読取の「記号＋長辺/短辺」を面に割り付ける。
+    // 平面図タイル読取の「記号＋壁寸法mm」を面に割り付ける。
     // 展開図のA〜D面の向きは作図者次第でルールが無い（2026-07-14打ち合わせで確認）ため
-    // 方角ではなく面幅の長短でマッチさせる。面積の計算には「対面のどちらか」までの
-    // 特定は不要（同じ幅の対面なら面積が同じ）なので、該当クラスの未割付面に1つずつ充てる。
+    // 方角ではなく「平面図の壁寸法 ≒ 展開図の面幅」の数値マッチで面を特定する
+    // （AIの転記のみで成立し、長辺/短辺のような幾何判断をさせない）。
+    // 面積の計算には「対面のどちらか」までの特定は不要（同じ幅の対面なら面積が同じ）。
     // これでC04（打放・PBなし）等の面がデフォルトPB扱いで過大計上されるのを防ぐ。
+    const PLACEMENT_TOL_MM = 80; // 平面図の壁寸法と展開図の面幅の許容差（芯/内法の差を吸収）
     const placementByFace = new Map(); // faceIndex -> parsed code
-    if (Array.isArray(room.plan_placements) && faces.length >= 2) {
-      const widths = faces.map((f) => f.width_mm || 0).filter((w) => w > 0);
-      const wMax = Math.max(...widths);
-      const wMin = Math.min(...widths);
-      if (wMax > wMin * 1.05) { // ほぼ正方形の部屋は長短の区別が付かないため割付しない
-        const mid = (wMax + wMin) / 2;
-        const classOf = (w) => (w >= mid ? '長辺' : '短辺');
-        const used = new Set();
-        for (const pl of room.plan_placements) {
-          const c = parseWallCode(pl?.code);
-          if (!c || (pl.wall !== '長辺' && pl.wall !== '短辺')) continue;
-          const idx = faces.findIndex((f, i) => !used.has(i) &&
-            !parseWallCode(f.wall_code) && // 展開図で読めた面記号は実測として優先
-            (f.width_mm || 0) > 0 && classOf(f.width_mm) === pl.wall);
-          if (idx >= 0) {
-            used.add(idx);
-            placementByFace.set(idx, c);
-          }
+    if (Array.isArray(room.plan_placements) && faces.length >= 1) {
+      const used = new Set();
+      // 寸法差が小さい割付から確定させる（曖昧なマッチが確実なマッチの面を奪わないように）
+      const cands = [];
+      for (const pl of room.plan_placements) {
+        const c = parseWallCode(pl?.code);
+        const len = pl?.wall_length_mm;
+        if (!c || !Number.isFinite(len) || len <= 0) continue;
+        for (let i = 0; i < faces.length; i++) {
+          const fw = faces[i].width_mm || 0;
+          if (fw <= 0 || parseWallCode(faces[i].wall_code)) continue; // 展開図の面記号は実測として優先
+          const d = Math.abs(fw - len);
+          if (d <= PLACEMENT_TOL_MM) cands.push({ pl, c, i, d });
         }
+      }
+      cands.sort((a, b) => a.d - b.d);
+      const usedPl = new Set();
+      for (const cand of cands) {
+        if (used.has(cand.i) || usedPl.has(cand.pl)) continue;
+        used.add(cand.i);
+        usedPl.add(cand.pl);
+        placementByFace.set(cand.i, cand.c);
       }
     }
 
@@ -181,7 +333,15 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       let openingArea = 0;
       let openingAreaStud = 0; // 下地用（下地高=CH+370まで見るので面の仕上げ高でキャップしない）
       for (const raw of face.openings || []) {
-        const op = resolveOpening(raw, doorIndex);
+        const op = resolveOpening(raw, doorLookup, room.name);
+        // マッチ結果の印を元データにも残す（デバッグ・要確認表示用の観測点。寸法は書き戻さない）
+        // 再計算でマッチ結果が変わった場合に備え、マッチしなかったら古い印は消す
+        if (op.matched_by) raw.matched_by = op.matched_by;
+        else delete raw.matched_by;
+        if (op.matched_by === 'symbol') t.opening_match.symbol++;
+        else if (op.matched_by === 'inferred') t.opening_match.inferred++;
+        // 寸法欠けは符号マッチの成否と独立に数える（符号は合ったが建具表行に寸法が無い場合も含む）
+        if (!op.width_mm || !op.height_mm) t.opening_match.unresolved++;
         const ow = (op.width_mm || 0) / 1000;
         const oh = (op.height_mm || 0) / 1000;
         if (ow <= 0) continue;
