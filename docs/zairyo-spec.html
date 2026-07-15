@@ -398,9 +398,9 @@
     </div>
     <dl class="titleblock-meta">
       <div><dt>利用形態</dt><dd>Webブラウザ（インストール不要）</dd></div>
-      <div><dt>対象図面</dt><dd>計画平面図・平面詳細図</dd></div>
+      <div><dt>対象図面</dt><dd>平面詳細図＋展開図＋建具表</dd></div>
       <div><dt>出力</dt><dd>資材リスト・Excel</dd></div>
-      <div><dt>算出項目</dt><dd class="num-cell">19分野 / 約130項目</dd></div>
+      <div><dt>現在の表示範囲</dt><dd class="num-cell">建材14項目（開発中）</dd></div>
     </dl>
   </header>
 
@@ -412,71 +412,78 @@
           <tr><th>できること</th><th>内容</th></tr>
         </thead>
         <tbody>
-          <tr><td><strong>図面の自動読み取り</strong></td><td>部屋の面積・間取り・天井高・建具・設備を図面から読み取ります</td></tr>
-          <tr><td><strong>資材数量の自動計算</strong></td><td>石膏ボード、フローリング、クロス、巾木など19分野・約130項目を算出します</td></tr>
+          <tr><td><strong>図面の自動読み取り</strong></td><td>部屋の面積・間取り・天井高・壁の仕上記号・建具を図面から読み取ります</td></tr>
+          <tr><td><strong>3図面の段階式解析</strong></td><td>1枚ずつ解析し、平面図の読み取り結果（部屋一覧）を次の図面の解析に引き継いで精度を高めます</td></tr>
+          <tr><td><strong>資材数量の自動計算</strong></td><td>石膏ボード・グラスウール・キッチンパネルなどの建材数量を、プロの拾い出しと同じ方式で算出します</td></tr>
           <tr><td><strong>概算金額の算出</strong></td><td>登録済みの単価をかけ合わせ、合計金額の目安を表示します</td></tr>
           <tr><td><strong>数量の手直し</strong></td><td>AIの読み取りが不安なときは、画面上で数量や単価を直せます</td></tr>
-          <tr><td><strong>独自項目の追加</strong></td><td>特注造作など、自動計算にない項目を見積に足せます</td></tr>
+          <tr><td><strong>独自項目の追加</strong></td><td>自動計算にない項目を見積に足せます</td></tr>
           <tr><td><strong>Excel出力</strong></td><td>資材リストをExcelファイルでダウンロードできます</td></tr>
           <tr><td><strong>過去の見積の保存</strong></td><td>ログインすると、現場ごとに見積を保存し、あとから見返せます</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h3>算出できる資材の分野</h3>
+    <h3>現在表示している資材（建材14項目）</h3>
+    <p>見積明細書と同じ「名称／摘要」の表記で表示します。摘要の「(3'×6')」は3尺×6尺＝910×1820mmの板（サブロク判）を表します。</p>
     <div class="chips">
-      <span class="chip">解体工事</span><span class="chip">仮設工事</span><span class="chip">左官工事</span>
-      <span class="chip">大工工事</span><span class="chip">下地材</span><span class="chip">床材</span>
-      <span class="chip">造作材</span><span class="chip">仕上材</span><span class="chip">建具</span>
-      <span class="chip">家具</span><span class="chip">設備</span><span class="chip">設備工事</span>
-      <span class="chip">ガス工事</span><span class="chip">電気工事</span><span class="chip">電材</span>
-      <span class="chip">サッシ工事</span><span class="chip">内装材</span><span class="chip">現場管理</span>
-      <span class="chip">諸経費</span>
+      <span class="chip">壁 石膏ボード</span><span class="chip">壁 耐水石膏ボード</span>
+      <span class="chip">一部界壁 石膏ボード</span><span class="chip">一部界壁 耐水石膏ボード</span>
+      <span class="chip">EV廻り壁 石膏ボード</span><span class="chip">マルチクロゼット・WIC・CLRC面 石膏ボード</span>
+      <span class="chip">天井 石膏ボード</span><span class="chip">下り天井 石膏ボード</span>
+      <span class="chip">壁 キッチンパネル</span><span class="chip">壁 キッチンパネル見切り</span>
+      <span class="chip">間仕切 グラスウール充填</span><span class="chip">EV廻り壁 グラスウール充填</span>
+      <span class="chip">カーテンレール・手摺・タオル掛 下地補強合板</span><span class="chip">エアコン下地補強合板</span>
     </div>
   </section>
 
   <section>
-    <h2><span class="num">02</span>使い方の流れ</h2>
+    <h2><span class="num">02</span>使い方の流れ（段階式アップロード）</h2>
 
     <div class="steps">
       <div class="step">
-        <div class="step-head"><span class="step-n">STEP 1</span><span class="step-title">図面をアップロードする</span></div>
+        <div class="step-head"><span class="step-n">STEP 1</span><span class="step-title">平面詳細図を解析する（必須）</span></div>
         <ul>
-          <li>現場名を入力します（例：○○マンション101号室）</li>
-          <li>図面ファイルをドラッグ＆ドロップ、またはクリックして選択します</li>
+          <li>現場名を入力します（例：○○マンション Aタイプ）</li>
           <li><strong>専有面積がわかる場合は入力します</strong>（任意ですが、入力すると精度が上がります）</li>
-          <li>「資材リストを計算」を押します</li>
+          <li>平面詳細図をドラッグ＆ドロップし、「解析する」を押します</li>
+          <li>解析が終わると、読み取った間取り・部屋の一覧が表示されます</li>
         </ul>
-        <p><small>解析には30秒〜1分ほどかかります。画面に進行状況が表示されます。</small></p>
+        <p><small>解析には30秒〜1分ほどかかります。この時点で「資材リストを計算」に進むこともできます。</small></p>
       </div>
 
       <div class="step">
-        <div class="step-head"><span class="step-n">STEP 2</span><span class="step-title">資材リストを確認する</span></div>
+        <div class="step-head"><span class="step-n">STEP 2</span><span class="step-title">展開図を解析する（任意・推奨）</span></div>
+        <p>展開図を選ぶと自動で解析が始まり、各部屋のA〜D面（4方向の壁）の幅×高さを読み取って、壁の面積・巾木の長さが<strong>実測値</strong>に置き換わります。</p>
+        <ul>
+          <li>STEP 1の部屋一覧をAIに引き継ぐため、部屋名の対応づけが正確になります</li>
+          <li>大きな図面でつぶれがちな壁記号・建具は、図面を分割拡大して読み直す詳細パスが自動で走ります</li>
+          <li>読み取り結果がその場で表示され、失敗したら別のページで読み直せます</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <div class="step-head"><span class="step-n">STEP 3</span><span class="step-title">建具表を解析する（任意・複数ページ可）</span></div>
+        <p>建具表を選ぶと自動で解析が始まり、ドア・窓の実寸が壁面積の開口控除に使われます。スチール建具・アルミ建具・木製建具でページが分かれていても、「次のページを追加」で順にアップロードすれば符号単位で合算されます。</p>
+      </div>
+
+      <div class="step">
+        <div class="step-head"><span class="step-n">STEP 4</span><span class="step-title">資材リストを確認・手直しする</span></div>
         <p>概算合計金額、壁面積・天井面積・床面積、そして<strong>要確認項目</strong>が表示されます。</p>
+        <ul>
+          <li><strong>計算条件の調整</strong>：間仕切壁の長さ・天井高を入れ直して再計算できます</li>
+          <li><strong>数量・単価の編集</strong>：表の数字を直接書き換えられます（「調整済」の印が付き、元の数量も記録されます）</li>
+          <li><strong>行の追加</strong>：自動計算にない独自項目を足せます</li>
+        </ul>
         <div class="callout">
           <p class="callout-title">要確認項目とは</p>
-          <p>図面の書き方によっては、AIが数値を読み違えることがあります。システムはそれを検知して自動で補正し、「何をどう直したか」を黄色いパネルで教えてくれます。補正済みなのでそのまま使えますが、心配な項目は次のステップで直せます。</p>
+          <p>図面の書き方によっては、AIが数値を読み違えることがあります。システムはそれを検知して自動で補正し、「何をどう直したか」を黄色いパネルで教えてくれます。</p>
         </div>
       </div>
 
       <div class="step">
-        <div class="step-head"><span class="step-n">STEP 3</span><span class="step-title">必要なら手直しする</span></div>
-        <ul>
-          <li><strong>計算条件の調整</strong>：間仕切壁の長さ・天井高を入れ直して再計算できます</li>
-          <li><strong>数量・単価の編集</strong>：表の数字を直接書き換えられます</li>
-          <li><strong>行の追加</strong>：自動計算にない独自項目を足せます</li>
-        </ul>
-        <p>手直しした行には「調整済」の印が付き、元の数量も記録に残ります。</p>
-      </div>
-
-      <div class="step">
-        <div class="step-head"><span class="step-n">STEP 4</span><span class="step-title">Excelに出力する</span></div>
-        <p>カテゴリ・資材名・仕様・数量・単位・計算根拠が入った表としてダウンロードできます。</p>
-      </div>
-
-      <div class="step">
-        <div class="step-head"><span class="step-n">STEP 5</span><span class="step-title">過去の見積を見返す（任意）</span></div>
-        <p>ログインしている場合、見積は自動で保存されます。「履歴」から過去の現場を開き、内容の確認やExcelの再出力ができます。</p>
+        <div class="step-head"><span class="step-n">STEP 5</span><span class="step-title">Excelに出力する／履歴を見返す</span></div>
+        <p>カテゴリ・名称・摘要・数量・単位・計算根拠が入った表としてダウンロードできます。ログインしている場合は見積が自動保存され、「履歴」からいつでも再表示・再出力できます。</p>
       </div>
     </div>
   </section>
@@ -485,15 +492,11 @@
     <h2><span class="num">03</span>操作フロー</h2>
     <div class="flow">
       <div class="flow-inner">
-        <div class="node terminal">図面を用意する<small>PDF・PNG・JPG／10MBまで</small></div>
+        <div class="node terminal">平面詳細図を用意する<small>PDF・PNG・JPG／10MBまで</small></div>
         <div class="arrow"></div>
-        <div class="node">現場名を入力する</div>
+        <div class="node">現場名・専有面積を入力する</div>
         <div class="arrow"></div>
-        <div class="node">図面をアップロードする</div>
-        <div class="arrow"></div>
-        <div class="node decision">専有面積を入力する？</div>
-        <div class="arrow"><span class="lbl">どちらでも進める</span></div>
-        <div class="node">AIが図面を解析する<small>30秒〜1分</small></div>
+        <div class="node">STEP1 平面詳細図を解析<small>30秒〜1分</small></div>
         <div class="arrow"></div>
         <div class="node decision">図面として読み取れた？</div>
 
@@ -506,10 +509,30 @@
           <div class="branch-col">
             <div class="branch-lbl"><b>はい</b></div>
             <div class="arrow"></div>
-            <div class="node">資材リストが表示される</div>
+            <div class="node">部屋一覧が表示される</div>
           </div>
         </div>
 
+        <div class="arrow"></div>
+        <div class="node decision">展開図・建具表はある？</div>
+
+        <div class="branch">
+          <div class="branch-col">
+            <div class="branch-lbl"><b>ある</b>（推奨）</div>
+            <div class="arrow"></div>
+            <div class="node">STEP2 展開図を解析<small>壁・巾木が実測になる</small></div>
+            <div class="arrow"></div>
+            <div class="node">STEP3 建具表を解析<small>複数ページ可・開口が実寸になる</small></div>
+          </div>
+          <div class="branch-col">
+            <div class="branch-lbl"><b>ない</b></div>
+            <div class="arrow"></div>
+            <div class="node">推定モードで進む<small>平面図のみの概算</small></div>
+          </div>
+        </div>
+
+        <div class="arrow"></div>
+        <div class="node">資材リストを計算する</div>
         <div class="arrow"></div>
         <div class="node decision">要確認項目が出ている？</div>
 
@@ -548,7 +571,31 @@
   </section>
 
   <section>
-    <h2><span class="num">04</span>ログインとゲスト利用</h2>
+    <h2><span class="num">04</span>計算の仕組み</h2>
+    <p><strong>「AIは図面の転記のみ。計算と検証はシステム側」</strong>が設計原則です。AIに数量を推測させないため、読み取った寸法からの計算はすべてプログラムが行い、読み取りの矛盾はシステムが検証・補正します。</p>
+
+    <h3>壁・天井・床の算出（展開図あり＝実測モード）</h3>
+    <p>プロの拾い出しと同じ「<strong>部屋ごと×A〜D面ごと</strong>」の積み上げ方式です。</p>
+    <ul>
+      <li>展開図から各部屋・各面の「幅 × 高さ」を集めて壁の総面積を出す</li>
+      <li>建具表のドア・窓の実寸分を差し引く（開口控除）</li>
+      <li>平面詳細図の<strong>壁仕上記号</strong>で面ごとの仕様を振り分ける（石膏ボードを張る面／コンクリート打放でボード不要の面／耐水ボード・キッチンパネル・収納内コンパネの面）</li>
+      <li>枚数への換算は<strong>プロの実績係数（1.4㎡/枚）</strong>を使用 — 910×1820mmの板は理論上1.6562㎡ですが、端材のロスを見込んだ発注用の係数が1.4です</li>
+    </ul>
+
+    <h3>展開図がない場合（推定モード）</h3>
+    <p>従来どおり平面図の読み取り＋実績データに基づく推定式で計算します。精度は落ちますが、1枚だけでも概算が出せます。</p>
+
+    <h3>読み取りの検証（自動補正）</h3>
+    <ul>
+      <li>部屋面積は「㎡表記の転記 ＞ 帖数×1.65 ＞ AI目測」の優先順位で決定</li>
+      <li>専有面積は「利用者の入力 ＞ 図面の表記 ＞ 外形寸法」の順で採用し、矛盾があれば部屋面積の合計で裁定</li>
+      <li>2つのAIで同じ図面を読み、食い違った項目は「要確認項目」として表示</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">05</span>ログインとゲスト利用</h2>
     <div class="table-scroll">
       <table>
         <thead>
@@ -571,7 +618,7 @@
   </section>
 
   <section>
-    <h2><span class="num">05</span>単価の設定</h2>
+    <h2><span class="num">06</span>単価の設定</h2>
     <p>システムには<strong>標準単価</strong>があらかじめ登録されています。会社ごとに仕入れ値が違うため、「単価設定」画面で自社の単価に上書きできます。</p>
     <ul>
       <li>上書きした資材だけが「カスタム」になり、それ以外は標準単価が使われます</li>
@@ -581,53 +628,78 @@
     </ul>
     <div class="callout warn">
       <p class="callout-title">現在の制約</p>
-      <p>自動計算が出す約130項目のうち、標準単価が登録されているのは約40項目です。残りの項目は<strong>数量は正しく出ますが、単価が「-」と表示され、合計金額には含まれません</strong>。実勢価格のリストをいただければ登録できます。</p>
+      <p>単価が未登録の資材は<strong>「-」と表示され、合計金額には含まれません</strong>（数量は正しく出ます）。実勢価格のリストをいただければ登録できます。</p>
     </div>
   </section>
 
   <section>
-    <h2><span class="num">06</span>精度について</h2>
-    <p>プロの手作業による拾い出しと比較して検証しています。以下はマンション1タイプで、<strong>専有面積を入力しない</strong>という不利な条件での結果です。</p>
+    <h2><span class="num">07</span>精度について</h2>
+    <p>新築マンション1棟（7タイプ・67戸）のプロの拾い出しデータと突き合わせて検証しています。以下は1タイプ・1戸あたりの部位別検証で、<strong>正しい図面読み取りを与えた場合</strong>の計算エンジンの精度です。</p>
     <div class="table-scroll">
       <table>
         <thead>
-          <tr><th>項目</th><th>手作業の実績との差</th></tr>
+          <tr><th>部位</th><th>プロの実測との差</th></tr>
         </thead>
         <tbody>
-          <tr><td>専有面積</td><td class="num">0%（一致）</td></tr>
-          <tr><td>天井面積</td><td class="num">+2.2%</td></tr>
-          <tr><td>天井石膏ボード</td><td class="num">+4%</td></tr>
-          <tr><td>際根太</td><td class="num">-1%</td></tr>
-          <tr><td>遮音壁ボード</td><td class="num">0%（一致）</td></tr>
-          <tr><td>グラスウール</td><td class="num">-3%</td></tr>
+          <tr><td>壁 石膏ボード</td><td class="num">+9.4%</td></tr>
+          <tr><td>壁 耐水石膏ボード</td><td class="num">-1.9%</td></tr>
+          <tr><td>天井 石膏ボード</td><td class="num">-2.3%</td></tr>
+          <tr><td>木製巾木</td><td class="num">+10.2%</td></tr>
+          <tr><td>収納内のコンパネ面</td><td class="num">-0.4%</td></tr>
+          <tr><td>キッチンパネル</td><td class="num">-15.4%</td></tr>
+          <tr><td>際根太</td><td class="num">+4.4%</td></tr>
+          <tr><td>フローリング</td><td class="num">+6.6%</td></tr>
+          <tr><td>乾式置床</td><td class="num">+7.6%</td></tr>
+          <tr><td>置床上の合板</td><td class="num">-7.5%</td></tr>
         </tbody>
       </table>
+    </div>
+    <p>13部位中10部位が±10%前後に収まっています（遮音壁・間仕切下地などは開発中）。</p>
+
+    <div class="callout warn">
+      <p class="callout-title">現在の最大の課題</p>
+      <p>壁仕上記号の「どの面に付いているか」のAI読み取りがまだ不安定で、実際の図面では石膏ボード不要の面（コンクリート打放など）までボードを計上して<strong>過大に出る</strong>ことがあります。数量が実測データより明らかに多い場合は、要確認項目と面積の内訳をご確認ください。この改善が現在の開発の最優先事項です。</p>
     </div>
 
     <h3>精度を上げるコツ</h3>
     <ul>
-      <li><strong>専有面積を入力する</strong> — 最も効果があります。物件資料の値を入れてください</li>
-      <li><strong>寸法や面積が書かれた図面を使う</strong> — 平面詳細図が最適です</li>
+      <li><strong>専有面積を入力する</strong> — 最も効果があります</li>
+      <li><strong>展開図・建具表もアップロードする</strong> — 壁が目測から実測になります</li>
       <li><strong>要確認項目に目を通す</strong> — システムが「自信のない箇所」を教えてくれます</li>
     </ul>
-
-    <h3>苦手なこと</h3>
-    <p>面積が書かれていない区画（廊下・キッチン・水回りなど）は、AIが目測するため誤差が出ます。特に<strong>間仕切壁の長さ</strong>は読み取りにばらつきが出やすく、同じ図面でも回によって値が変わることがあります。この項目は要確認項目に表示されるので、実測値がわかる場合は手動で入力してください。</p>
   </section>
 
   <section>
-    <h2><span class="num">07</span>安全性について</h2>
+    <h2><span class="num">08</span>安全性について</h2>
     <ul>
       <li>通信はすべて暗号化されています</li>
       <li>パスワードは暗号化して保存され、運営者にも見えません</li>
-      <li>アップロードされた図面は外部から取得できない場所に保管されます</li>
+      <li>アップロードされた図面は外部から取得できない場所に保管されます（展開図・建具表はデータ抽出後すぐに削除されます）</li>
       <li>ログインしていない状態でアップロードした図面と見積は、<strong>24時間後に自動削除</strong>されます</li>
       <li>会社ごとにデータは分離され、他社のデータには一切アクセスできません</li>
     </ul>
   </section>
 
   <section>
-    <h2><span class="num">08</span>よくある質問</h2>
+    <h2><span class="num">09</span>開発状況とロードマップ</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>段階</th><th>内容</th><th>状況</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>壁編</strong></td><td>展開図×壁記号による壁ボード・巾木の実測計算</td><td><strong>開発中（現在ここ）</strong>。記号の面単位の割り付けを改善中</td></tr>
+          <tr><td>床・天井編</td><td>床仕上げ・置床・天井の実測計算</td><td>基本実装済み・検証済み</td></tr>
+          <tr><td>建具編</td><td>建具表からの建具数量・開口控除</td><td>読み取り実装済み（複数ページ対応）</td></tr>
+          <tr><td>造作材編</td><td>巾木・見切りなどの材積換算・発注数量</td><td>未着手</td></tr>
+          <tr><td>タイプ別見積書</td><td>「○○マンション Aタイプ」単位で見積書を出し、戸数を掛けて棟全体へ</td><td>構想（最終ゴール）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">10</span>よくある質問</h2>
     <div class="faq">
       <details open>
         <summary>最初のログインに時間がかかります</summary>
@@ -635,7 +707,11 @@
       </details>
       <details open>
         <summary>平面図以外をアップロードするとどうなりますか</summary>
-        <div class="answer"><p>立面図や仕上表など、平面図でない画像はシステムが検知して「この画像は計画平面図ではありません」とエラーを返します。誤った見積が作られることはありません。</p></div>
+        <div class="answer"><p>平面図でない画像はシステムが検知してエラーを返します。誤った見積が作られることはありません。展開図・建具表のスロットも同様に、種類が違うと読み取り失敗として教えてくれます。</p></div>
+      </details>
+      <details open>
+        <summary>建具表が複数ページに分かれています</summary>
+        <div class="answer"><p>STEP 3で1枚ずつ順にアップロードしてください。符号（WD-1、SD-101など）単位で自動的に合算されます。</p></div>
       </details>
       <details open>
         <summary>金額が「-」になっている項目があります</summary>
@@ -657,7 +733,7 @@
   </section>
 
   <section>
-    <h2><span class="num">09</span>動作環境</h2>
+    <h2><span class="num">11</span>動作環境</h2>
     <div class="table-scroll">
       <table>
         <thead><tr><th>項目</th><th>内容</th></tr></thead>
@@ -674,7 +750,7 @@
 
   <footer>
     <span>ZAIRYO 資材拾いアシスタント</span>
-    <span>製品仕様書</span>
+    <span>製品仕様書（2026-07-15 改訂）</span>
   </footer>
 </div>
 
