@@ -472,7 +472,7 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
         await cleanup();
         return res.status(503).json({
           error: 'ai_unavailable',
-          message: 'AI解析が一時的に失敗しました（混雑の可能性）。1分ほど待って再アップロードしてください。',
+          message: `AI解析が一時的に失敗しました（コード${auxApiError?.status || "接続"}）。1分ほど待って再アップロードしてください。`,
         });
       }
       if (!(elevRes?.parsed?.drawing_type === 'elevation' &&
@@ -502,7 +502,7 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
         await cleanup();
         return res.status(503).json({
           error: 'ai_unavailable',
-          message: 'AI解析が一時的に失敗しました（混雑の可能性）。1分ほど待って再アップロードしてください。',
+          message: `AI解析が一時的に失敗しました（コード${auxApiError?.status || "接続"}）。1分ほど待って再アップロードしてください。`,
         });
       }
       if (!(doorRes?.parsed?.drawing_type === 'door_schedule' && Array.isArray(doorRes.parsed.doors))) {

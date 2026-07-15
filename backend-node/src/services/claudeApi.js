@@ -361,7 +361,8 @@ async function analyzeWithGemini(filePath, base64Data, mimeType) {
     return { parsed: parseJsonResponse(text), rawText: text };
   } catch (error) {
     console.error('Gemini API error:', error.message);
-    return null;
+    // 障害原因の切り分け用にステータスを持ち帰る（429=レート制限/401=キー無効 等）
+    return { parsed: null, rawText: null, error: { status: error.status ?? null, message: String(error.message).slice(0, 200) } };
   }
 }
 
@@ -433,7 +434,8 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
     if (options.rethrowApiErrors && (error.status || error.name === 'APIConnectionError')) {
       throw error;
     }
-    return null;
+    // 障害原因の切り分け用にステータスを持ち帰る
+    return { parsed: null, rawText: null, error: { status: error.status ?? null, message: String(error.message).slice(0, 200) } };
   }
 }
 
@@ -663,10 +665,12 @@ export async function analyzeDrawing(filePath, options = {}) {
     // モックの架空物件を返すと本物の見積として保存されてしまう。
     // 明示的に拒否して、アップロード側で500として扱わせる。
     console.error('All AI APIs failed — refusing to fabricate analysis');
+    // 原因コードを明示（429=レート制限/401=キー無効/529=混雑）— 運用時の切り分け用
+    const errCode = (r) => r?.error?.status || (r?.error?.message ? 'ERR' : 'キー未設定');
     return {
       is_rejected: true,
       document_type: 'unknown',
-      rejection_reason: 'AI解析に失敗しました（両AIが応答しませんでした）。時間をおいて再試行してください。',
+      rejection_reason: `AI解析に失敗しました（Gemini: ${errCode(geminiRes)} / Claude: ${errCode(claudeRes)}）。時間をおいて再試行してください。`,
       _ai_unavailable: true,
     };
   }
