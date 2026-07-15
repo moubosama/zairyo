@@ -48,9 +48,13 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/unit-prices', unitPricesRouter);
 app.use('/api/admin', adminRouter);
 
-// Health check
+// Health check（commit: Renderが注入するデプロイ中のGit SHA。どの版が動いているかの確認用）
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    commit: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null,
+  });
 });
 
 // Error handling
