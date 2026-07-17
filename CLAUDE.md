@@ -169,6 +169,15 @@ XLSの間仕切下地84.082=6室ブロック合計と完全一致を実証。残
   遮音壁の高さ2.57と対象壁の読み漏れ、耐水バケット構成差（トイレ/パウダーG24 vs XLSは台所UB廻りのみ・合計偶然一致）、
   Gタイプ定数の推定行（下り天井4・一部界壁3・EV GW2等）の数式化、EV廻り÷1.4vs W下地÷1.5
 
+**AIプロバイダ切替+Gemini実読みE2E（2026-07-17）**: `AI_PROVIDER`環境変数（dual/gemini/claude・デフォルトdual=現行不変）、
+`GEMINI_MODEL`（デフォルトgemini-2.5-flash）、`GEMINI_RETRY_MAX`（デフォルト0・E2Eスクリプトのみ4）。
+scripts/e2e-gemini.mjs=Gタイプ5図面を本番と同一の組み立て（analyzeDrawing→attachElevationData→mergeDoorSchedule）に通し記録保存→replay。
+**Gemini 2.5 flash実読み結果: ✅7/✗1/⏳2**（壁PB82枚=-6%・天井42枚・KP3枚。✗=耐水3枚-35%。
+壁記号14部屋・建具48件・展開図8室を読取。実AI読みで初の合格圏＝Claude実読みの壁PB+81%より大幅に良い）。
+gemini-2.5-proは無料枠quota=0で未測定（Billing有効化後に `node scripts/e2e-gemini.mjs --model gemini-2.5-pro`）。
+本番をGemini化するにはRenderに `AI_PROVIDER=gemini` + `GEMINI_RETRY_MAX=4` を設定（12並列タイルが無料枠RPMで429必至のため）。
+残課題: 耐水-35%（G24読取3枚どまり）・LDKのC04過剰検出（13placements）。ローカル.envのGeminiキーがセッションログに露出→ローテーション推奨。
+
 **設計決定（実装前・変更可）**:
 - 平面詳細図=必須、展開図・建具表=任意（無ければ従来ロジック、有れば精度モード。後方互換）
 - AI呼び出し: 平面図=デュアルAI維持、展開図・建具表=Claude単体（表の転記はブレ小・コスト抑制）

@@ -201,13 +201,14 @@ const uploadFieldsWith400 = (req, res, next) => {
 
 /**
  * 展開図の解析結果をparsedDataへ統合する共通処理
- * （タイル詳細パスの実行と、壁記号・開口のマージ。一括uploadと段階式auxの両方から使う）
+ * （タイル詳細パスの実行と、壁記号・開口のマージ。一括uploadと段階式auxの両方から使う。
+ *  E2E測定スクリプト scripts/e2e-gemini.mjs からも再利用するためexport）
  * @param analysisResult 平面図の解析結果（elevations等を書き込む）
  * @param elevParsed 展開図の解析結果（rooms必須）
  * @param planPath 平面詳細図のファイルパス（壁記号タイル読取に使用。無ければスキップ）
  * @param elevPath 展開図のファイルパス（開口タイル読取に使用）
  */
-async function attachElevationData(analysisResult, elevParsed, planPath, elevPath) {
+export async function attachElevationData(analysisResult, elevParsed, planPath, elevPath) {
   analysisResult.elevations = elevParsed;
   const roomNames = (analysisResult.rooms || []).map((r) => r.name).filter(Boolean);
 
@@ -260,6 +261,31 @@ async function attachElevationData(analysisResult, elevParsed, planPath, elevPat
       }
     }
   }
+}
+
+/**
+ * 建具表の符号単位マージ（複数ページ対応）
+ * 既存符号は保持し、寸法が欠けている場合のみ新しい読み取りで埋める
+ * （段階式auxとE2E測定スクリプトの両方から使う）
+ * @returns { doors: マージ後の配列, added: 新規追加された符号数 }
+ */
+export function mergeDoorSchedule(existing, incoming) {
+  const bySymbol = new Map(
+    (Array.isArray(existing) ? existing : []).filter((d) => d?.symbol).map((d) => [d.symbol, d])
+  );
+  let added = 0;
+  for (const d of incoming) {
+    if (!d?.symbol) continue;
+    const prev = bySymbol.get(d.symbol);
+    if (!prev) {
+      bySymbol.set(d.symbol, d);
+      added++;
+    } else if ((prev.width_mm == null || prev.height_mm == null) &&
+               (d.width_mm != null || d.height_mm != null)) {
+      bySymbol.set(d.symbol, { ...prev, ...d });
+    }
+  }
+  return { doors: [...bySymbol.values()], added };
 }
 
 // POST /api/projects/:id/upload - 図面アップロード+AI解析
@@ -517,22 +543,9 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
         });
       }
       // 複数ページ対応: 符号単位でマージ（既存符号は寸法が埋まる場合のみ更新）
-      const existing = Array.isArray(parsedData.door_schedule) ? parsedData.door_schedule : [];
-      const bySymbol = new Map(existing.filter((d) => d?.symbol).map((d) => [d.symbol, d]));
-      let added = 0;
-      for (const d of doorRes.parsed.doors) {
-        if (!d?.symbol) continue;
-        const prev = bySymbol.get(d.symbol);
-        if (!prev) {
-          bySymbol.set(d.symbol, d);
-          added++;
-        } else if ((prev.width_mm == null || prev.height_mm == null) &&
-                   (d.width_mm != null || d.height_mm != null)) {
-          bySymbol.set(d.symbol, { ...prev, ...d });
-        }
-      }
-      parsedData.door_schedule = [...bySymbol.values()];
-      summary = { kind, doors_total: parsedData.door_schedule.length, added };
+      const { doors, added } = mergeDoorSchedule(parsedData.door_schedule, doorRes.parsed.doors);
+      parsedData.door_schedule = doors;
+      summary = { kind, doors_total: doors.length, added };
     }
 
     await prisma.aiReading.update({
