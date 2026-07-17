@@ -648,10 +648,14 @@ router.post('/:id/calculate', async (req, res) => {
     try { parsedObj = JSON.parse(project.aiReadings[0].parsedData); } catch { /* 破損時は推定のまま */ }
     if (parsedObj?.elevations?.rooms?.length) {
       const takeoff = computeElevationTakeoff(parsedObj.elevations, parsedObj.door_schedule || [],
-        { planRooms: parsedObj.rooms || [] }); // 収納内の間仕切下地推定に平面図の部屋一覧を渡す
+        { planRooms: parsedObj.rooms || [],       // 収納内の間仕切下地推定に平面図の部屋一覧を渡す
+          closetInteriors: parsedObj.closet_interiors || [] }); // 収納内側の実寸（家具工事シート等・任意）
       applyElevationTakeoff(result, takeoff);
       console.log('展開図実測モード適用:', JSON.stringify({
-        wall_pb: takeoff.wall_pb_sqm, cloth: takeoff.cloth_sqm, skirting: takeoff.skirting_m,
+        wall_pb_sqm: takeoff.wall_pb_sqm,
+        wall_pb_sheets: Math.ceil(takeoff.wall_pb_sqm / 1.4),
+        cloth: takeoff.cloth_sqm,
+        skirting: takeoff.skirting_m,
       }));
     }
 

@@ -67,10 +67,14 @@
     </div>
 
     <!-- Area Summary -->
-    <div class="grid md:grid-cols-4 gap-4 mb-6">
+    <div class="grid md:grid-cols-5 gap-4 mb-6">
       <div class="card text-center">
         <div class="text-3xl font-bold text-gold">{{ formatArea(store.areas?.wall_area) }}</div>
         <div class="text-sm text-gray-400">壁面積（㎡）</div>
+      </div>
+      <div class="card text-center">
+        <div class="text-3xl font-bold text-gold">{{ formatArea(store.areas?.wall_cloth_area) }}</div>
+        <div class="text-sm text-gray-400">クロス面積（㎡）</div>
       </div>
       <div class="card text-center">
         <div class="text-3xl font-bold text-gold">{{ formatArea(store.areas?.ceiling_area) }}</div>

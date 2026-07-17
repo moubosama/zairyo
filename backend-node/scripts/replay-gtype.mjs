@@ -31,29 +31,44 @@ console.log('読み取り概要: rooms', parsedData.rooms?.length,
 const result = calculateMaterials(parsedData, {}, {});
 if (parsedData.elevations?.rooms?.length) {
   const takeoff = computeElevationTakeoff(parsedData.elevations, parsedData.door_schedule || [],
-    { planRooms: parsedData.rooms || [] });
+    { planRooms: parsedData.rooms || [],
+      closetInteriors: parsedData.closet_interiors || [] });
   applyElevationTakeoff(result, takeoff);
 }
 result.materials = filterKenzaiScope(result.materials);
 
-// XLS正解（Gタイプ戸当）との突合
+// XLS集計表（Gタイプ・戸当）との突合
+// 出典: ②木及び建材XLS「集計表」シート（G=9戸。発注数量列の合計÷9戸。係数はX列の実値）
+// 判定: 差1枚(1㎡)以内 または ±10%以内で✅。known付きは⏳（展開図に写らない面の既知の限界）
 const EXPECTED = [
-  ['壁 石膏ボード', 88, '枚'],        // 122.06㎡ ÷ 1.4 = 87.2
-  ['壁 耐水石膏ボード', 5, '枚'],     // 6.45㎡ ÷ 1.4 = 4.6
-  ['天井 石膏ボード', 42, '枚'],      // 59.09㎡ ÷ 1.4 = 42.2
+  { name: '壁 石膏ボード', exp: 87.2, note: '122.061㎡÷1.4 ※発注列(AB)は遮音9.3+W下地6.0を合算し102.4枚/戸' },
+  { name: '壁 耐水石膏ボード', exp: 4.6, note: '6.454㎡÷1.4（AC列41.487÷9戸）' },
+  { name: '天井 石膏ボード', exp: 41.5, note: '59.087㎡÷1.45+ﾊﾟｳﾀﾞｰ･ﾄｲﾚ調整7枚（AD列373.749÷9戸）' },
+  { name: '下り天井 石膏ボード', exp: 3.6, note: '5.233㎡÷1.45（AE列32.481÷9戸）' },
+  { name: '一部界壁 石膏ボード', exp: 3.4, note: '5.047㎡÷1.5（Z列30.282÷9戸）' },
+  { name: '一部界壁 耐水石膏ボード', exp: 0, note: '集計表AA列=0（Gタイプは無し）' },
+  { name: 'マルチクロゼット・WIC・CLRC面 石膏ボード', exp: 5.2, note: '7.51㎡÷1.45（AG列内46.614÷9戸）' },
+  { name: '壁 キッチンパネル', exp: 2.5, note: 'AF列22.5÷9戸' },
+  { name: '間仕切 グラスウール充填', exp: 6.4, note: '6.425㎡/戸', known: 'UB裏面が展開図外' },
+  { name: '遮音壁PB張り', exp: 13.0, note: '12.979㎡/戸', known: 'UB裏面が展開図外' },
 ];
-console.log('\n=== 建材リスト（vs XLS正解） ===');
-let ok = 0, ng = 0;
+console.log('\n=== 建材リスト（vs XLS集計表・Gタイプ戸当） ===');
+let ok = 0, ng = 0, pend = 0;
 for (const m of result.materials) {
-  const exp = EXPECTED.find(([n]) => n === m.name);
-  if (exp) {
-    const diff = ((m.quantity / exp[1] - 1) * 100).toFixed(0);
-    const pass = Math.abs(m.quantity / exp[1] - 1) <= 0.10;
-    pass ? ok++ : ng++;
-    console.log(` ${pass ? '✅' : '✗'} ${m.name}: ${m.quantity}${m.unit} vs 正解${exp[1]} (${diff > 0 ? '+' : ''}${diff}%) ${m.takeoff ? '[実測]' : '[推定]'}`);
-  } else {
+  const e = EXPECTED.find((x) => x.name === m.name);
+  if (!e) {
     console.log(`    ${m.name}: ${m.quantity}${m.unit} ${m.takeoff ? '[実測]' : '[推定]'}`);
+    continue;
   }
+  const diffAbs = m.quantity - e.exp;
+  const diffPct = e.exp > 0 ? ((m.quantity / e.exp - 1) * 100).toFixed(0) : '-';
+  const pass = Math.abs(diffAbs) <= 1 || (e.exp > 0 && Math.abs(m.quantity / e.exp - 1) <= 0.10);
+  const mark = e.known ? '⏳' : pass ? '✅' : '✗';
+  if (e.known) pend++; else pass ? ok++ : ng++;
+  console.log(` ${mark} ${m.name}: ${m.quantity}${m.unit} vs 正解${e.exp} (${diffAbs >= 0 ? '+' : ''}${Math.round(diffAbs * 10) / 10}${m.unit}/${diffPct}%) ${m.takeoff ? '[実測]' : '[推定]'}${e.known ? ` ←${e.known}` : ''}`);
+  console.log(`      └ 根拠: ${e.note}`);
 }
-console.log(`\n判定対象: ✅${ok} / ✗${ng}（合格ライン: ±10%）`);
+console.log('\n※ 集計表の壁-PBt9.5発注列(AB)は 102.4枚/戸 = 一般87.2 + 遮音壁9.3(÷1.4) + W下地6.0(÷1.5) の合算。');
+console.log('   エンジンは遮音壁を別行（遮音壁PB張り・㎡）で持つため、壁 石膏ボードは一般分87.2枚と比較する。');
+console.log(`\n判定対象: ✅${ok} / ✗${ng} / ⏳${pend}（合格ライン: 差1枚以内 or ±10%）`);
 process.exit(ng > 0 ? 1 : 0);

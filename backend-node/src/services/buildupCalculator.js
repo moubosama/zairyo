@@ -2,7 +2,7 @@
  * ボトムアップ拾い出しエンジン（展開図・建具表ベース）
  *
  * プロの拾い出しXLS（部屋×A〜D面×部位で幅×高さを積み上げる方式）を踏襲する。
- * - 壁面積: Σ(面幅×天井高) − 開口面積（建具表の実寸を優先）
+ * - 壁面積: Σ(面幅×(天井高+40mm)) − 開口面積（建具表の実寸を優先。+40mmはXLSの壁拾い高さ）
  * - 巾木: Σ周長 − 床まで達する開口の幅（種別: 木製/ソフト/樹脂）
  * - 部位振り分け: 平面詳細図の壁仕上記号（例 D14 = 下地D+中間1+表面4）
  *     下地: L/O/W=遮音壁系, G=間仕切, D=RC面木, C=打放, H/I=ウレタン(GL)
@@ -19,6 +19,14 @@ import {
 
 const PB_SQM_PER_SHEET = 1.4; // XLS集計表の換算係数（3×6板・ロス込み）
 
+// キッチンパネルの板面積: 3'×8'（910×2420mm）= 0.91×2.42 = 2.2022㎡/枚
+// XLS集計表のKP行は枚数2.5/戸を手入力しており換算係数（X列）の行が無い → 実板寸で㎡→枚に換算する
+const KP_SHEET_SQM = 2.2022;
+
+// キッチンカウンター天板高（業務標準850mm）。キッチンパネルはカウンター上端から天井まで張る
+// → 表面6の面は「面全面」ではなく「カウンター上の帯 = 面幅×(CH−0.85)」で拾う
+const KITCHEN_COUNTER_H_M = 0.85;
+
 // 床まで達する開口（巾木・壁下部から引く）とみなす高さ
 const FLOOR_OPENING_MIN_HEIGHT_MM = 1800;
 
@@ -26,6 +34,14 @@ const FLOOR_OPENING_MIN_HEIGHT_MM = 1800;
 // XLSタイプ別シートの下地高 2.57/2.77 = CH2200/2400 + 370 を直接確認（G展開図の全高2810と整合:
 // 居室 2810−直貼40−2400=370 / 水回り 2810−置床200−仕上40−2200=370）。timberVolume.js参照。
 const STUD_PLENUM_M = 0.37;
+
+// 壁ボード類の拾い高さ = 天井高 + 40mm（天井PBへの飲み込み代）
+// XLSタイプ別シート（Gタイプ）の壁(ボード)行で直接確認: 玄関・廊下 4.84×2.24（CH2200+40）/
+// 洋室 3.64×2.44（CH2400+40）。耐水PBも (0.95+1.925)×2.24=6.44 vs 正解6.4535（差は丸め）で整合。
+// 優先規則: face.height_mm が明示されている面は展開図の実測としてそのまま使い、+40mmは乗せない
+// （+40mmを適用するのは高さ未指定の面に天井高からデフォルトを立てる場合のみ）。
+// ※ 下地高STUD_PLENUM_M(+370=スラブ下端まで)とは別物。巾木（周長ベース）には影響しない。
+const WALL_PICKUP_EXTRA_MM = 40;
 
 /**
  * 壁仕上記号のパース。 'D14' -> { base: 'D', mid: 1, surf: 4 }
@@ -225,7 +241,10 @@ function normalizeRoomName(name) {
  * メイン: 展開図データから部位別数量を積み上げる
  * @param elevations { rooms: [{ name, ceiling_height_mm, skirting, faces: [{ width_mm, height_mm?, wall_code?, openings: [] }] }] }
  * @param doorSchedule [{ symbol, name, width_mm, height_mm }]
- * @param opts { planRooms?: [{ name, area_sqm }] } 平面図の部屋一覧（展開図に現れない収納内の下地推定に使う）
+ * @param opts { planRooms?: [{ name, area_sqm }], closetInteriors?: [{ room, inner_width_mm }] }
+ *   planRooms: 平面図の部屋一覧（展開図に現れない収納内の下地推定に使う）
+ *   closetInteriors: 収納内側の下地幅実寸mm（見積明細の家具工事シート等。部屋名でplanRoomsと突合し、
+ *     実寸がある収納は3×√面積の推定を実寸で置き換える。タイプ別に入力で与える=ハードコードしない）
  */
 export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}) {
   const rooms = elevations?.rooms || [];
@@ -235,6 +254,7 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // 面積系（㎡）
     wall_pb_sqm: 0,          // 壁PB t9.5（通常間仕切・GL含む）
     waterproof_pb_sqm: 0,    // 耐水PB t9.5
+    ev_wall_pb_sqm: 0,       // EV廻り・防露壁面のPB t9.5（D下地×中間1/4。XLSは壁(ボード)と別部位で拾う）
     sound_wall_pb_sqm: 0,    // 遮音壁PB張り t9.5+GW（下地L/O/W）
     gw_sqm: 0,               // グラスウール充填（下地L/S/W）
     sound_sheet_sqm: 0,      // 遮音シート（下地O）
@@ -326,7 +346,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       const face = faces[faceIdx];
       const w = (face.width_mm || 0) / 1000;
       if (w <= 0) continue;
-      const h = (face.height_mm ? face.height_mm : room.ceiling_height_mm || 2400) / 1000;
+      // 面の高さ: 展開図の実測(height_mm)があればそのまま、無ければCH+40mm（XLSの壁拾い高さ）
+      const h = (face.height_mm ? face.height_mm : (room.ceiling_height_mm || 2400) + WALL_PICKUP_EXTRA_MM) / 1000;
       perimeter += w;
 
       // 開口控除
@@ -391,7 +412,16 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (code.base === 'S') t.gw_sqm += net;
         // 中間材（遮音壁系はPB込みのためelse側のみ）
         switch (code.mid) {
-          case 1: case 4: t.wall_pb_sqm += net; break;
+          case 1: case 4:
+            // D下地（RC面木=EV廻り・防露壁面。例 D14）のPBはXLSでは「EV廻り壁」の部位で別拾い
+            // （プロは玄関のEV側D14面0.965mを壁(ボード)に入れない）。耐水(2/5)・コンパネ(6)は現状どおり
+            // ※既知の近似（Gタイプでのみ検証済み 2026-07-16）: 「D下地×中間1/4は全てEV廻り行」は
+            //   GのD14がEV側1面だけのため成立している。他タイプで窓廻り防露壁面や収納内のD14が
+            //   ある場合もEV行に積まれてしまう（防露壁面/EV面の区別には部屋名や面の位置情報が必要）。
+            //   他タイプの正解データで検証する際に部屋名/面情報での分岐を検討すること。
+            if (code.base === 'D') t.ev_wall_pb_sqm += net;
+            else t.wall_pb_sqm += net;
+            break;
           case 2: case 5: t.waterproof_pb_sqm += net; break;
           case 3: t.rawan_veneer_sqm += net; break;
           case 6: t.konpane_sqm += net; break;
@@ -401,7 +431,16 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
 
       // 表面
       if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
-      else if (code.surf === 6) t.kitchen_panel_sqm += net;
+      else if (code.surf === 6) {
+        // キッチンパネル（表面6）は面全面ではなくカウンター上の帯のみ張る。
+        // XLSの正解式（'Ａタイプ'!P310〜P313 = 3.925㎡/戸）:
+        //   2.5×1.35 + 0.7×2.2 + 0.7×2.2 − 2.2×1.15
+        //   = 正面幅×(CH−カウンター高0.85) + 側面袖壁2本×CH − 吊戸裏の控除
+        // 図面から機械的に取れるのは「KP面の幅」と「CH」だけなので正面帯のみモデル化し、
+        // 側面袖壁(+3.08)と吊戸控除(−2.53)は未モデル（ほぼ相殺する前提の近似）。
+        // G実測: 2.575×(2.2−0.85)=3.476 vs XLS 3.925 = −11.4%（eval許容20%内）
+        t.kitchen_panel_sqm += Math.max(0, w * Math.max(0, ch - KITCHEN_COUNTER_H_M) - openingArea);
+      }
     }
 
     // 巾木（種別ごと・開口幅を控除）
@@ -420,21 +459,39 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     });
   }
 
-  // 収納（WIC/CL等）の内側は展開図に現れないが間仕切下地は必要 → 平面図の部屋面積から推定する。
-  // 内側3面（両側+奥）≒ 3×√面積（正方形近似）。うちRC面（D6*で実測済み）は胴縁の部位なので幅を控除。
+  // 収納（WIC/CL等）の内側は展開図に現れないが間仕切下地は必要。
+  // 優先順位: ①実寸（opts.closetInteriors。見積明細 家具工事シートの固定棚実寸から
+  //   「棚に沿う内側3辺」= コ型W(w1+w2+w3)なら w1+w2+w3 / 単棚W×Dなら W+D×2 に換算した幅mmを入力で受ける）
+  //   > ②3×√面積の推定（正方形近似のフォールバック）
   // 部屋側の面は上のループで拾い済み（÷2対象）なので、収納側の面も両面計上の山に足してから÷2する。
+  // RC面（D6*で実測済み・胴縁の部位）の幅控除は②推定分のみに適用する。
+  // 根拠（拾い出しXLS Ａタイプ(=Gデータ)シート精査 2026-07-16）: 間仕切下地の正解84.082 =
+  //   洋室(1)9.7341+洋室(2)17.8474+洋室(3)7.6896+食事室・台所12.1005+便所15.789+洗面20.9214 の
+  //   6室ブロック合計と完全一致（玄関・物入(1)〜(3)ブロックの間仕切下地行は空欄）で、
+  //   収納内RC面を控除する行は存在しない → 実寸には控除を掛けない
+  //   （②推定は面積由来でRC面と重複しうるため控除を維持する）
   const CLOSET_NAME_RE = /クローゼット|クロゼット|WIC|CL|収納|物入|押入/;
   const elevRoomNames = new Set(rooms.map((r) => normalizeRoomName(r.name)).filter(Boolean));
-  let closetSideWidth = 0;
+  const interiorByRoom = new Map(); // 正規化部屋名 → 収納内側の下地幅mm（実寸）
+  for (const ci of opts.closetInteriors || []) {
+    const key = normalizeRoomName(ci?.room);
+    if (key && Number.isFinite(ci?.inner_width_mm) && ci.inner_width_mm > 0) {
+      interiorByRoom.set(key, ci.inner_width_mm);
+    }
+  }
+  let closetActualWidth = 0; // ①実寸の合計（m）
+  let closetEstWidth = 0;    // ②3×√面積推定の合計（m）
   for (const pr of opts.planRooms || []) {
     if (!pr?.name || !CLOSET_NAME_RE.test(pr.name)) continue;
     // 展開図に実測がある収納は二重計上しない（表記ゆれを正規化して比較）
     if (elevRoomNames.has(normalizeRoomName(pr.name))) continue;
+    const actualMm = interiorByRoom.get(normalizeRoomName(pr.name));
+    if (actualMm) { closetActualWidth += actualMm / 1000; continue; }
     const a = pr.area_sqm || 0;
-    if (a > 0) closetSideWidth += 3 * Math.sqrt(a);
+    if (a > 0) closetEstWidth += 3 * Math.sqrt(a);
   }
-  closetSideWidth = Math.max(0, closetSideWidth - d6FaceWidth);
-  majikiriDouble += closetSideWidth * (2.4 + STUD_PLENUM_M);
+  closetEstWidth = Math.max(0, closetEstWidth - d6FaceWidth);
+  majikiriDouble += (closetActualWidth + closetEstWidth) * (2.4 + STUD_PLENUM_M);
 
   // 両面計上 → 壁1枚換算（XLSの拾い方に一致。検証: Gタイプ 77.6 vs XLS正解84.082 = −7.7%）
   t.majikiri_shitaji_m = majikiriDouble / 2;
@@ -494,8 +551,31 @@ export function applyElevationTakeoff(result, takeoff) {
     wallPbSheets, `壁PB ${takeoff.wall_pb_sqm}㎡ ÷ ${PB_SQM_PER_SHEET}㎡/枚`);
   set((m) => m.name === '壁 耐水石膏ボード',
     waterPbSheets, `耐水PB ${takeoff.waterproof_pb_sqm}㎡ ÷ ${PB_SQM_PER_SHEET}㎡/枚`);
+  // EV廻り・防露壁面（D下地×中間1/4）。実測0（EV面が展開図に写らないタイプ）は
+  // set()のquantity>0ガードにより既存の実績推定（標準3枚）を維持する
+  const evPbSqm = takeoff.ev_wall_pb_sqm || 0;
+  set((m) => m.name === 'EV廻り壁 石膏ボード',
+    Math.ceil(evPbSqm / PB_SQM_PER_SHEET), `EV面実測 ${evPbSqm}㎡ ÷ ${PB_SQM_PER_SHEET}㎡/枚`);
   set((m) => m.name.includes('遮音壁PB'),
     takeoff.sound_wall_pb_sqm, `遮音壁面 Σ幅×高さ−開口`);
+  // キッチンパネル: カウンター上帯の実測㎡（表面6）→ 3'×8'板（2.2022㎡/枚）で枚数化
+  // ※ 完全一致（'壁 キッチンパネル見切り' への誤マッチ防止）。実測0はset()のガードで既存推定を維持
+  const kpSqm = takeoff.kitchen_panel_sqm || 0;
+  const kpSheets = Math.ceil(kpSqm / KP_SHEET_SQM);
+  set((m) => m.name === '壁 キッチンパネル',
+    kpSheets, `キッチンパネル面 ${kpSqm}㎡ ÷ ${KP_SHEET_SQM}㎡/枚（3'×8' 910×2420mm）`);
+
+  if (result.summary) {
+    result.summary.wall_pb_sqm = takeoff.wall_pb_sqm;
+    result.summary.wall_pb_sheets = wallPbSheets;
+    result.summary.waterproof_pb_sqm = takeoff.waterproof_pb_sqm;
+    result.summary.waterproof_pb_sheets = waterPbSheets;
+    result.summary.ev_wall_pb_sqm = evPbSqm;
+    result.summary.ev_wall_pb_sheets = Math.ceil(evPbSqm / PB_SQM_PER_SHEET);
+    result.summary.sound_wall_pb_sqm = takeoff.sound_wall_pb_sqm;
+    result.summary.kitchen_panel_sqm = kpSqm;
+    result.summary.kp_sheets = kpSheets;
+  }
   // ※ 'EV廻り壁 グラスウール充填' への誤マッチを防ぐため完全一致
   set((m) => m.name === '間仕切 グラスウール充填',
     Math.round(takeoff.gw_sqm), `GW充填面 Σ幅×高さ−開口`);
@@ -536,7 +616,7 @@ export function applyElevationTakeoff(result, takeoff) {
 
   // サマリーにも反映
   if (result.summary) {
-    result.summary.wall_area = takeoff.cloth_sqm;
+    result.summary.wall_cloth_area = takeoff.cloth_sqm;
     result.summary.takeoff_applied = true;
   }
   return result;

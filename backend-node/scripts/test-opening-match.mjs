@@ -181,9 +181,10 @@ console.log('--- computeElevationTakeoff 統合 ---');
     ]},
   ]};
   const t = computeElevationTakeoff(elevations, SCHEDULE);
-  // 開口 = 800×2175（符号マッチ） → 面積1.74 / 壁PB = 3.0×2.4 − 1.74 = 5.46
+  // 開口 = 800×2175（符号マッチ） → 面積1.74
+  // 壁PB = 3.0×2.44 − 1.74 = 5.58（壁の拾い高さ=CH+40mm。XLSの壁拾い 2.44/2.24 に整合・2026-07-16変更）
   check('符号マッチの実寸で開口控除', t.opening_area_sqm, 1.74);
-  check('壁PBに反映', t.wall_pb_sqm, 5.46);
+  check('壁PBに反映', t.wall_pb_sqm, 5.58);
   check('マッチ統計 symbol=1', t.opening_match, { symbol: 1, inferred: 0, unresolved: 0 });
   check('元データにmatched_byの印',
     elevations.rooms[0].faces[0].openings[0].matched_by, 'symbol');

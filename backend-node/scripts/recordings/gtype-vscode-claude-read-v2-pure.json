@@ -69,23 +69,6 @@
  "equipment": {
   "ub_size": "1416"
  },
- "closet_interiors": [
-  {
-   "room": "ウォークインクロゼット",
-   "inner_width_mm": 4680,
-   "source": "家具工事シート: G ﾀｲﾌﾟ 洋室1 WIC 固定棚（コ型）W(1140+2400+1140)×D500 → 棚に沿う3辺=4680"
-  },
-  {
-   "room": "クロゼット(1)",
-   "inner_width_mm": 2470,
-   "source": "家具工事シート: G ﾀｲﾌﾟ 洋室2 CL 固定棚 W800×D835 → W+D×2=2470"
-  },
-  {
-   "room": "クロゼット(2)",
-   "inner_width_mm": 2620,
-   "source": "家具工事シート: G ﾀｲﾌﾟ 洋室3 CL 固定棚 W1150×D735（欠込有） → W+D×2=2620"
-  }
- ],
  "elevations": {
   "rooms": [
    {

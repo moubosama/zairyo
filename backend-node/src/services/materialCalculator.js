@@ -556,7 +556,14 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
         doorCount: 0,
         windowCount: 0,
         partitionWallLength: 0,
-        structuralWallLength: 0
+        structuralWallLength: 0,
+        wall_pb_sqm: 0,
+        wall_pb_sheets: 0,
+        waterproof_pb_sqm: 0,
+        waterproof_pb_sheets: 0,
+        ev_wall_pb_sqm: 0,
+        ev_wall_pb_sheets: 0,
+        sound_wall_pb_sqm: 0
       }
     };
   }
@@ -749,6 +756,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // リノベの場合は少なめに調整（新築の60%程度）
   wallPb95Sheets = Math.ceil(wallPb95Sheets * WALL_PB_REDUCTION);
   wallPb95Sheets = Math.min(Math.max(wallPb95Sheets, 30), 90);
+  const wallPb95Area = Math.round(wallPb95Sheets * PB_SHEET_SIZE_3x6 * 100) / 100;
   materials.push({
     category: '下地材',
     name: '壁 石膏ボード',
@@ -762,6 +770,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // アルファステイツ実績: 280枚/67戸 = 約4枚/戸
   let wallPbWaterSheets = Math.ceil(cfArea / PB_SHEET_SIZE_3x6 * LOSS_RATE_20);
   wallPbWaterSheets = Math.min(Math.max(wallPbWaterSheets, 2), 7);
+  const waterproofPb95Area = Math.round(wallPbWaterSheets * PB_SHEET_SIZE_3x6 * 100) / 100;
   materials.push({
     category: '下地材',
     name: '壁 耐水石膏ボード',
@@ -773,9 +782,27 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // 天井PB t-9.5 (3'×6')
   // アルファステイツ実績: 2,810枚/67戸 = 約42枚/戸
-  // 床面積係数: 42枚 / 65.8㎡ ≒ 0.64枚/㎡
-  // 換算はプロXLS集計表のX列係数1.4㎡/枚（端材ロス込み。1.6562=ロスなし理論値は使わない）
-  let ceilingPb95Sheets = Math.ceil(ceilingArea / 1.4);
+  // 換算はプロXLS集計表の式に一致させる（77行: AD77=W77/X77・X77=1.45はロス込みの実係数。
+  // ÷1.4や×1.05のロス率は使わない）。さらに74行「ﾊﾟｳﾀﾞｰﾙｰﾑ・ﾄｲﾚ天井ボード」=4枚/戸を
+  // ㎡換算とは別枠で確保するため、該当小部屋の天井面積を㎡換算から控除して+4枚を加算する:
+  //   天井PB/戸 = (天井面積 − パウダールーム・トイレ天井面積) ÷ 1.45 + 4枚
+  // Gタイプ検算: (59.087−(1.33+3.381))/1.45 + 4 = 41.5枚/戸（AD列373.749÷9戸と一致）
+  const CEILING_PB_SQM_PER_SHEET = 1.45; // 集計表X77
+  const POWDER_TOILET_PB_SHEETS = 4;     // 集計表74行（ﾊﾟｳﾀﾞｰﾙｰﾑ・ﾄｲﾚ天井ボード 4枚/戸）
+  const powderToiletCeilingArea = rooms
+    .filter(r => /パウダー|トイレ|便所/.test(r.name || ''))
+    .reduce((sum, r) => sum + (r.area_sqm || 0), 0);
+  let ceilingPb95Sheets;
+  let ceilingPbCalcNote;
+  if (powderToiletCeilingArea > 0) {
+    ceilingPb95Sheets = Math.ceil((ceilingArea - powderToiletCeilingArea) / CEILING_PB_SQM_PER_SHEET)
+      + POWDER_TOILET_PB_SHEETS;
+    ceilingPbCalcNote = `(天井面積 ${ceilingArea.toFixed(1)}㎡ − ﾊﾟｳﾀﾞｰ･ﾄｲﾚ ${powderToiletCeilingArea.toFixed(1)}㎡) ÷ ${CEILING_PB_SQM_PER_SHEET}㎡/枚 + ${POWDER_TOILET_PB_SHEETS}枚（XLS集計表方式）`;
+  } else {
+    // パウダールーム・トイレを特定できない場合は控除・加算なしの㎡換算のみ（係数はX77=1.45が正）
+    ceilingPb95Sheets = Math.ceil(ceilingArea / CEILING_PB_SQM_PER_SHEET);
+    ceilingPbCalcNote = `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${CEILING_PB_SQM_PER_SHEET}㎡/枚（XLS集計表X77係数）`;
+  }
   ceilingPb95Sheets = Math.min(Math.max(ceilingPb95Sheets, 20), 50);
   materials.push({
     category: '下地材',
@@ -783,7 +810,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: ceilingPb95Sheets,
-    calculation: `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ 1.4㎡/枚（プロ実績係数）`
+    calculation: ceilingPbCalcNote
   });
 
   // 下り天井PB t-9.5
@@ -821,12 +848,14 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // EV廻り壁PB t-9.5
   // アルファステイツ実績: 150枚/67戸 = 約2.2枚/戸
+  const evWallPb95Sheets = 3;
+  const evWallPb95Area = Math.round(evWallPb95Sheets * PB_SHEET_SIZE_3x6 * 100) / 100;
   materials.push({
     category: '下地材',
     name: 'EV廻り壁 石膏ボード',
     spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
-    quantity: 3,
+    quantity: evWallPb95Sheets,
     calculation: '標準3枚（67戸実績2.2枚/戸切上げ）'
   });
 
@@ -1053,12 +1082,13 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // 遮音壁PB張り
   // 実績: 13㎡/戸
+  const soundWallPbSqm = 13;
   materials.push({
     category: '下地材',
     name: '遮音壁PB張り',
     spec: 't9.5+グラスウール',
     unit: '㎡',
-    quantity: 13,
+    quantity: soundWallPbSqm,
     calculation: '標準13㎡（実績値）'
   });
 
@@ -2451,11 +2481,19 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       water_floor_area: cfArea,
       tile_area: tileArea,
       wall_area: wallArea,
+      wall_cloth_area: Math.ceil(wallArea),
       ceiling_area: ceilingArea,
       door_count: doorCount,
       window_count: windowCount,
       partition_wall_length: partitionWallLength,
-      structural_wall_length: structuralWallLength
+      structural_wall_length: structuralWallLength,
+      wall_pb_sqm: wallPb95Area,
+      wall_pb_sheets: wallPb95Sheets,
+      waterproof_pb_sqm: waterproofPb95Area,
+      waterproof_pb_sheets: wallPbWaterSheets,
+      ev_wall_pb_sqm: evWallPb95Area,
+      ev_wall_pb_sheets: evWallPb95Sheets,
+      sound_wall_pb_sqm: soundWallPbSqm
     },
     estimate: {
       category_totals: categoryTotals,

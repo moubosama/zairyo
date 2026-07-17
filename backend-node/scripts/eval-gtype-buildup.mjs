@@ -20,11 +20,24 @@ const F = (face, width_mm, wall_code, openings = []) => ({ face, width_mm, wall_
 export const G_ELEVATIONS = { rooms: [
   { name: '玄関・廊下', ceiling_height_mm: 2200, skirting: '木製巾木H=40', faces: [
     F('A', 1385, 'G14', [{ type: '玄関ドア', width_mm: 850, height_mm: 1900 }]),
-    F('B', 4840, 'G14', [{ type: '2枚折戸', width_mm: 803, height_mm: 2320 }]),
+    // 開口の面帰属はpage_56クロップ+page_45平面図の建具符号で確定（2026-07-16再確認・記録JSONと同構成）:
+    //   B面(廊下北側壁)=洋室(2)WD-2TA 800 + トイレWD-3TB 700（W=700,H=2,175ラベル）
+    //     + 収納2枚折戸WD-12C（平面図ラベル W=803,H=2.080。旧転記の高さ2320を2080に是正）
+    //     + パウダーWD-8B片引き（W=760,H=2.075ラベル。旧D面から移動）
+    //   D面=WD-1TA 850のみ（展開図D面の描画は片開き1枚≈846mm。旧D面の700はB面WD-3TBの誤帰属重複→削除）
+    //   C面(965・EV側D14)には扉様の描画があるが、XLSの壁(ボード)=4.84+1.39+4.84はC面965自体を含まず
+    //   控除も無いため住戸内建具ではないと判断（EV昇降路側の参考描画とみられる）→開口計上しない
+    // 検算: B/D面のH2175系建具幅計=0.80+0.70+0.85=2.35m。XLSの控除はセル値3.15+0.60=計3.75m×H2.17
+    //   （3.15の内訳はXLS未記載）。差1.40m ≒ 洋室(1)ドア0.80（平面図では廊下南側壁に実在するが
+    //   展開図D面には描かれていない）+ 0.60（対応する建具を展開図・平面図から特定できず・未計上）
+    F('B', 4840, 'G14', [
+      { type: '2枚折戸', symbol: 'WD-12C', width_mm: 803, height_mm: 2080 },
+      { type: '片開き戸', symbol: 'WD-2TA', width_mm: 800, height_mm: 2175 },
+      { type: '片開き戸', symbol: 'WD-3TB', width_mm: 700, height_mm: 2175 },
+      { type: '片引き戸', symbol: 'WD-8B', width_mm: 760, height_mm: 2075 } ]),
     F('C', 965, 'D14'), // EV側=RC面木+PB
     F('D', 4840, 'G14', [
-      { type: '片開き戸', width_mm: 700, height_mm: 2175 },
-      { type: '片引き戸', width_mm: 760, height_mm: 2075 } ]),
+      { type: '片開き戸', symbol: 'WD-1TA', width_mm: 850, height_mm: 2175 } ]),
   ]},
   { name: 'キッチン', ceiling_height_mm: 2200, skirting: '木製巾木H=40', faces: [
     F('A', 2575, 'C04'),
@@ -104,23 +117,43 @@ export const G_FLOOR_PLAN = {
   equipment: { ub_size: '1416' },
 };
 
+// ============ 収納内側の下地幅実寸（見積明細 家具工事シート・Gタイプ行） ============
+// 固定棚実寸 → 棚に沿う内側3辺の幅に換算（コ型=W3辺の和 / 単棚=W+D×2）。
+// タイプ別入力としてcomputeElevationTakeoffのopts.closetInteriorsに渡す（エンジンにはハードコードしない）
+export const G_CLOSET_INTERIORS = [
+  // 「G ﾀｲﾌﾟ 洋室1 WIC 固定棚（コ型）W（1140+2400+1140）×D500」→ 1140+2400+1140 = 4680
+  { room: 'ウォークインクロゼット', inner_width_mm: 4680 },
+  // 「G ﾀｲﾌﾟ 洋室2 CL 固定棚 W800×D835」→ 800+835×2 = 2470
+  { room: 'クロゼット(1)', inner_width_mm: 2470 },
+  // 「G ﾀｲﾌﾟ 洋室3 CL 固定棚 W1150×D735（欠込有）」→ 1150+735×2 = 2620
+  { room: 'クロゼット(2)', inner_width_mm: 2620 },
+];
+
 // ============ XLS正解（集計表 G列 戸当） ============
 const EXPECTED = [
   // [ラベル, 正解値, 単位, 実測値の取得, 判定閾値%]
-  ['壁PB t-9.5',        122.0609, '㎡', (t) => t.wall_pb_sqm, 10],
+  ['壁PB t-9.5',        122.0609, '㎡', (t) => t.wall_pb_sqm, 10], // 集計表C56='Ａタイプ'!P22+P76+P130+P184+P238+P291+P346+P400
+  // ⚠ 構成が異なる（数値はほぼ一致）: XLS C58=台所ブロックのUB廻りのみ（便所P376・洗面P430は0）。
+  //   エンジンはトイレ950/パウダー1925のG24面を耐水に回している。壁PBの部屋別構成ズレの一因
   ['耐水PB t-9.5',      6.4535,   '㎡', (t) => t.waterproof_pb_sqm, 15],
-  ['遮音壁PB t9.5+GW',  12.9785,  '㎡', (t) => t.sound_wall_pb_sqm, 999], // UB裏面が展開図外のため部分計上（既知）
+  // XLSの遮音壁=玄関P8+洋1P116(1.45×2.57)+洋2P170+洋3P224(1.05×2.57)+台所P278(1.45×2.57+1.1×2.57)。
+  // エンジンは洋1のL14しか計上せず、拾い高さも2.44（XLSは下地高2.57）→ 読み漏れ+高さ差の両方（既知）
+  ['遮音壁PB t9.5+GW',  12.9785,  '㎡', (t) => t.sound_wall_pb_sqm, 999],
   ['間仕切GW t50',      6.425,    '㎡', (t) => t.gw_sqm, 999],           // 同上
-  ['木製巾木 H=40',     56.44,    'm',  (t) => t.skirting_m.木製, 12],
-  ['クロゼット内RC面',  7.51,     '㎡', (t) => t.konpane_sqm, 15],
-  ['キッチンパネル面',  6.7,      '㎡', (t) => t.kitchen_panel_sqm, 20],
+  ['木製巾木 H=40',     56.44,    'm',  (t) => t.skirting_m.木製, 12],   // 玄関4.8+洋1 10.5+洋2 11.45+洋3 8.9+台所20.79
+  ['クロゼット内RC面',  7.51,     '㎡', (t) => t.konpane_sqm, 15],       // 集計表C73
+  // 旧期待値6.7はXLSに存在しない値だった（2026-07-16是正）。XLS実セル='Ａタイプ'!P313=3.925
+  // （壁(不燃材): 2.5×1.35+0.7×2.2+0.7×2.2−2.2×1.15）。エンジン5.77は+47%で✗が正しい姿
+  ['キッチンパネル面',  3.925,    '㎡', (t) => t.kitchen_panel_sqm, 20],
   // XLS方式の拾い量（Σ幅×下地高(CH+370)−開口 の壁1枚換算 + 収納内推定。"m"表記はXLS慣行で実態㎡）
   ['間仕切下地(木)',    84.082,   'm',  (t) => t.majikiri_shitaji_m, 10],
 ];
 
 const EXPECTED_FLOOR = [
-  ['際根太',            18.2,   'm',  (mats) => qty(mats, '際根太'), 12],
-  ['フローリング',      53.26,  '㎡', (mats) => qty(mats, 'フローリング'), 10], // 48.42×1.1ロス
+  ['際根太',            18.2,   'm',  (mats) => qty(mats, '際根太'), 12], // 玄関5.7+便所4+洗面8.5
+  // 旧期待値53.26=48.42×1.1は「XLS値にエンジンのロス率を掛けた循環比較」だった（2026-07-16是正）。
+  // XLS実セル=床上直貼りΣ48.415（発注AL列は収納床を除き47.5/戸）。エンジンのロス前床面積と比較する
+  ['フローリング(ロス前)', 48.415, '㎡', (mats, summary) => summary.floor_area, 10],
   ['乾式置床(ﾊﾟｳﾀﾞｰ/ﾄｲﾚ)', 3.9049, '㎡', (mats) => qty(mats, '乾式置床'), 30],
   ['床下地合板(置床上)', 4.7589, '㎡', (mats) => qty(mats, '床下地合板'), 30],
   ['天井PB(面積換算)',   59.0874,'㎡', (mats, summary) => summary.ceiling_area, 8],
@@ -156,7 +189,8 @@ function qtyM3(materials, nameIncludes) {
 }
 
 // ============ 実行 ============
-const takeoff = computeElevationTakeoff(G_ELEVATIONS, [], { planRooms: G_FLOOR_PLAN.rooms });
+const takeoff = computeElevationTakeoff(G_ELEVATIONS, [],
+  { planRooms: G_FLOOR_PLAN.rooms, closetInteriors: G_CLOSET_INTERIORS });
 const calc = calculateMaterials(G_FLOOR_PLAN, {}, {});
 const applied = applyElevationTakeoff(JSON.parse(JSON.stringify(calc)), takeoff);
 
