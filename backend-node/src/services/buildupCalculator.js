@@ -35,6 +35,12 @@ const FLOOR_OPENING_MIN_HEIGHT_MM = 1800;
 // 居室 2810−直貼40−2400=370 / 水回り 2810−置床200−仕上40−2200=370）。timberVolume.js参照。
 const STUD_PLENUM_M = 0.37;
 
+// 耐水記号（中間2/5）救済マッチの適用部屋（部屋名ベースの水回り判定）。
+// 面幅の転記は芯々/内法・部分区間で揺れるため、±80mmの第1パスでは取り逃すことがある
+// （Gemini実読み: パウダールームG24の壁1725 vs 面幅1925=差200）。
+// 耐水は水回りにしか出ない記号のため、救済は水回り部屋に限定して誤爆面を絞る
+const WET_ROOM_NAME_RE = /パウダー|洗面|トイレ|便所|UB|浴/;
+
 // 壁ボード類の拾い高さ = 天井高 + 40mm（天井PBへの飲み込み代）
 // XLSタイプ別シート（Gタイプ）の壁(ボード)行で直接確認: 玄関・廊下 4.84×2.24（CH2200+40）/
 // 洋室 3.64×2.44（CH2400+40）。耐水PBも (0.95+1.925)×2.24=6.44 vs 正解6.4535（差は丸め）で整合。
@@ -339,6 +345,41 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         used.add(cand.i);
         usedPl.add(cand.pl);
         placementByFace.set(cand.i, cand.c);
+      }
+
+      // 第2パス（耐水記号限定の救済マッチ）: 水回り部屋で第1パス（±80mm）に漏れた
+      // 耐水placement（中間2/5・例G24）だけを、未割付の面のうち幅が最も近いものへ
+      // tol=300mmまで緩めて割り付ける。根拠: 面幅の転記が芯々/内法・部分区間で揺れるため
+      // （実例: Gemini実読み パウダー1725 vs 面幅1925=差200）。300mmは両端の壁厚合計
+      // （RC約180+LGS約65+仕上代）を上限とする物理的な揺れ幅。Gタイプ1記録でのみ検証・
+      // 他タイプ未検証。なお器具寸法（洗面台W1000・UB1416等）の誤転記は差500以上になり
+      // ±300でも救済されない。耐水記号は水回りにしか出ないため誤爆面が限定される
+      // （WET_ROOM_NAME_RE参照）。居室・耐水以外の記号（LDKのC04ジャンク等）は
+      // 救済しない（±80のまま維持）。
+      if (WET_ROOM_NAME_RE.test(room.name || '')) {
+        const WATERPROOF_RESCUE_TOL_MM = 300;
+        const rescue = [];
+        for (const pl of room.plan_placements) {
+          if (usedPl.has(pl)) continue;
+          const c = parseWallCode(pl?.code);
+          const len = pl?.wall_length_mm;
+          if (!c || !(c.mid === 2 || c.mid === 5)) continue; // 耐水記号のみ
+          if (!Number.isFinite(len) || len <= 0) continue;
+          for (let i = 0; i < faces.length; i++) {
+            if (used.has(i)) continue;
+            const fw = faces[i].width_mm || 0;
+            if (fw <= 0 || parseWallCode(faces[i].wall_code)) continue;
+            const d = Math.abs(fw - len);
+            if (d <= WATERPROOF_RESCUE_TOL_MM) rescue.push({ pl, c, i, d });
+          }
+        }
+        rescue.sort((a, b) => a.d - b.d);
+        for (const cand of rescue) {
+          if (used.has(cand.i) || usedPl.has(cand.pl)) continue;
+          used.add(cand.i);
+          usedPl.add(cand.pl);
+          placementByFace.set(cand.i, cand.c);
+        }
       }
     }
 
