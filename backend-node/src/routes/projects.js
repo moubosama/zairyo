@@ -207,6 +207,8 @@ const uploadFieldsWith400 = (req, res, next) => {
  * @param elevParsed 展開図の解析結果（rooms必須）
  * @param planPath 平面詳細図のファイルパス（壁記号タイル読取に使用。無ければスキップ）
  * @param elevPath 展開図のファイルパス（開口タイル読取に使用）
+ * @returns タイル読取の統計 { wall_codes: {failedTiles,totalTiles}|null, openings: 同|null }
+ *          （E2Eスクリプトの表示用。本番ルートは戻り値を使わずanalysisResult側のフラグを見る）
  */
 export async function attachElevationData(analysisResult, elevParsed, planPath, elevPath) {
   analysisResult.elevations = elevParsed;
@@ -217,20 +219,50 @@ export async function attachElevationData(analysisResult, elevParsed, planPath, 
   const planReadable = planPath
     ? await fsPromises.access(planPath).then(() => true).catch(() => false)
     : false;
+  // 壁記号は既存があればスキップするが、前回が部分失敗（_wall_codes_partial）なら
+  // 展開図の再アップロードで再読取する（quota切れの部分結果が固定化される事故の回復手段）
+  const needWallCodes = planReadable &&
+    (!analysisResult.wall_finish_codes || analysisResult.wall_finish_codes.length === 0 ||
+     analysisResult._wall_codes_partial === true);
   const [tiledCodes, tiledOpenings] = await Promise.all([
-    (planReadable && (!analysisResult.wall_finish_codes || analysisResult.wall_finish_codes.length === 0))
+    needWallCodes
       ? analyzeWallCodesTiled(planPath, { roomNames }).catch(() => null)
       : Promise.resolve(null),
     analyzeOpeningsTiled(elevPath, { roomNames }).catch(() => null),
   ]);
-  if (tiledCodes && tiledCodes.length > 0) {
-    analysisResult.wall_finish_codes = tiledCodes;
-    console.log('壁記号タイル読取:', JSON.stringify(tiledCodes));
+  const tileStats = { wall_codes: null, openings: null };
+  if (tiledCodes) {
+    tileStats.wall_codes = { failedTiles: tiledCodes.failedTiles, totalTiles: tiledCodes.totalTiles };
+    if (tiledCodes.results.length > 0) {
+      analysisResult.wall_finish_codes = tiledCodes.results;
+      console.log('壁記号タイル読取:', JSON.stringify(tiledCodes.results));
+    }
+    // 部分失敗の顕在化: API制限（429/quota切れ）で空になったタイルを「記号なし」と区別して
+    // フラグ+警告に残す。全タイル成功でフラグ・警告とも解除（再読取ループを止める）
+    const otherWarnings = (analysisResult._warnings || []).filter((w) => w.field !== 'wall_codes_partial');
+    if (tiledCodes.failedTiles > 0) {
+      analysisResult._wall_codes_partial = true;
+      analysisResult._warnings = [...otherWarnings, {
+        field: 'wall_codes_partial',
+        message: `壁記号の読取タイル ${tiledCodes.failedTiles}/${tiledCodes.totalTiles}件がAPI制限で失敗しました。` +
+          '壁数量が過大になる可能性があります。展開図を再アップロードすると再読取します',
+        before: null,
+        after: null,
+      }];
+    } else {
+      delete analysisResult._wall_codes_partial;
+      if (analysisResult._warnings && otherWarnings.length !== analysisResult._warnings.length) {
+        analysisResult._warnings = otherWarnings;
+      }
+    }
   }
-  if (tiledOpenings && tiledOpenings.length > 0) {
+  if (tiledOpenings) {
+    tileStats.openings = { failedTiles: tiledOpenings.failedTiles, totalTiles: tiledOpenings.totalTiles };
+  }
+  if (tiledOpenings && tiledOpenings.results.length > 0) {
     // 部屋名+面でマッチする面に開口をマージ（タイル読取の方が詳細）
     let mergedCount = 0;
-    for (const op of tiledOpenings) {
+    for (const op of tiledOpenings.results) {
       const room = analysisResult.elevations.rooms.find(
         (r) => r.name && op.room && (r.name === op.room || r.name.includes(op.room) || op.room.includes(r.name))
       );
@@ -245,7 +277,7 @@ export async function attachElevationData(analysisResult, elevParsed, planPath, 
         mergedCount++;
       }
     }
-    console.log(`開口タイル読取: ${tiledOpenings.length}件中${mergedCount}件をマージ`);
+    console.log(`開口タイル読取: ${tiledOpenings.results.length}件中${mergedCount}件をマージ`);
   }
 
   // 平面詳細図から抽出した壁仕上記号を部屋名でマージ（buildupの部位振り分けに使う）
@@ -261,6 +293,7 @@ export async function attachElevationData(analysisResult, elevParsed, planPath, 
       }
     }
   }
+  return tileStats;
 }
 
 /**
@@ -523,6 +556,8 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
         openings: parsedData.elevations.rooms.reduce(
           (s, r) => s + (r.faces || []).reduce((t, f) => t + (f.openings || []).length, 0), 0),
         wall_code_rooms: Array.isArray(parsedData.wall_finish_codes) ? parsedData.wall_finish_codes.length : 0,
+        // タイル部分失敗（quota切れ等）の顕在化。trueなら再アップロードで再読取される
+        wall_codes_partial: parsedData._wall_codes_partial === true,
       };
     } else {
       const doorRes = await analyzeWithErrorCapture('door_schedule');

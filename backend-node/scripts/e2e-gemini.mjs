@@ -25,7 +25,8 @@ if (!process.env.GOOGLE_GEMINI_API_KEY) {
 // 全AI呼び出しをGeminiへ（claudeApi.jsは呼び出し時にAI_PROVIDERを評価する）
 process.env.AI_PROVIDER = 'gemini';
 // 429/503の再試行を有効化（無料枠キーはRPM制限・高負荷503に当たりやすい。
-// タイル解析は12並列のため必須。本番はデフォルト0回のまま）
+// タイル解析は12並列のため必須。本番Renderも GEMINI_RETRY_MAX=4 で運用中。
+// 日次上限quotaの429はリトライされず失敗タイルとして顕在化する）
 if (!process.env.GEMINI_RETRY_MAX) process.env.GEMINI_RETRY_MAX = '4';
 const modelFlag = process.argv.indexOf('--model');
 if (modelFlag >= 0 && process.argv[modelFlag + 1]) {
@@ -85,9 +86,16 @@ const elevRes = await analyzeAuxDrawing(ELEV, 'elevation', { roomNames }).catch(
 saveRaw('elevation', elevRes?.rawText);
 if (elevRes?.parsed?.drawing_type === 'elevation' &&
     Array.isArray(elevRes.parsed.rooms) && elevRes.parsed.rooms.length > 0) {
-  await attachElevationData(parsedData, elevRes.parsed, PLAN, ELEV);
+  const tileStats = await attachElevationData(parsedData, elevRes.parsed, PLAN, ELEV);
   console.log('  展開図室数:', parsedData.elevations.rooms.length,
-    '/ 壁記号:', (parsedData.wall_finish_codes || []).length, '部屋分');
+    '/ 壁記号:', (parsedData.wall_finish_codes || []).length, '部屋分',
+    '/ タイル失敗: 壁記号', tileStats?.wall_codes
+      ? `${tileStats.wall_codes.failedTiles}/${tileStats.wall_codes.totalTiles}` : '-',
+    '開口', tileStats?.openings
+      ? `${tileStats.openings.failedTiles}/${tileStats.openings.totalTiles}` : '-');
+  if (parsedData._wall_codes_partial) {
+    console.warn('  ⚠ 壁記号タイルが部分失敗（_wall_codes_partial=true）。壁数量が過大になる可能性');
+  }
 } else {
   console.error('  展開図として読めませんでした（drawing_type:',
     elevRes?.parsed?.drawing_type, '）→ elevationsなしで続行（読めなかった事実も記録）');

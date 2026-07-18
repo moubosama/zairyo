@@ -187,7 +187,15 @@ gemini-2.5-proは無料枠quota=0で未測定（Billing有効化後に `node scr
 - **運用方針（ユーザー決定）**: Gemini無料枠=flash 1日20リクエスト≒アップロード1回分。**毎日1回の実読みE2E→修正のサイクル**で
   精度を詰め、安定後にBilling課金を判断。今日の枠は消費済み（1回目E2E+2回目が日次上限で中断・quota切れは読取欠落として顕在化する教訓）
 - 次の1発の手順: `cd backend-node; node scripts/e2e-gemini.mjs` → 記録が保存されreplayが自動実行。
-  ブラウザでやる場合はRenderに AI_PROVIDER=gemini / GEMINI_RETRY_MAX=4 を設定してから
+  ブラウザでやる場合はRenderに AI_PROVIDER=gemini / GEMINI_RETRY_MAX=4 を設定してから（2026-07-17設定済み・本番Gemini稼働中）
+
+**本番Gemini運用のmust-fix 2件（2026-07-17・最終監査→coder→差し戻し再レビュー承認）**:
+- **タイル部分失敗の顕在化+sticky解消**: analyzeTilesが{results, failedTiles, totalTiles}を返し（API障害と「記号なし」を区別。
+  Claude経路も対応）、部分失敗時は `_wall_codes_partial` + _warnings「壁記号の読取N件失敗・過大の可能性・再アップロードで再読取」。
+  再読取条件に partial を追加（旧: 一度部分保存されると恒久固定→壁PB155枚級の暴走が警告なしで起きる穴だった）。モック検証18✅
+- **リトライ暴走の抑制**: 日次上限の429（message内PerDay）は待たずに即断念、待機を15/30/45/60秒（上限150秒/呼・旧300秒）。
+  should-fix繰越: PerDay判定のerrorDetails補強・パース失敗タイルのfailed計上・mergeDoorScheduleのnull上書き・
+  summary書き戻し統一（Gemini記録でdump-ui✗になる）・実測時の壁面積カードのラベル・.env.exampleへの新環境変数記載
 
 **設計決定（実装前・変更可）**:
 - 平面詳細図=必須、展開図・建具表=任意（無ければ従来ロジック、有れば精度モード。後方互換）
