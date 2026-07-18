@@ -379,6 +379,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
           used.add(cand.i);
           usedPl.add(cand.pl);
           placementByFace.set(cand.i, cand.c);
+          // 救済割付は1部屋につき最大1件（差が最小の候補のみ）。救済パスはあくまで
+          // フォールバックであり、水回り部屋がUBに接する耐水面は通常1面のため、
+          // ±300mmの緩い窓で複数面へ広がる過大計上を防ぐ（安全側ガード）
+          break;
         }
       }
     }

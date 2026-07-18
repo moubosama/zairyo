@@ -657,9 +657,24 @@ export async function analyzeWallCodesTiled(filePath, context = {}) {
     const key = `${code}|${len || ''}`;
     if (!m.has(key)) m.set(key, { code, wall_length_mm: len });
   }
+  // タイル重なり由来の重複統合: drawingTiles.jsの3×2分割は隣接タイルに重なりがあり、
+  // 同じ壁の同じ記号楕円が2つのタイルから二重に読まれる（実例: Gemini記録のトイレ
+  // G24@950 と G24@965 = 同一壁の重複転記）。実在する別の壁同士が同一部屋で
+  // 100mm差の幅で並ぶことは通常ないため、同記号・寸法差≤100mmは読み取り揺れとみなし
+  // 先勝ちで1件に統合する（平均は取らない・シンプルに先に読めた寸法を採用）
+  const TILE_DUP_TOL_MM = 100;
   for (const m of byRoom.values()) {
     for (const [key, p] of m) {
       if (!p.wall_length_mm && [...m.values()].some((q) => q.code === p.code && q.wall_length_mm)) m.delete(key);
+    }
+    const kept = [];
+    for (const [key, p] of m) {
+      if (p.wall_length_mm && kept.some((q) => q.code === p.code && q.wall_length_mm
+          && Math.abs(q.wall_length_mm - p.wall_length_mm) <= TILE_DUP_TOL_MM)) {
+        m.delete(key);
+      } else {
+        kept.push(p);
+      }
     }
   }
   const results = [...byRoom.entries()].map(([room, m]) => {
