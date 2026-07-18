@@ -620,7 +620,11 @@ async function analyzeTiles(filePath, prompt, resultKey) {
           console.warn(`タイル${i + 1}/${tiles.length} 解析失敗:`, r?.error?.status ?? '', r?.error?.message ?? 'no result');
           return [];
         }
-        return r.parsed?.[resultKey] || [];
+        // どのタイルから読めたかを付記（_tile）。壁記号の集約で「タイル重なりの二重検出」と
+        // 「同一タイル内に実在する等寸の別壁（対面）」を区別するのに使う。
+        // 呼び出し側（aggregateWallCodeItems / analyzeOpeningsTiled）で消費し、外へは出さない
+        return (r.parsed?.[resultKey] || []).map((item) =>
+          (item && typeof item === 'object' ? { ...item, _tile: i } : item));
       })
       .catch((e) => {
         failedTiles++;
@@ -640,48 +644,84 @@ async function analyzeTiles(filePath, prompt, resultKey) {
 export async function analyzeWallCodesTiled(filePath, context = {}) {
   const tiled = await analyzeTiles(filePath, PLAN_CODE_TILE_PROMPT + roomContextNote(context.roomNames), 'codes');
   if (!tiled) return null;
-  const raw = tiled.results;
+  const results = aggregateWallCodeItems(tiled.results);
+  return { results, failedTiles: tiled.failedTiles, totalTiles: tiled.totalTiles };
+}
 
-  // 部屋ごとにユニーク化して集約（記号+壁寸法の割付情報も保持）
-  const byRoom = new Map();
+/**
+ * タイル読取の壁記号アイテムを部屋ごとに集約する（純関数・test-buildup-placement.mjsで検証）
+ *
+ * 課題: 「タイル重なりの二重検出（同じ壁が隣接タイルから2回読まれる）」と
+ * 「実在する等寸の別壁（矩形部屋の対面2枚が同記号・同寸=標準形）」を区別する必要がある。
+ * 旧実装はキー `${code}|${len}` で部屋内の同記号・同寸を無条件に1件へ潰しており、
+ * 対面2枚の片方が消えていた（2026-07-18レビュー確定バグ）。
+ *
+ * 区別のルール（_tile = analyzeTilesが付けるタイル番号）:
+ * - 1つのタイルは同じ壁の楕円を1回しか写さない → 同一タイル内の同記号・同寸N件は実在N本
+ * - 隣接タイルの重なりで読まれた重複は「別タイルから各1件」になる
+ * → クラスタ（同記号・寸法差≤100mm）ごとに「同一タイルからの読取件数の最大値」を実在本数とする。
+ *   上限2本（対面想定。プロンプト逸脱の反復書き出しをキャップ）。
+ * - _tileが無いアイテム（旧経路・保険）は各々を別タイル扱い → 従来どおり1件に統合（安全側）
+ * ※ 離れた別タイルに写った等寸の別壁は max=1 に統合され拾えないが、過少除外
+ *   （C04を1本分しか除外しない=壁PB過大側）で止まり、二重除外（過少側）にはならない
+ */
+export function aggregateWallCodeItems(raw) {
+  const byRoom = new Map(); // room -> [{code, len, tile}]
   for (const item of raw) {
     if (!item?.room || !item?.code) continue;
     const code = String(item.code).toUpperCase().trim();
     if (!/^[A-Z][0-9][0-9]$/.test(code)) continue;
     const len = Number.isFinite(item.wall_length_mm) && item.wall_length_mm > 0
       ? Math.round(item.wall_length_mm) : null;
-    if (!byRoom.has(item.room)) byRoom.set(item.room, new Map());
-    const m = byRoom.get(item.room);
-    // 記号+壁寸法単位でユニーク化: 同じ記号が複数の壁に付く部屋（洋室のC04×2面等）は
-    // それぞれ別の面に割り付ける必要がある。寸法nullの重複は寸法ありが1件でもあれば捨てる
-    const key = `${code}|${len || ''}`;
-    if (!m.has(key)) m.set(key, { code, wall_length_mm: len });
+    if (!byRoom.has(item.room)) byRoom.set(item.room, []);
+    byRoom.get(item.room).push({ code, len, tile: item._tile });
   }
-  // タイル重なり由来の重複統合: drawingTiles.jsの3×2分割は隣接タイルに重なりがあり、
-  // 同じ壁の同じ記号楕円が2つのタイルから二重に読まれる（実例: Gemini記録のトイレ
-  // G24@950 と G24@965 = 同一壁の重複転記）。実在する別の壁同士が同一部屋で
-  // 100mm差の幅で並ぶことは通常ないため、同記号・寸法差≤100mmは読み取り揺れとみなし
-  // 先勝ちで1件に統合する（平均は取らない・シンプルに先に読めた寸法を採用）
-  const TILE_DUP_TOL_MM = 100;
-  for (const m of byRoom.values()) {
-    for (const [key, p] of m) {
-      if (!p.wall_length_mm && [...m.values()].some((q) => q.code === p.code && q.wall_length_mm)) m.delete(key);
+
+  const TILE_DUP_TOL_MM = 100; // 同一壁の読み取り揺れとみなす寸法差（実例: トイレG24@950と@965）
+  const MAX_SAME_WALL = 2;     // 同記号・同寸クラスタの実在上限（矩形部屋の対面2枚を想定）
+  const results = [];
+  for (const [room, items] of byRoom) {
+    const placements = [];
+    // 寸法nullは同記号で寸法ありが1件でもあれば捨てる。全てnullなら記号ごと1件だけ残す
+    const nullSeen = new Set();
+    for (const p of items) {
+      if (p.len) continue;
+      if (items.some((q) => q.code === p.code && q.len)) continue;
+      if (nullSeen.has(p.code)) continue;
+      nullSeen.add(p.code);
+      placements.push({ code: p.code, wall_length_mm: null });
     }
-    const kept = [];
-    for (const [key, p] of m) {
-      if (p.wall_length_mm && kept.some((q) => q.code === p.code && q.wall_length_mm
-          && Math.abs(q.wall_length_mm - p.wall_length_mm) <= TILE_DUP_TOL_MM)) {
-        m.delete(key);
-      } else {
-        kept.push(p);
+    // 同記号・寸法差≤100mmでクラスタ化（代表値=先勝ちの寸法。平均は取らない）
+    const clusters = [];
+    for (const p of items) {
+      if (!p.len) continue;
+      const c = clusters.find((cl) => cl.code === p.code
+        && Math.abs(cl.len - p.len) <= TILE_DUP_TOL_MM);
+      if (c) c.members.push(p);
+      else clusters.push({ code: p.code, len: p.len, members: [p] });
+    }
+    for (const cl of clusters) {
+      // タイルごとの読取件数の最大値 = 実在本数（_tile未付与は各々別タイル扱い→1件に統合）。
+      // 同一タイル内の複数計上は「寸法ラベル完全一致」に限定する: 実在の等幅対面2枚なら
+      // 寸法ラベルは同一値が2回書かれる。僅差（例: C04@2360とC04@2410）は同じ楕円の
+      // 再転記ノイズの疑いが強いため1件扱い（過大除外＝壁PB過少側に振らない）
+      const perTile = new Map(); // tileKey -> Map(len -> 件数)
+      cl.members.forEach((p, idx) => {
+        const key = p.tile != null ? `t${p.tile}` : `u${idx}`;
+        if (!perTile.has(key)) perTile.set(key, new Map());
+        const byLen = perTile.get(key);
+        byLen.set(p.len, (byLen.get(p.len) || 0) + 1);
+      });
+      let maxSameLen = 1;
+      for (const byLen of perTile.values()) {
+        for (const n of byLen.values()) maxSameLen = Math.max(maxSameLen, n);
       }
+      const count = Math.min(MAX_SAME_WALL, maxSameLen);
+      for (let n = 0; n < count; n++) placements.push({ code: cl.code, wall_length_mm: cl.len });
     }
+    results.push({ room, codes: [...new Set(placements.map((p) => p.code))], placements });
   }
-  const results = [...byRoom.entries()].map(([room, m]) => {
-    const placements = [...m.values()];
-    return { room, codes: [...new Set(placements.map((p) => p.code))], placements };
-  });
-  return { results, failedTiles: tiled.failedTiles, totalTiles: tiled.totalTiles };
+  return results;
 }
 
 /**
@@ -696,8 +736,9 @@ export async function analyzeOpeningsTiled(filePath, context = {}) {
   // 重複排除（タイルの重なりで同じ開口が2回出る）: room+face+type+width で同一視
   const seen = new Set();
   const openings = [];
-  for (const op of tiled.results) {
-    if (!op?.room) continue;
+  for (const rawOp of tiled.results) {
+    if (!rawOp?.room) continue;
+    const { _tile, ...op } = rawOp; // タイル番号は集約用の内部情報 → 保存データに漏らさない
     const key = `${op.room}|${op.face || ''}|${op.type || ''}|${op.width_mm || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);

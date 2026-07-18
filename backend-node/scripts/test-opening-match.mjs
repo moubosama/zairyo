@@ -2,14 +2,17 @@
  * 開口×建具表マッチング層のユニット検証
  *
  * 対象: buildupCalculator.js の normalizeDoorSymbol / buildDoorLookup / resolveOpening
+ *       + routes/projects.js の mergeDoorSchedule / attachElevationData（部屋名・符号の正規化突合）
  * 観点: 符号の表記ゆれ吸収・推定マッチ（type+寸法帯+取付位置）・複数候補の安全側挙動・
- *       マッチ失敗時のnull維持（既存fallback高さに委ねる）・後方互換（建具表なし）
+ *       マッチ失敗時のnull維持（既存fallback高さに委ねる）・後方互換（建具表なし）・
+ *       同符号の寸法null再掲行の非毒化（サイクルB修正1〜4の再現ケース含む）
  *
  * 実行: node scripts/test-opening-match.mjs
  */
 import {
   normalizeDoorSymbol, buildDoorLookup, resolveOpening, computeElevationTakeoff,
 } from '../src/services/buildupCalculator.js';
+import { mergeDoorSchedule, attachElevationData } from '../src/routes/projects.js';
 
 let pass = 0, fail = 0;
 function check(label, actual, expected) {
@@ -118,6 +121,32 @@ console.log('--- 推定マッチ ---');
     [r.width_mm, r.height_mm, r.matched_by], [850, 1900, 'symbol']);
 }
 {
+  // 【修正3再現】玄関ドアをAIが type:'片開き戸'・room:'玄関・廊下' と転記 → typeの玄関/SD/鋼製
+  // 除外を素通りし、WD-1TA 850×2175が補完され真値SD-101A 1900より過大控除になっていた
+  // （location未記載の建具表だと取付位置照合でも止まらない）→ 部屋名の玄関判定で推定除外
+  const entLookup = buildDoorLookup([
+    { symbol: 'WD-1TA', name: '片開き戸', width_mm: 850, height_mm: 2175, location: null }]);
+  const r = resolveOpening({ type: '片開き戸', width_mm: 850, room: '玄関・廊下' }, entLookup);
+  check('type片開き戸+room玄関・廊下 → 推定除外（WD-1TA 2175を補完しない）',
+    [r.height_mm ?? null, r.matched_by ?? null], [null, null]);
+}
+{
+  // roomNameフォールバック側（openingにroomが無い）でも同様に除外。全角部屋名でも効く
+  const entLookup = buildDoorLookup([
+    { symbol: 'WD-1TA', name: '片開き戸', width_mm: 850, height_mm: 2175, location: null }]);
+  const r = resolveOpening({ type: '片開き戸', width_mm: 850 }, entLookup, '玄関　・　廊下');
+  check('roomName=玄関系（全角空白入り）でも推定除外',
+    [r.height_mm ?? null, r.matched_by ?? null], [null, null]);
+}
+{
+  // 玄関部屋の開口でも符号マッチ（①）は引き続き可（room除外は推定②のみに効く）
+  const withSd = buildDoorLookup([...SCHEDULE,
+    { symbol: 'SD-101A', name: '鋼製片開きドア', width_mm: 850, height_mm: 1900, location: '玄関' }]);
+  const r = resolveOpening({ type: '片開き戸', symbol: 'SD-101A', room: '玄関・廊下' }, withSd);
+  check('room玄関でも符号マッチは可（SD-101A→850×1900）',
+    [r.width_mm, r.height_mm, r.matched_by], [850, 1900, 'symbol']);
+}
+{
   // 取付位置照合は候補1件でも適用: 唯一の候補の取付位置が開口の部屋と対応しない → 推定しない
   const r = resolveOpening({ type: '6枚折戸' }, LOOKUP, 'トイレ');
   check('候補1件でも取付位置不一致なら推定しない',
@@ -156,6 +185,59 @@ console.log('--- 同符号の重複 ---');
   ]);
   const r = resolveOpening({ symbol: 'wd-2a' }, dup);
   check('同符号で寸法一致 → マッチ可', [r.width_mm, r.height_mm, r.matched_by], [800, 2080, 'symbol']);
+}
+{
+  // 【修正1再現・CONFIRMED】同符号の2行目が寸法null（一覧行+姿図欄の再掲等）
+  // 旧実装は厳密比較で null≠実寸 も「矛盾」扱い → bySymbolがnull毒化し寸法行までマッチ不能だった
+  const dup = buildDoorLookup([
+    { symbol: 'WD-2TA', name: '片開き戸', width_mm: 800, height_mm: 2175 },
+    { symbol: 'WD-2TA', name: '片開き戸', width_mm: null, height_mm: null },
+  ]);
+  const r = resolveOpening({ symbol: 'wd-2ta' }, dup);
+  check('同符号null行が後 → 寸法行で符号マッチ成立（毒化しない）',
+    [r.width_mm, r.height_mm, r.matched_by], [800, 2175, 'symbol']);
+}
+{
+  // null行が先でも同じ（順序非依存）
+  const dup = buildDoorLookup([
+    { symbol: 'WD-2TA', name: '片開き戸', width_mm: null, height_mm: null },
+    { symbol: 'WD-2TA', name: '片開き戸', width_mm: 800, height_mm: 2175 },
+  ]);
+  const r = resolveOpening({ symbol: 'WD-2TA' }, dup);
+  check('同符号null行が先でも符号マッチ成立',
+    [r.width_mm, r.height_mm, r.matched_by], [800, 2175, 'symbol']);
+}
+{
+  // 部分null: 幅だけの行+高さだけの行 → フィールド単位で合成（非nullの食い違いのみ矛盾）
+  const dup = buildDoorLookup([
+    { symbol: 'WD-2TA', name: '片開き戸', width_mm: 800, height_mm: null },
+    { symbol: 'WD-2TA', name: '片開き戸', width_mm: null, height_mm: 2175 },
+  ]);
+  const r = resolveOpening({ symbol: 'WD-2TA' }, dup);
+  check('部分nullの2行はフィールド単位で合成',
+    [r.width_mm, r.height_mm, r.matched_by], [800, 2175, 'symbol']);
+}
+{
+  // 非null同士の矛盾は従来どおり毒化。間にnull行が挟まっても毒化判定は変わらない
+  const dup = buildDoorLookup([
+    { symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 },
+    { symbol: 'WD-2A', name: '片開き戸', width_mm: null, height_mm: null },
+    { symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2175 },
+  ]);
+  const r = resolveOpening({ symbol: 'WD-2A', type: '片開き戸', width_mm: 800 }, dup);
+  check('null行を挟んだ非null矛盾 → 毒化維持（高さnull）',
+    [r.height_mm ?? null, r.matched_by ?? null], [null, null]);
+}
+{
+  // 矛盾確定後に寸法一致の行が来ても復活しない（どちらの寸法か確定できないままのため安全側維持）
+  const dup = buildDoorLookup([
+    { symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 },
+    { symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2175 },
+    { symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 },
+  ]);
+  const r = resolveOpening({ symbol: 'WD-2A', type: '片開き戸', width_mm: 800 }, dup);
+  check('矛盾確定後は後続の寸法行でも復活しない',
+    [r.height_mm ?? null, r.matched_by ?? null], [null, null]);
 }
 
 // ============ 5. 後方互換（建具表なし・符号なし） ============
@@ -225,6 +307,117 @@ console.log('--- computeElevationTakeoff 統合 ---');
   ]};
   computeElevationTakeoff(elevations, SCHEDULE);
   check('マッチしなくなった開口の古い印は削除される', 'matched_by' in opening, false);
+}
+
+// ============ 7. mergeDoorSchedule（複数ページマージの正規化キー・修正2） ============
+console.log('--- mergeDoorSchedule ---');
+{
+  // 【修正2再現】表記ゆれの同一建具（全角・ハイフンゆれ）が別エントリで残らず1件に統合される
+  // （生symbolキーだと2件残り、下流buildDoorLookupの正規化キーで衝突していた）
+  const existing = [{ symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 }];
+  const incoming = [{ symbol: 'ＷＤ－２Ａ', name: '片開き戸', width_mm: null, height_mm: null }];
+  const { doors, added } = mergeDoorSchedule(existing, incoming);
+  check('表記ゆれマージ → 1件統合・added=0', [doors.length, added], [1, 0]);
+  check('既存の寸法行が保持される', [doors[0].width_mm, doors[0].height_mm], [800, 2080]);
+}
+{
+  // 逆方向: 既存が寸法null・新規が全角符号で寸法あり → 同一符号として寸法を埋める
+  const existing = [{ symbol: 'WD-120A', name: '2枚折戸', width_mm: null, height_mm: null }];
+  const incoming = [{ symbol: 'ＷＤ－１２０Ａ', name: '2枚折戸', width_mm: 605, height_mm: 2320 }];
+  const { doors, added } = mergeDoorSchedule(existing, incoming);
+  check('表記ゆれでも寸法欠け既存に補完される（added=0）',
+    [doors.length, added, doors[0].width_mm, doors[0].height_mm], [1, 0, 605, 2320]);
+}
+{
+  // 既存保存データに生キー重複が既にある場合もここを通れば統合される
+  const existing = [
+    { symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 },
+    { symbol: 'ＷＤ－２Ａ', name: '片開き戸', width_mm: null, height_mm: null },
+  ];
+  const { doors, added } = mergeDoorSchedule(existing, []);
+  check('既存内の生キー重複も統合される', [doors.length, added, doors[0].width_mm], [1, 0, 800]);
+}
+{
+  // 新規符号は追加カウント（従来挙動の維持）
+  const { doors, added } = mergeDoorSchedule(
+    [{ symbol: 'SD-101A', name: '鋼製片開きドア', width_mm: 850, height_mm: 1900 }],
+    [{ symbol: 'WD-2TA', name: '片開き戸', width_mm: 800, height_mm: 2175 }]);
+  check('新規符号の追加はadded=1', [doors.length, added], [2, 1]);
+}
+{
+  // 【should-fix1再現】丸ごとspreadだとincomingのnullフィールドが既存の実寸を消していた
+  // （既存width 800がincoming width nullで消失→開口控除が落ち壁PB約1.7㎡過大）
+  // → フィールド単位補完: 既存の非null値は保持・欠けたフィールドだけ埋める・symbolは既存表記
+  const existing = [{ symbol: 'WD-8B', name: '片引き戸', width_mm: 800, height_mm: null }];
+  const incoming = [{ symbol: 'ＷＤ－８Ｂ', name: null, width_mm: null, height_mm: 2075 }];
+  const { doors, warnings } = mergeDoorSchedule(existing, incoming);
+  check('null上書き防止: 既存width保持+高さのみ補完+symbol/nameは既存表記',
+    [doors[0].symbol, doors[0].name, doors[0].width_mm, doors[0].height_mm],
+    ['WD-8B', '片引き戸', 800, 2075]);
+  check('矛盾なし → 警告なし', warnings, []);
+}
+{
+  // 【should-fix2再現】非null同士の寸法矛盾（表記ゆれ符号のページ間矛盾）を黙殺しない:
+  // 該当フィールドをnull化（=buildDoorLookupの毒化相当をマージ層で実施・fallback高さへ倒す）+警告
+  const { doors, warnings } = mergeDoorSchedule(
+    [{ symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 }],
+    [{ symbol: 'ＷＤ－２Ａ', name: '片開き戸', width_mm: 800, height_mm: 2175 }]);
+  check('矛盾フィールドのみnull化（一致する幅は保持）',
+    [doors.length, doors[0].width_mm, doors[0].height_mm], [1, 800, null]);
+  check('door_schedule_conflict警告が出る',
+    [warnings.length, warnings[0].field], [1, 'door_schedule_conflict']);
+  check('警告メッセージに符号と両寸法', /WD-2A/.test(warnings[0].message) &&
+    /2080/.test(warnings[0].message) && /2175/.test(warnings[0].message), true);
+}
+{
+  // 矛盾でnull化した寸法は後続行の値でも復活しない（どちらが正か確定できないまま=安全側維持）
+  const { doors, warnings } = mergeDoorSchedule(
+    [{ symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 }],
+    [{ symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2175 },
+     { symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 }]);
+  check('矛盾null化は後続の寸法行で復活しない・警告は符号×フィールドごと1回',
+    [doors[0].height_mm ?? null, warnings.length], [null, 1]);
+}
+{
+  // マージ層でnull化された寸法は下流buildDoorLookupでも符号マッチ不成立（fallback高さ控除に落ちる）
+  const { doors } = mergeDoorSchedule(
+    [{ symbol: 'WD-2A', name: '片開き戸', width_mm: 800, height_mm: 2080 }],
+    [{ symbol: 'ＷＤ－２Ａ', name: '片開き戸', width_mm: 800, height_mm: 2175 }]);
+  const r = resolveOpening({ symbol: 'WD-2A', type: '片開き戸', width_mm: 800 }, buildDoorLookup(doors));
+  check('矛盾null化後の下流: 高さは補完されずfallbackへ',
+    [r.height_mm ?? null], [null]);
+}
+
+// ============ 8. attachElevationData（部屋名の正規化突合・修正4） ============
+console.log('--- attachElevationData ---');
+{
+  // 【修正4再現】平面図の壁記号room='洋室（１）'（全角）vs 展開図room名'洋室(1)'（半角）
+  // 生比較だと不一致でplan_codes/plan_placementsが丸ごと落ち、全面デフォルトG14=壁PB過大になる
+  // planPath/elevPath=null → タイル読取はスキップ/失敗catchされAI呼び出しなしで通る
+  const analysisResult = {
+    rooms: [{ name: '洋室(1)' }],
+    wall_finish_codes: [{ room: '洋室（１）', codes: ['C04', 'G14'],
+      placements: [{ code: 'C04', wall_mm: 2360 }] }],
+  };
+  const elevParsed = { rooms: [{ name: '洋室(1)', ceiling_height_mm: 2400,
+    faces: [{ face: 'A', width_mm: 2360 }] }] };
+  await attachElevationData(analysisResult, elevParsed, null, null);
+  check('全角表記ゆれ部屋名でもplan_codesが付く',
+    analysisResult.elevations.rooms[0].plan_codes, ['C04', 'G14']);
+  check('plan_placementsも付く',
+    analysisResult.elevations.rooms[0].plan_placements, [{ code: 'C04', wall_mm: 2360 }]);
+}
+{
+  // 部屋番号の区別は維持: 洋室(2)の記号が洋室(1)に付かない（正規化しても(1)≠(2)）
+  const analysisResult = {
+    rooms: [{ name: '洋室(1)' }],
+    wall_finish_codes: [{ room: '洋室（２）', codes: ['D64'] }],
+  };
+  const elevParsed = { rooms: [{ name: '洋室(1)', ceiling_height_mm: 2400,
+    faces: [{ face: 'A', width_mm: 2360 }] }] };
+  await attachElevationData(analysisResult, elevParsed, null, null);
+  check('別番号の部屋には付かない（(1)と(2)は別部屋のまま）',
+    analysisResult.elevations.rooms[0].plan_codes ?? null, null);
 }
 
 console.log(`\n合計: ✅ ${pass} / ✗ ${fail}`);

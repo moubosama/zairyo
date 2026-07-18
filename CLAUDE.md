@@ -235,6 +235,32 @@ gemini-2.5-proは無料枠quota=0で未測定（Billing有効化後に `node scr
 - **丸め**: エンジンは戸単位ceil（壁+0.51枚/戸等）・XLSは総量小数保持→タイプ見積では㎡保持×戸数後に丸めへ変更推奨
 - 正しさ確認済み: CH+40（壁・耐水）・KP帯ch-0.85・換算1.4/1.45/1.5適用・開口実寸控除・際根太断面・鏡像設計・C04/D64振り分け等
 
+**割付精度サイクルA（2026-07-18・8角度コードレビュー→検証確定4件をcoder/reviewer分離で修正・承認済み）**:
+全diff（3858b57..HEAD）の多角レビューで25候補→独立検証16件生存（詳細はこの節と総監査節）。うち割付系4件を修正:
+- **等幅対面タイ+二重除外**（buildupCalculator placementByFace）: 第0パス新設（面のwall_codeと同記号±80mmのplacementを面ごと最近傍1件消費=二重除外防止）+タイ解決を加点式に（C下地限定: ドアある面+1/窓ある面−1/**窓+ドア同居は相殺0=読取ノイズ疑いに賭けない**。Gemini記録で悪化する実例に基づく設計）。リプレイClaude記録 壁PB93→92枚(+6%・正解87.2に接近。洋室(1)C04がドア2枚のB面→無開口D面へ=XLSと一致）
+- **タイルdedupの等幅潰し**（claudeApi aggregateWallCodeItems純関数化）: `_tile`番号を付与し「同一タイル内の寸法ラベル**完全一致**件数の最大値=実在本数（上限2=対面想定）」。僅差（再転記ノイズ）は1件扱い。_tileは保存データに漏らさない。旧経路（_tileなし）は1件統合の従来互換
+- **収納D6*控除の部屋対応化**: 控除プールを「平面図部屋一覧に対応の無い展開図部屋（クロゼット内RC面=合算立面）」のみに限定。平面図のみの収納（物入等）のゼロ化を修正
+- **isWindowのsymbol対応**: AW/AWD・W-数字符号を窓判定に追加（WD-は非該当を確認）
+- 検証: test-buildup-placement.mjs新設21✅/eval 17✅⏳3✗0/opening-match 37✅/リプレイ両記録✅8✗0。**未検証**: 実AI E2Eでの_tile効果（対面C04の2枚保持が実読みで出るか・壁PB下振れ監視。replayは集約後データのため通らない）
+- レビュー残（未対応・低優先）: 同一壁ジッタ2クラスタの残存二重除外（発生条件狭）・平面図読み落とし収納の誤控除（旧バグの縮小版）
+- **検証済みバグの残り**: 0.37二重定義=A-2とセット（並行セッション予約）・摘要mm併記で旧カスタム単価が外れる（データ移行の判断が必要・要ユーザー確認）
+
+**建具マッチング層サイクルB（2026-07-19・coder/reviewer分離・差し戻し1往復・最終承認済み）**: レビュー確定4件+派生should-fix2件を修正:
+- **buildDoorLookupのnull毒化解消**: 矛盾判定をフィールド単位に（両行非nullで食い違う場合のみ毒化・片方nullは寸法を持つ行を採用・name/locationも欠落補完・毒化後の復活なし）。同符号の一覧行+姿図欄再掲（寸法null）で符号マッチが死ぬバグの修正
+- **mergeDoorScheduleの正規化キー化+フィールド単位補完+矛盾null化**: キーをnormalizeDoorSymbolに統一（全角/ハイフンゆれの重複エントリ解消）。put()は「prev側nullのみ埋める」ループ（丸ごとspreadでの転記値消失を修正）。非null同士の寸法矛盾は該当フィールドのみnull化+警告（field:'door_schedule_conflict'・再マージでも警告は残す・summaryにdoor_conflicts）。conflicted Mapで呼び出し内の復活防止・再アップロードによる収束経路は維持
+- **玄関の推定マッチ除外をroom名でも判定**（type表記ゆれ'片開き戸'の素通り対策。符号マッチは可）
+- **attachElevationDataの部屋名突合をnormalizeRoomName適用後比較に**（全角（１）ゆれでplan_codes/placementsが丸ごと落ちる残存経路を閉塞。空文字includes暴発ガード付き）
+- 検証: test-opening-match 39→60✅/placement 21✅/eval 17✅⏳3✗0/replay3記録✅8✗0（数値不変は非発動の構造的必然をスクリプトで裏取り）。**実AI E2E未検証**（次回e2e-geminiで建具マージ件数・door_conflicts・plan_codes付与部屋数を確認）
+- 備考: 一括upload側は建具表を生保存（マージ層を通らない）が、buildDoorLookupのフィールド単位合成が安全側でカバー
+
+**配線・運用系サイクルC（2026-07-19・coder/reviewer分離・差し戻し1往復・承認済み）**: レビュー確定5件+差し戻し1件を修正:
+- **計算警告のフロント配線**: stores/project.jsのcalculateMaterialsが/calculateレスポンスのwarnings（マージ済み最新一覧）でaiReading._warningsを置換（refごと差し替え）。木胴縁50%未満警告等が通常フロー（アップロード→計算→結果画面）で表示されるように
+- **lost update窓の縮小**: /calculateは警告書き込み直前にaiReadingを再読取し最新parsedDataへ警告のみマージ（matched_by等の計算副作用はインメモリ限りになり永続化されない=parsedData汚染の解消）。/auxはmergeAuxIntoFresh（再読取版を土台に自分の変更フィールドだけ移植・_warningsは(field,message)キーの3方向マージ）。行ロックなしのms級競合窓は残存（コメント明記）
+- **aux恒久エラーの文言分岐**: auxAiErrorResponse新設。キー未設定（'is not configured'）/401/403/**Gemini無効キー（HTTP 400+API key not valid）**→「運営者にご連絡ください」系、429/529/接続断→従来の再試行誘導。全て503でフロント互換維持
+- **同一警告時のDB書き戻しスキップ**（JSON文字列比較）・**単価ゆるい一致にunit一致条件**（m単価×m³行の誤適用防止。完全一致側は@@unique(materialName,spec)により不要と検証済み）
+- 検証: test-calc-wiring.mjs新設19✅（実ルーターマウント+スタブprisma）・eval/opening-match/placement/replay全回帰ゼロ・vite build成功
+- 繰越（低優先）: mergeDoorScheduleの矛盾警告が再アップロード復活値と乖離しうる（警告空振りのみ・安全側）・fresh再読取失敗時のwarningsが古い一覧に劣化（次回calculateで自己回復）・429 PerDayの文言
+
 **設計決定（実装前・変更可）**:
 - 平面詳細図=必須、展開図・建具表=任意（無ければ従来ロジック、有れば精度モード。後方互換）
 - AI呼び出し: 平面図=デュアルAI維持、展開図・建具表=Claude単体（表の転記はブレ小・コスト抑制）

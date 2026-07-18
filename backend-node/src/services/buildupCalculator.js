@@ -122,8 +122,11 @@ function classCompatible(a, b) {
 
 /**
  * 建具表から検索構造を作る
- * - bySymbol: 正規化符号 → 建具。同符号が複数ページ等で重複した場合、寸法一致なら1件扱い、
- *   矛盾したら null を立てて符号マッチ不可にする（どちらの寸法か確定できないため安全側）
+ * - bySymbol: 正規化符号 → 建具。同符号が複数ページ等で重複した場合はフィールド単位で照合し、
+ *   両行とも値を持ち食い違う寸法があるときだけ null を立てて符号マッチ不可にする
+ *   （どちらの寸法か確定できないため安全側）。片方が寸法null（一覧行+姿図欄の再掲等）の場合は
+ *   矛盾ではなく、寸法を持つ行の値を採用する（旧実装は厳密比較で null≠実寸 も矛盾扱いになり、
+ *   正しい寸法を持つ行まで符号マッチ不能に毒化していたバグの修正・2026-07-18）
  * - doors: 全建具（符号なし行も推定マッチの候補に含める）
  */
 export function buildDoorLookup(doorSchedule) {
@@ -136,12 +139,22 @@ export function buildDoorLookup(doorSchedule) {
     if (!key) continue;
     if (!bySymbol.has(key)) {
       bySymbol.set(key, d);
-    } else {
-      const prev = bySymbol.get(key);
-      if (prev && !(prev.width_mm === d.width_mm && prev.height_mm === d.height_mm)) {
-        bySymbol.set(key, null); // 同符号で寸法矛盾 → マッチ失敗として扱う
-      }
+      continue;
     }
+    const prev = bySymbol.get(key);
+    if (prev === null) continue; // 既に矛盾確定 → 後続行で復活させない（安全側を維持）
+    const conflict = ['width_mm', 'height_mm'].some(
+      (f) => prev[f] != null && d[f] != null && prev[f] !== d[f]);
+    if (conflict) {
+      bySymbol.set(key, null); // 同符号で非null寸法が矛盾 → マッチ失敗として扱う
+      continue;
+    }
+    // 欠けているフィールドだけ他方の行で補完（値を持つ行を優先・転記済みの値は動かさない）
+    const merged = { ...prev };
+    for (const f of ['width_mm', 'height_mm', 'name', 'location']) {
+      if (merged[f] == null && d[f] != null) merged[f] = d[f];
+    }
+    bySymbol.set(key, merged);
   }
   return { bySymbol, doors };
 }
@@ -177,6 +190,11 @@ export function resolveOpening(opening, doorLookup, roomName = null) {
   // ② 推定マッチ（寸法が欠けている開口のみ。窓・玄関/SD/鋼製・分類不能タイプは対象外）
   if (resolved.width_mm && resolved.height_mm) return resolved;
   if (INFERENCE_EXCLUDE_RE.test(String(resolved.type || ''))) return resolved;
+  // 玄関ドアはAIが type:'片開き戸'・room:'玄関・廊下' とだけ転記する場合があり（typeに「玄関」が
+  // 出ず上のtype除外を素通り）、WD-1TA 850×2175が補完され真値SD-101A 850×1900より過大控除になる
+  // → 部屋名の玄関判定でも推定を止める（fallback高さ2.0mの方が真値に近い）。符号マッチは①で済み可。
+  // 玄関・廊下内の廊下側ドアも推定対象外になるが、玄関ドア誤補完の害の方が大きい（レビュー確定の安全側）
+  if (/玄関/.test(normalizeRoomName(resolved.room || roomName))) return resolved;
   const cls = openingTypeClass(resolved.type);
   if (!cls || cls === '窓' || isWindow(resolved)) return resolved;
 
@@ -226,15 +244,22 @@ export function resolveOpening(opening, doorLookup, roomName = null) {
 
 function isWindow(opening) {
   const t = String(opening.type || '');
-  return t === 'window' || t.includes('窓') || t.includes('サッシ') || t.includes('AW');
+  if (t === 'window' || t.includes('窓') || t.includes('サッシ') || t.includes('AW')) return true;
+  // 建具符号でも窓を判定（tieRankの割付判断が依存するため頑健化・2026-07-18）:
+  // AW/AWD=アルミ窓系（実例: LDKの4枚引違い窓 AWD-101。typeが「引違い戸」と転記されても窓）。
+  // W-数字 も窓系符号として扱う。※ WD-（木製建具）を誤判定しないよう「Wの直後がハイフン＋数字」形のみ
+  const symNorm = normalizeDoorSymbol(opening.symbol) || '';
+  if (/^AWD?\d/.test(symNorm)) return true;
+  return /^W\s*[-‐‑–—―ー−－]\s*[0-9０-９]/.test(String(opening.symbol || '').toUpperCase());
 }
 
 /**
  * 部屋名の表記ゆれ吸収（平面図と展開図の突合用）
  * 空白（全角含む）除去・長音「ー」除去（クローゼット/クロゼット）・括弧と数字の全角→半角
  * ※ (1)等の番号は区別に必要なので除去しない（クロゼット(1)とクロゼット(2)は別部屋）
+ * routes/projects.js の attachElevationData（壁記号・タイル開口の部屋名突合）からも使うためexport
  */
-function normalizeRoomName(name) {
+export function normalizeRoomName(name) {
   return String(name || '')
     .replace(/[\s　]/g, '')
     .replace(/ー/g, '')
@@ -371,19 +396,23 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       }
       // タイ解決（寸法差の同点=等幅の対面が典型）: 面index順で機械的に選ぶと、C04（打放・
       // PBなし）が誤った側に付いたとき開口面積の分だけ壁PBがずれる（レビュー再現: A面開口あり/
-      // C面なしで+1.60㎡=開口分ちょうど）。開口の物理制約で面を選ぶ:
+      // C面なしで+1.60㎡=開口分ちょうど）。開口の物理制約を加点式でランク化して面を選ぶ:
       //   - RC打放（C下地）の壁に木製建具の開口は切れない → ドア等のある面は後回し(+1)
       //   - 窓はRC外周壁側に付く（読取プロンプトの業務知識「C04は窓のあるバルコニー側にも
       //     付く」と同根） → 窓のある面を優先(-1)
+      //   - 両方が同居する面（窓+ドア）は加点相殺で中立(0)。シグナルが矛盾する面は開口の
+      //     誤帰属（読取ノイズ）の疑いが強く、どちらか一方に賭けない（実例: Gemini記録
+      //     洋室(1)A面=窓+幻ドア。ドア優先を単独適用するとC04が無開口面へ動き壁PB-11%に悪化）
       // 実測整合（Claude記録リプレイで確認）: 洋室(1) C04@5190 → ドア2枚のB面でなく無開口の
       // D面へ（XLS部屋ブロックのD面=C04と一致）、LDK C04@3540 → 開口面でなく窓面へ。
-      // 残タイ（開口条件も同等）は面積が同値のため割付先による結果差なし → index順で確定。
+      // 残タイ（ランクも同点）は面積が同値か判別不能 → index順で決定的に確定。
       const tieRank = (cand) => {
         if (cand.c.base !== 'C') return 0;
         const ops = faces[cand.i].openings || [];
-        if (ops.some((op) => !isWindow(op))) return 1;
-        if (ops.some((op) => isWindow(op))) return -1;
-        return 0;
+        let r = 0;
+        if (ops.some((op) => !isWindow(op))) r += 1;
+        if (ops.some((op) => isWindow(op))) r -= 1;
+        return r;
       };
       cands.sort((a, b) => (a.d - b.d) || (tieRank(a) - tieRank(b)) || (a.i - b.i));
       for (const cand of cands) {
@@ -446,7 +475,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       let openingAreaStud = 0; // 下地用（下地高=CH+370まで見るので面の仕上げ高でキャップしない）
       for (const raw of face.openings || []) {
         const op = resolveOpening(raw, doorLookup, room.name);
-        // マッチ結果の印を元データにも残す（デバッグ・要確認表示用の観測点。寸法は書き戻さない）
+        // マッチ結果の印を元データに付ける（このリクエスト内限りのインメモリ観測点。寸法は書き戻さない。
+        // ※ /calculate の書き戻しは警告のみ最新版へマージする方式（サイクルC）のため永続化はされない）
         // 再計算でマッチ結果が変わった場合に備え、マッチしなかったら古い印は消す
         if (op.matched_by) raw.matched_by = op.matched_by;
         else delete raw.matched_by;

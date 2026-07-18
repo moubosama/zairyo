@@ -8,7 +8,10 @@ import { makeLimiter } from '../middleware/rateLimits.js';
 import { optionalAuth, projectScope } from '../middleware/auth.js';
 import { analyzeDrawing, analyzeAuxDrawing, analyzeWallCodesTiled, analyzeOpeningsTiled } from '../services/claudeApi.js';
 import { calculateMaterials } from '../services/materialCalculator.js';
-import { computeElevationTakeoff, applyElevationTakeoff, filterKenzaiScope } from '../services/buildupCalculator.js';
+import {
+  computeElevationTakeoff, applyElevationTakeoff, filterKenzaiScope,
+  normalizeDoorSymbol, normalizeRoomName,
+} from '../services/buildupCalculator.js';
 import { deleteProjectDeep } from '../services/projectCleanup.js';
 import ExcelJS from 'exceljs';
 
@@ -261,11 +264,14 @@ export async function attachElevationData(analysisResult, elevParsed, planPath, 
   }
   if (tiledOpenings && tiledOpenings.results.length > 0) {
     // 部屋名+面でマッチする面に開口をマージ（タイル読取の方が詳細）
+    // 部屋名は正規化して突合（全角「洋室（１）」vs「洋室(1)」等のゆれで丸ごと落ちるのを防ぐ・2026-07-18）
     let mergedCount = 0;
     for (const op of tiledOpenings.results) {
-      const room = analysisResult.elevations.rooms.find(
-        (r) => r.name && op.room && (r.name === op.room || r.name.includes(op.room) || op.room.includes(r.name))
-      );
+      const opRoom = normalizeRoomName(op.room);
+      const room = analysisResult.elevations.rooms.find((r) => {
+        const rn = normalizeRoomName(r.name);
+        return rn && opRoom && (rn === opRoom || rn.includes(opRoom) || opRoom.includes(rn));
+      });
       if (!room) continue;
       const face = (room.faces || []).find((f) => f.face === op.face) || (room.faces || [])[0];
       if (!face) continue;
@@ -281,11 +287,14 @@ export async function attachElevationData(analysisResult, elevParsed, planPath, 
   }
 
   // 平面詳細図から抽出した壁仕上記号を部屋名でマージ（buildupの部位振り分けに使う）
+  // 部屋名は正規化して突合（表記ゆれでplan_codesが落ちると全面デフォルトG14=壁PB過大の残存経路・2026-07-18）
   if (Array.isArray(analysisResult.wall_finish_codes)) {
     for (const room of analysisResult.elevations.rooms) {
-      const match = analysisResult.wall_finish_codes.find(
-        (w) => w.room && room.name && (w.room === room.name || room.name.includes(w.room) || w.room.includes(room.name))
-      );
+      const rn = normalizeRoomName(room.name);
+      const match = analysisResult.wall_finish_codes.find((w) => {
+        const wn = normalizeRoomName(w.room);
+        return wn && rn && (wn === rn || rn.includes(wn) || wn.includes(rn));
+      });
       if (match && Array.isArray(match.codes)) {
         room.plan_codes = match.codes;
         // タイル読取の「記号＋長辺/短辺」割付（buildupが面幅とマッチングして面単位に割り付ける）
@@ -300,25 +309,138 @@ export async function attachElevationData(analysisResult, elevParsed, planPath, 
  * 建具表の符号単位マージ（複数ページ対応）
  * 既存符号は保持し、寸法が欠けている場合のみ新しい読み取りで埋める
  * （段階式auxとE2E測定スクリプトの両方から使う）
- * @returns { doors: マージ後の配列, added: 新規追加された符号数 }
+ * キーは正規化符号（normalizeDoorSymbol）: 生symbolキーだと全角・ハイフンの表記ゆれで同一建具が
+ * 別エントリのまま残り、下流buildDoorLookupの正規化キーで衝突する（2026-07-18修正）。
+ * 既存保存データに生キー重複が残っていても、ここを通れば同一符号に統合される
+ * 補完はフィールド単位（buildDoorLookupと同方針・2026-07-19）:
+ *   - 丸ごとspreadは新規行のnullフィールドが既存の実寸を消し（開口控除が落ち壁PBが過大化）、
+ *     表示symbolも後勝ちの表記（全角等）に化けるため、既存を土台に欠けたフィールドだけ埋める
+ *   - 非null同士の寸法矛盾は該当フィールドをnull化して警告に出す（=buildDoorLookupの毒化
+ *     セーフティと同じ「符号マッチ不成立→fallback高さ」へ倒す安全側。黙って片方を採ると
+ *     矛盾情報が保存データから消え、下流の毒化検出が本番経路で不達になる）。
+ *     null化した寸法は後続行の値でも復活させない（どちらが正か確定できないままのため）
+ * @returns { doors: マージ後の配列, added: 新規追加された符号数,
+ *            warnings: _warnings形式の矛盾警告 [{field:'door_schedule_conflict', message, before, after}] }
  */
 export function mergeDoorSchedule(existing, incoming) {
-  const bySymbol = new Map(
-    (Array.isArray(existing) ? existing : []).filter((d) => d?.symbol).map((d) => [d.symbol, d])
-  );
-  let added = 0;
-  for (const d of incoming) {
-    if (!d?.symbol) continue;
-    const prev = bySymbol.get(d.symbol);
+  const bySymbol = new Map();
+  const conflicted = new Map(); // 正規化符号 → Set(矛盾確定フィールド)。復活防止用
+  const warnings = [];
+  // 既存側優先の登録: 新規符号ならtrue。既存符号は保持し、欠けたフィールドのみ埋める
+  const put = (d) => {
+    const key = normalizeDoorSymbol(d?.symbol);
+    if (!key) return false;
+    const prev = bySymbol.get(key);
     if (!prev) {
-      bySymbol.set(d.symbol, d);
-      added++;
-    } else if ((prev.width_mm == null || prev.height_mm == null) &&
-               (d.width_mm != null || d.height_mm != null)) {
-      bySymbol.set(d.symbol, { ...prev, ...d });
+      bySymbol.set(key, d);
+      return true;
     }
+    const merged = { ...prev }; // symbolは既存表記を維持
+    const cset = conflicted.get(key) || new Set();
+    const conflictNotes = [];
+    for (const f of ['width_mm', 'height_mm']) {
+      if (cset.has(f)) continue; // 矛盾確定済み（null維持）
+      if (prev[f] != null && d[f] != null && prev[f] !== d[f]) {
+        conflictNotes.push(`${f === 'width_mm' ? '幅' : '高さ'}${prev[f]}↔${d[f]}`);
+        merged[f] = null;
+        cset.add(f);
+      } else if (merged[f] == null && d[f] != null) {
+        merged[f] = d[f];
+      }
+    }
+    for (const f of ['name', 'location']) {
+      if (merged[f] == null && d[f] != null) merged[f] = d[f];
+    }
+    if (conflictNotes.length > 0) {
+      conflicted.set(key, cset);
+      warnings.push({
+        field: 'door_schedule_conflict',
+        message: `建具表の符号${prev.symbol || d.symbol}の寸法がページ間で矛盾しています` +
+          `（${conflictNotes.join('・')}）。該当寸法は未確定として扱います（開口はfallback高さで控除）`,
+        before: null,
+        after: null,
+      });
+    }
+    bySymbol.set(key, merged);
+    return false;
+  };
+  for (const d of (Array.isArray(existing) ? existing : [])) put(d);
+  let added = 0;
+  for (const d of incoming || []) {
+    if (put(d)) added++;
   }
-  return { doors: [...bySymbol.values()], added };
+  return { doors: [...bySymbol.values()], added, warnings };
+}
+
+/**
+ * /aux のAI障害を「一時的（再試行で直る）」と「恒久（設定・認証の問題）」に分類してレスポンスを組む。
+ * 恒久エラーに「1分待って再アップロード」と案内すると、直らないリトライをユーザーに強いるため文言を分ける
+ * （メインupload経路のキー未設定文言 claudeApi.js analyzeDrawing と揃える）。
+ * - キー未設定: analyzeWithClaude/Gemini が 'xxx is not configured'（status 500）を投げる → メッセージで識別
+ * - キー無効・権限なし: Claude等はAPIの401/403が err.status に入る → 恒久扱い。
+ *   Geminiの無効/失効キーは HTTP 400 + message「API key not valid」/ API_KEY_INVALID で返るため
+ *   （本番AI_PROVIDER=gemini稼働中の主経路）、ステータスではなくメッセージでも識別する
+ * - それ以外（429/529/接続断/タイムアウト）: 一時的 → 従来どおり再試行を誘導
+ * ステータスはメインupload経路のAI障害と同じ503で統一（フロントの扱いを変えない）
+ * @returns { status, body: { error, message } }
+ */
+export function auxAiErrorResponse(e) {
+  const msg = String(e?.message || '');
+  if (msg.includes('is not configured')) {
+    return { status: 503, body: {
+      error: 'ai_not_configured',
+      message: 'AI解析の設定が完了していません（APIキー未設定）。運営者にご連絡ください。',
+    } };
+  }
+  if (e?.status === 401 || e?.status === 403 || /API key not valid|API_KEY_INVALID/i.test(msg)) {
+    return { status: 503, body: {
+      error: 'ai_auth_error',
+      message: `AI解析の認証に失敗しました（コード${e?.status ?? '不明'}）。時間を置いても解消しない場合は運営者にご連絡ください。`,
+    } };
+  }
+  return { status: 503, body: {
+    error: 'ai_unavailable',
+    message: `AI解析が一時的に失敗しました（コード${e?.status || '接続'}）。1分ほど待って再アップロードしてください。`,
+  } };
+}
+
+/**
+ * /aux の書き込み直前マージ: AI解析（数十秒）の間に /calculate 等が parsedData を更新していた場合、
+ * 冒頭で読んだスナップショットを丸ごと書き戻すと相手の変更が消える（lost update）。
+ * そこで最新版（freshObj）を土台に、このリクエストが変更したフィールドだけを移植する。
+ * ※ DBの行ロック・トランザクション排他は使っていないため完全な排他ではない
+ *   （読み→書きの窓をAI待ちの数十秒からms級へ縮小する対処。残る競合窓では後勝ち）
+ * @param freshObj 書き込み直前に再読取した最新の parsedData
+ * @param baseObj  このリクエスト開始時に読んだ parsedData（変更前スナップショット）
+ * @param myObj    このリクエストが変更を加えた parsedData
+ * @param kind     'elevation' | 'door_schedule'
+ * @returns freshObj（破壊的に更新して返す）
+ */
+export function mergeAuxIntoFresh(freshObj, baseObj, myObj, kind) {
+  if (kind === 'elevation') {
+    // 展開図は再アップロードで丸ごと差し替える仕様（attachElevationData参照）のため上書きでよい
+    freshObj.elevations = myObj.elevations;
+    if ('wall_finish_codes' in myObj) freshObj.wall_finish_codes = myObj.wall_finish_codes;
+    // タイル部分失敗フラグは有無ごと自分の結果に合わせる（全成功時はdeleteされる）
+    if (myObj._wall_codes_partial === true) freshObj._wall_codes_partial = true;
+    else delete freshObj._wall_codes_partial;
+  } else {
+    // 建具表は符号単位マージ済みの結果で置き換え（並行して建具表を触るのは自分だけの前提。
+    // /calculate は door_schedule を変更しない）
+    freshObj.door_schedule = myObj.door_schedule;
+  }
+  // _warnings は (field,message) キーの3方向マージ:
+  // 自分が追加した警告を足し、自分が消した警告（例: 部分失敗解消時の wall_codes_partial）を除き、
+  // 並行して追加された警告（例: /calculate の source:'calculate' 警告）は保持する
+  const key = (w) => JSON.stringify([w?.field ?? null, w?.message ?? null]);
+  const baseKeys = new Set((baseObj._warnings || []).map(key));
+  const myKeys = new Set((myObj._warnings || []).map(key));
+  const kept = (freshObj._warnings || []).filter((w) => myKeys.has(key(w)) || !baseKeys.has(key(w)));
+  const keptKeys = new Set(kept.map(key));
+  const addedByMe = (myObj._warnings || []).filter((w) => !baseKeys.has(key(w)) && !keptKeys.has(key(w)));
+  const next = [...kept, ...addedByMe];
+  if (next.length > 0 || freshObj._warnings) freshObj._warnings = next;
+  return freshObj;
 }
 
 // POST /api/projects/:id/upload - 図面アップロード+AI解析
@@ -531,10 +653,9 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
       const elevRes = await analyzeWithErrorCapture('elevation', { roomNames });
       if (auxApiError) {
         await cleanup();
-        return res.status(503).json({
-          error: 'ai_unavailable',
-          message: `AI解析が一時的に失敗しました（コード${auxApiError?.status || "接続"}）。1分ほど待って再アップロードしてください。`,
-        });
+        // キー未設定・認証エラーは再試行では直らないため文言を分ける（auxAiErrorResponse参照）
+        const { status, body } = auxAiErrorResponse(auxApiError);
+        return res.status(status).json(body);
       }
       if (!(elevRes?.parsed?.drawing_type === 'elevation' &&
             Array.isArray(elevRes.parsed.rooms) && elevRes.parsed.rooms.length > 0)) {
@@ -563,10 +684,9 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
       const doorRes = await analyzeWithErrorCapture('door_schedule');
       if (auxApiError) {
         await cleanup();
-        return res.status(503).json({
-          error: 'ai_unavailable',
-          message: `AI解析が一時的に失敗しました（コード${auxApiError?.status || "接続"}）。1分ほど待って再アップロードしてください。`,
-        });
+        // キー未設定・認証エラーは再試行では直らないため文言を分ける（auxAiErrorResponse参照）
+        const { status, body } = auxAiErrorResponse(auxApiError);
+        return res.status(status).json(body);
       }
       if (!(doorRes?.parsed?.drawing_type === 'door_schedule' && Array.isArray(doorRes.parsed.doors))) {
         console.error('door_schedule_unreadable. drawing_type:', doorRes?.parsed?.drawing_type,
@@ -577,20 +697,45 @@ router.post('/:id/aux', uploadLimiter, uploadFieldsWith400, async (req, res) => 
           message: '建具表として読み取れませんでした。建具表のページか確認して再アップロードしてください。',
         });
       }
-      // 複数ページ対応: 符号単位でマージ（既存符号は寸法が埋まる場合のみ更新）
-      const { doors, added } = mergeDoorSchedule(parsedData.door_schedule, doorRes.parsed.doors);
+      // 複数ページ対応: 符号単位でマージ（既存符号は保持し欠けたフィールドのみ補完）
+      const { doors, added, warnings: doorWarnings } =
+        mergeDoorSchedule(parsedData.door_schedule, doorRes.parsed.doors);
       parsedData.door_schedule = doors;
-      summary = { kind, doors_total: doors.length, added };
+      // 寸法矛盾の警告を_warningsへ追記（同一メッセージの重複は追加しない。
+      // 矛盾でnull化済みの符号は再マージで矛盾を再検出できないため、過去の警告は消さず残す）
+      if (doorWarnings.length > 0) {
+        const prevWarnings = parsedData._warnings || [];
+        const newOnes = doorWarnings.filter(
+          (w) => !prevWarnings.some((p) => p.field === w.field && p.message === w.message));
+        parsedData._warnings = [...prevWarnings, ...newOnes];
+      }
+      summary = { kind, doors_total: doors.length, added, door_conflicts: doorWarnings.length };
     }
 
+    // 書き込み直前に再読取し、最新版を土台に自分の変更フィールドだけを移植して書き戻す
+    // （AI解析の数十秒の間に /calculate が警告を追記した場合等の lost update 対策。
+    //  完全な排他ではなくms級の競合窓は残る。詳細は mergeAuxIntoFresh のコメント参照）
+    let writeData = parsedData;
+    try {
+      const fresh = await prisma.aiReading.findUnique({ where: { id: aiReading.id } });
+      if (fresh && fresh.parsedData !== aiReading.parsedData) {
+        writeData = mergeAuxIntoFresh(
+          JSON.parse(fresh.parsedData),        // 最新版（並行更新を含む）
+          JSON.parse(aiReading.parsedData),    // 開始時スナップショット（変更前）
+          parsedData, kind);
+      }
+    } catch (e) {
+      // 再読取・パース失敗時は自分のスナップショットを書く（従来動作にフォールバック）
+      console.warn('Aux fresh-merge skipped:', e?.message);
+    }
     await prisma.aiReading.update({
       where: { id: aiReading.id },
-      data: { parsedData: JSON.stringify(parsedData) },
+      data: { parsedData: JSON.stringify(writeData) },
     });
     // 補助図面ファイルはデータ抽出後に削除（AiReadingはfilePathを1つしか持たない）
     await cleanup();
 
-    res.json({ aux: summary, parsedData });
+    res.json({ aux: summary, parsedData: writeData });
   } catch (error) {
     console.error('Aux upload error:', error);
     await cleanup();
@@ -712,17 +857,36 @@ router.post('/:id/calculate', async (req, res) => {
     // （フロントの警告パネルは aiReading の _warnings を参照するため、auxWarnings と同じ導線に乗せる）。
     // /calculate は繰り返し実行されるので、計算由来分は source:'calculate' で識別して前回分を置換する
     // （重複蓄積させない・警告が解消されたら消える）。展開図なしパスでは何も追加しない。
+    // lost update対策: 冒頭で読んだ parsedObj を丸ごと書き戻すと、計算中に /aux が書いた
+    // 展開図・建具表データを巻き戻すため、書き込み直前に再読取した最新版へ警告だけをマージする
+    // （読み→計算→書きの窓を、読み→マージ→書きのms級へ縮小。行ロックなしのため完全排他ではない）
+    let latestWarnings = parsedObj?._warnings || []; // レスポンス同梱用（マージ後に差し替え）
     if (parsedObj) {
       const CALC_WARNING_SOURCE = 'calculate';
       const calcWarnings = (result._warnings || []).map((w) => ({ ...w, source: CALC_WARNING_SOURCE }));
-      const prevWarnings = parsedObj._warnings || [];
-      const otherWarnings = prevWarnings.filter((w) => w?.source !== CALC_WARNING_SOURCE);
-      if (calcWarnings.length > 0 || otherWarnings.length !== prevWarnings.length) {
-        parsedObj._warnings = [...otherWarnings, ...calcWarnings];
-        await prisma.aiReading.update({
-          where: { id: project.aiReadings[0].id },
-          data: { parsedData: JSON.stringify(parsedObj) },
-        });
+      let freshObj = null;
+      try {
+        const fresh = await prisma.aiReading.findUnique({ where: { id: project.aiReadings[0].id } });
+        freshObj = fresh ? JSON.parse(fresh.parsedData) : null;
+      } catch (e) {
+        // 再読取・パース失敗時は書き戻さない（計算結果の返却は続行。次回calculateで再試行される）
+        console.warn('Calc warning persistence skipped:', e?.message);
+      }
+      if (freshObj) {
+        const prevWarnings = freshObj._warnings || [];
+        const otherWarnings = prevWarnings.filter((w) => w?.source !== CALC_WARNING_SOURCE);
+        const nextWarnings = [...otherWarnings, ...calcWarnings];
+        latestWarnings = nextWarnings;
+        // 内容が同一なら書き戻しをスキップ（恒常的な計算警告が1件あるだけで毎回
+        // parsedData全体のstringify+updateが走るのを防ぐ。マージ順は決定的
+        // =[その他, 計算由来]のためJSON文字列比較で同一性判定できる）
+        if (JSON.stringify(nextWarnings) !== JSON.stringify(prevWarnings)) {
+          freshObj._warnings = nextWarnings;
+          await prisma.aiReading.update({
+            where: { id: project.aiReadings[0].id },
+            data: { parsedData: JSON.stringify(freshObj) },
+          });
+        }
       }
     }
     // 【一旦】表示は建材リスト（PB・パネル・GW・下地合板）のみに絞る（ユーザー指定 2026-07-10）
@@ -752,9 +916,14 @@ router.post('/:id/calculate', async (req, res) => {
       // 2. なければ規格未指定同士のゆるい一致にフォールバック
       //    ※ 1段のゆるい一致だと、規格なしのカスタム単価1件が
       //      同名の全規格違い（例: ダイノックシート貼り 玄関扉/窓枠）を乗っ取る
+      //    ※ ゆるい一致には単位一致も要求（UnitPrice/DefaultUnitPriceともunit列は必須）。
+      //      将来木材スコープを表示に開いた際、同名で単位違いの行（例: 際根太のm単価が
+      //      材積換算のm³行へ）が誤適用されて金額が桁違いになるのを防ぐ。
+      //      単位欠落時は従来動作（マッチ許可）に倒し、既存の¥0→有価の挙動を変えない
       const priceInfo =
         unitPrices.find(p => p.materialName === material.name && p.spec === material.spec) ||
-        unitPrices.find(p => p.materialName === material.name && (!p.spec || !material.spec));
+        unitPrices.find(p => p.materialName === material.name && (!p.spec || !material.spec)
+          && (!p.unit || !material.unit || p.unit === material.unit));
       const unitPrice = priceInfo?.unitPrice || 0;
 
       const amount = unitPrice * material.quantity;
@@ -788,7 +957,7 @@ router.post('/:id/calculate', async (req, res) => {
       summary: result.summary,
       totalAmount,
       // 最新の警告一覧（AI読取由来+計算由来のマージ済み。フロントが直接使えるよう同梱）
-      warnings: parsedObj?._warnings || []
+      warnings: latestWarnings
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

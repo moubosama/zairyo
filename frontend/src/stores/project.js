@@ -173,6 +173,13 @@ export const useProjectStore = defineStore('project', () => {
       if (response.data.estimate) {
         areas.value.estimate = response.data.estimate
       }
+      // 計算由来の警告（例: 木胴縁の部分実測疑い）はバックエンドがAI読取由来とマージ済みの
+      // 最新一覧を warnings で同梱する。結果画面の警告パネルは aiReading._warnings を参照する
+      // ため、ここで置き換えないと「アップロード→計算→結果」の通常フローで計算警告が出ない。
+      // aiReading が null（履歴なしゲスト等）の場合は警告パネル自体が出ないため何もしない
+      if (Array.isArray(response.data.warnings) && aiReading.value) {
+        aiReading.value = { ...aiReading.value, _warnings: response.data.warnings }
+      }
       return materials.value
     } catch (e) {
       error.value = api.apiErrorMessage(e, '資材計算に失敗しました')
