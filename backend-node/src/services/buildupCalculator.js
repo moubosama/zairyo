@@ -287,7 +287,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // ため、面ごとの拾いを合算して最後に÷2し「壁1枚1回」のXLS方式に合わせる。
   // UB隣接面(耐水記号)は反対面がUB内で展開図に現れない → 鏡像分をもう一度足して÷2で相殺する。
   let majikiriDouble = 0; // 両面計上の下地面積（後で÷2）
-  let d6FaceWidth = 0;    // D6*（収納内RC面コンパネ）の面幅合計 — 収納推定からの重複控除用
+  // D6*（収納内RC面コンパネ）の面幅を展開図の部屋ごとに記録 — 収納推定からの重複控除用。
+  // 戸全体の単一アキュムレータだと、平面図の部屋名と一致する（=推定対象外でskip済みの）収納の
+  // D6*実測が、展開図に無い別の収納の推定分から差し引かれてゼロ化する（2026-07-18レビュー確定バグ）
+  const d6ByElevRoom = new Map(); // 正規化部屋名 -> D6*面幅合計(m)
 
   for (const room of rooms) {
     const ch = (room.ceiling_height_mm || 2400) / 1000;
@@ -325,9 +328,37 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     const placementByFace = new Map(); // faceIndex -> parsed code
     if (Array.isArray(room.plan_placements) && faces.length >= 1) {
       const used = new Set();
+      const usedPl = new Set();
+
+      // 第0パス: 展開図の面記号(wall_code)で実測済みの壁に対応するplacementを消費済みにする。
+      // 同一記号・寸法±80mmのplacementが未消費のまま残ると、等幅の無記号面へ割り付いて
+      // 同じ壁を二重に除外/振替してしまう（例: A面C04実測済み + 等幅C面 → C面までC04扱いで
+      // 壁PBが過少になるのを再現で確認・2026-07-18レビュー確定バグ）。
+      // 記号一致かつ寸法一致の面ごとに最も近い1件だけ消費する（寸法の合わないplacementは
+      // 実在の第2の壁でありうるため残す）。
+      const codedCands = [];
+      for (const pl of room.plan_placements) {
+        const c = parseWallCode(pl?.code);
+        const len = pl?.wall_length_mm;
+        if (!c || !Number.isFinite(len) || len <= 0) continue;
+        for (let i = 0; i < faces.length; i++) {
+          const fc = parseWallCode(faces[i].wall_code);
+          if (!fc || fc.base !== c.base || fc.mid !== c.mid || fc.surf !== c.surf) continue;
+          const d = Math.abs((faces[i].width_mm || 0) - len);
+          if (d <= PLACEMENT_TOL_MM) codedCands.push({ pl, i, d });
+        }
+      }
+      codedCands.sort((a, b) => a.d - b.d);
+      for (const cand of codedCands) {
+        if (used.has(cand.i) || usedPl.has(cand.pl)) continue;
+        used.add(cand.i); // 記号付き面は元々cands対象外だが、消費済みの記録として揃えておく
+        usedPl.add(cand.pl);
+      }
+
       // 寸法差が小さい割付から確定させる（曖昧なマッチが確実なマッチの面を奪わないように）
       const cands = [];
       for (const pl of room.plan_placements) {
+        if (usedPl.has(pl)) continue; // 第0パスで実測面に消費済み
         const c = parseWallCode(pl?.code);
         const len = pl?.wall_length_mm;
         if (!c || !Number.isFinite(len) || len <= 0) continue;
@@ -338,8 +369,23 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
           if (d <= PLACEMENT_TOL_MM) cands.push({ pl, c, i, d });
         }
       }
-      cands.sort((a, b) => a.d - b.d);
-      const usedPl = new Set();
+      // タイ解決（寸法差の同点=等幅の対面が典型）: 面index順で機械的に選ぶと、C04（打放・
+      // PBなし）が誤った側に付いたとき開口面積の分だけ壁PBがずれる（レビュー再現: A面開口あり/
+      // C面なしで+1.60㎡=開口分ちょうど）。開口の物理制約で面を選ぶ:
+      //   - RC打放（C下地）の壁に木製建具の開口は切れない → ドア等のある面は後回し(+1)
+      //   - 窓はRC外周壁側に付く（読取プロンプトの業務知識「C04は窓のあるバルコニー側にも
+      //     付く」と同根） → 窓のある面を優先(-1)
+      // 実測整合（Claude記録リプレイで確認）: 洋室(1) C04@5190 → ドア2枚のB面でなく無開口の
+      // D面へ（XLS部屋ブロックのD面=C04と一致）、LDK C04@3540 → 開口面でなく窓面へ。
+      // 残タイ（開口条件も同等）は面積が同値のため割付先による結果差なし → index順で確定。
+      const tieRank = (cand) => {
+        if (cand.c.base !== 'C') return 0;
+        const ops = faces[cand.i].openings || [];
+        if (ops.some((op) => !isWindow(op))) return 1;
+        if (ops.some((op) => isWindow(op))) return -1;
+        return 0;
+      };
+      cands.sort((a, b) => (a.d - b.d) || (tieRank(a) - tieRank(b)) || (a.i - b.i));
       for (const cand of cands) {
         if (used.has(cand.i) || usedPl.has(cand.pl)) continue;
         used.add(cand.i);
@@ -443,7 +489,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       // RC面木(D下地)は木胴縁の対象面（D14=防露/EV面、D64=収納内コンパネ）
       if (code.base === 'D') {
         t.rc_furring_sqm += net;
-        if (code.mid === 6) d6FaceWidth += w;
+        if (code.mid === 6) {
+          const rn = normalizeRoomName(room.name);
+          d6ByElevRoom.set(rn, (d6ByElevRoom.get(rn) || 0) + w);
+        }
       }
 
       // 下地
@@ -535,7 +584,18 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     const a = pr.area_sqm || 0;
     if (a > 0) closetEstWidth += 3 * Math.sqrt(a);
   }
-  closetEstWidth = Math.max(0, closetEstWidth - d6FaceWidth);
+  // D6*実測の控除プール: 「平面図の部屋一覧に対応が無い展開図の部屋」（例: クロゼット内RC面 =
+  // 複数収納の内側をまとめた立面）のD6*面幅のみ。これらのRC面は②推定を通った収納の一部と
+  // みなせるため推定から差し引く（元来の重複控除の意図）。一方、平面図の部屋名と一致する
+  // 展開図の収納はelevRoomNamesのskipで既に推定対象外＝そのD6*実測は推定に混ざっておらず、
+  // 控除すると展開図に無い収納（物入等）の推定が丸ごと消える（再現: 物入4.16m分の計上漏れ）
+  const planRoomNames = new Set(
+    (opts.planRooms || []).map((pr) => normalizeRoomName(pr?.name)).filter(Boolean));
+  let d6DeductWidth = 0;
+  for (const [rn, wsum] of d6ByElevRoom) {
+    if (!planRoomNames.has(rn)) d6DeductWidth += wsum;
+  }
+  closetEstWidth = Math.max(0, closetEstWidth - d6DeductWidth);
   majikiriDouble += (closetActualWidth + closetEstWidth) * (2.4 + STUD_PLENUM_M);
 
   // 両面計上 → 壁1枚換算（XLSの拾い方に一致。検証: Gタイプ 77.6 vs XLS正解84.082 = −7.7%）
@@ -626,7 +686,8 @@ export function applyElevationTakeoff(result, takeoff) {
     Math.round(takeoff.gw_sqm), `GW充填面 Σ幅×高さ−開口`);
   set((m) => m.name.includes('壁クロス'),
     Math.ceil(takeoff.cloth_sqm), `クロス面 Σ幅×高さ−開口`);
-  set((m) => m.name === '木製巾木' || (m.name.includes('巾木') && m.name.includes('木製')),
+  // ※ '木製巾木出隅役物'（単位:ヶ所）への誤マッチ防止のため完全一致（部分一致だと箇所数がm数で上書きされる）
+  set((m) => m.name === '木製巾木',
     Math.round(takeoff.skirting_m.木製), `Σ周長−開口幅（木製巾木の部屋）`);
   set((m) => m.name.includes('樹脂巾木'),
     Math.round(takeoff.skirting_m.樹脂 * 10) / 10, `Σ周長−開口幅（樹脂巾木の部屋）`);
