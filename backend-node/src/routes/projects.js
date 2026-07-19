@@ -203,6 +203,46 @@ const uploadFieldsWith400 = (req, res, next) => {
 };
 
 /**
+ * 壁記号タイル解析の再実行が必要かの判定（純関数・test-wallcode-reread.mjsで検証）
+ * 再実行する条件:
+ *  1. wall_finish_codes が無い/空（初回）
+ *  2. 前回が部分失敗（_wall_codes_partial。quota切れの部分結果が固定化される事故の回復手段）
+ *  3. どのエントリにも寸法付きplacement（wall_length_mm>0）が1件も無い
+ *     ← STEP1の全体図解析（analyzeDrawing）は部屋別のcodesのみを返しplacementsを持たない。
+ *        これでタイル解析をスキップすると placementByFace が寸法マッチできず面割付が全滅し、
+ *        全面デフォルトG14扱いで壁PBが暴発する（gemini-3.5-flash E2Eで148枚=+70%を実測・2026-07-19）
+ */
+export function wallCodesNeedTileReread(analysisResult) {
+  const list = analysisResult.wall_finish_codes;
+  if (!Array.isArray(list) || list.length === 0) return true;
+  if (analysisResult._wall_codes_partial === true) return true;
+  const hasDimensionedPlacement = list.some((w) =>
+    Array.isArray(w?.placements) &&
+    w.placements.some((p) => Number.isFinite(p?.wall_length_mm) && p.wall_length_mm > 0));
+  return !hasDimensionedPlacement;
+}
+
+/**
+ * タイル読取結果と既存wall_finish_codesのマージ（純関数・test-wallcode-reread.mjsで検証）
+ * タイル結果（寸法付きplacements）を正とし、同一部屋の既存エントリ（STEP1由来のcodesのみ等）は上書き。
+ * タイルに現れなかった部屋の既存エントリは残す（codesのみでもデフォルトG14回避に有効=害がない）。
+ * 部屋名は正規化+包含で突合（plan_codesマージと同じゆれ対策）。タイル結果を先頭に置くため、
+ * 後段のplan_codes突合（find=先勝ち）でも近縁名が残った場合はタイル側が勝つ
+ */
+export function mergeWallFinishCodes(prev, tiledResults) {
+  const prevList = Array.isArray(prev) ? prev : [];
+  const kept = prevList.filter((w) => {
+    const wn = normalizeRoomName(w?.room);
+    if (!wn) return false;
+    return !tiledResults.some((t) => {
+      const tn = normalizeRoomName(t?.room);
+      return tn && (tn === wn || tn.includes(wn) || wn.includes(tn));
+    });
+  });
+  return [...tiledResults, ...kept];
+}
+
+/**
  * 展開図の解析結果をparsedDataへ統合する共通処理
  * （タイル詳細パスの実行と、壁記号・開口のマージ。一括uploadと段階式auxの両方から使う。
  *  E2E測定スクリプト scripts/e2e-gemini.mjs からも再利用するためexport）
@@ -210,10 +250,15 @@ const uploadFieldsWith400 = (req, res, next) => {
  * @param elevParsed 展開図の解析結果（rooms必須）
  * @param planPath 平面詳細図のファイルパス（壁記号タイル読取に使用。無ければスキップ）
  * @param elevPath 展開図のファイルパス（開口タイル読取に使用）
+ * @param deps テスト用の解析関数注入（省略時は本物。test-wallcode-reread.mjsが使用）
  * @returns タイル読取の統計 { wall_codes: {failedTiles,totalTiles}|null, openings: 同|null }
  *          （E2Eスクリプトの表示用。本番ルートは戻り値を使わずanalysisResult側のフラグを見る）
  */
-export async function attachElevationData(analysisResult, elevParsed, planPath, elevPath) {
+export async function attachElevationData(analysisResult, elevParsed, planPath, elevPath, deps = {}) {
+  const {
+    wallCodesAnalyzer = analyzeWallCodesTiled,
+    openingsAnalyzer = analyzeOpeningsTiled,
+  } = deps;
   analysisResult.elevations = elevParsed;
   const roomNames = (analysisResult.rooms || []).map((r) => r.name).filter(Boolean);
 
@@ -222,22 +267,20 @@ export async function attachElevationData(analysisResult, elevParsed, planPath, 
   const planReadable = planPath
     ? await fsPromises.access(planPath).then(() => true).catch(() => false)
     : false;
-  // 壁記号は既存があればスキップするが、前回が部分失敗（_wall_codes_partial）なら
-  // 展開図の再アップロードで再読取する（quota切れの部分結果が固定化される事故の回復手段）
-  const needWallCodes = planReadable &&
-    (!analysisResult.wall_finish_codes || analysisResult.wall_finish_codes.length === 0 ||
-     analysisResult._wall_codes_partial === true);
+  // 壁記号は寸法付きの既存読取があればスキップ。無い/空・部分失敗・codesのみ（placements欠落）
+  // なら再実行する（判定の詳細は wallCodesNeedTileReread のコメント参照）
+  const needWallCodes = planReadable && wallCodesNeedTileReread(analysisResult);
   const [tiledCodes, tiledOpenings] = await Promise.all([
     needWallCodes
-      ? analyzeWallCodesTiled(planPath, { roomNames }).catch(() => null)
+      ? wallCodesAnalyzer(planPath, { roomNames }).catch(() => null)
       : Promise.resolve(null),
-    analyzeOpeningsTiled(elevPath, { roomNames }).catch(() => null),
+    openingsAnalyzer(elevPath, { roomNames }).catch(() => null),
   ]);
   const tileStats = { wall_codes: null, openings: null };
   if (tiledCodes) {
     tileStats.wall_codes = { failedTiles: tiledCodes.failedTiles, totalTiles: tiledCodes.totalTiles };
     if (tiledCodes.results.length > 0) {
-      analysisResult.wall_finish_codes = tiledCodes.results;
+      analysisResult.wall_finish_codes = mergeWallFinishCodes(analysisResult.wall_finish_codes, tiledCodes.results);
       console.log('壁記号タイル読取:', JSON.stringify(tiledCodes.results));
     }
     // 部分失敗の顕在化: API制限（429/quota切れ）で空になったタイルを「記号なし」と区別して
