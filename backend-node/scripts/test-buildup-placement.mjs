@@ -15,7 +15,9 @@
  *
  * 実行: node scripts/test-buildup-placement.mjs
  */
-import { computeElevationTakeoff, applyElevationTakeoff } from '../src/services/buildupCalculator.js';
+import {
+  computeElevationTakeoff, applyElevationTakeoff, collapseDoubledPlacements,
+} from '../src/services/buildupCalculator.js';
 import { aggregateWallCodeItems } from '../src/services/claudeApi.js';
 
 let pass = 0, fail = 0;
@@ -282,6 +284,199 @@ console.log('--- 修正4: 木製巾木出隅役物への誤マッチ防止 ---')
   const desumi = result.materials.find((m) => m.name === '木製巾木出隅役物');
   check('木製巾木は実測56mで上書き', [habaki.quantity, habaki.takeoff], [56, true]);
   check('出隅役物（ヶ所）は上書きされない', [desumi.quantity, 'takeoff' in desumi], [10, false]);
+}
+
+// ============ 読取ノイズ防御ガード（2026-07-19 Gemini実読みE2Eの暴発対策） ============
+console.log('--- ガード1: 二重転記ペアの縮退（collapseDoubledPlacements） ---');
+{
+  // 完全等寸ペアが1クラスタだけ → 実在の等幅対面（対面C04）として×2を保持（従来挙動）
+  const input = [
+    { code: 'C04', wall_length_mm: 2360 },
+    { code: 'C04', wall_length_mm: 2360 },
+    { code: 'I14', wall_length_mm: 3000 },
+  ];
+  check('ペア1クラスタは対面2枚として保持', collapseDoubledPlacements(input).length, 3);
+}
+{
+  // ペアが2クラスタ以上 → 全記号の二重転記癖とみなし全ペアを1件へ縮退
+  // （2026-07-19記録の再現: 123placement中76件が同一部屋・同記号・完全等寸ペア）
+  const input = [
+    { code: 'C04', wall_length_mm: 2360 },
+    { code: 'C04', wall_length_mm: 2360 },
+    { code: 'G24', wall_length_mm: 1725 },
+    { code: 'G24', wall_length_mm: 1725 },
+    { code: 'I14', wall_length_mm: 3000 },
+  ];
+  check('ペア2クラスタ以上は全ペアを1件へ縮退', collapseDoubledPlacements(input), [
+    { code: 'C04', wall_length_mm: 2360 },
+    { code: 'G24', wall_length_mm: 1725 },
+    { code: 'I14', wall_length_mm: 3000 },
+  ]);
+}
+{
+  // 寸法nullは縮退の対象外（そのまま通す）
+  const input = [
+    { code: 'C04', wall_length_mm: 2360 }, { code: 'C04', wall_length_mm: 2360 },
+    { code: 'G24', wall_length_mm: 1725 }, { code: 'G24', wall_length_mm: 1725 },
+    { code: 'D14', wall_length_mm: null },
+  ];
+  check('寸法nullは縮退対象外', collapseDoubledPlacements(input).length, 3);
+}
+{
+  // aggregateWallCodeItems統合: 同一タイルで2記号ともペア書き出し → 部屋単位で縮退
+  const res = aggregateWallCodeItems([
+    { room: '洋室(N)', code: 'C04', wall_length_mm: 2000, _tile: 0 },
+    { room: '洋室(N)', code: 'C04', wall_length_mm: 2000, _tile: 0 },
+    { room: '洋室(N)', code: 'G24', wall_length_mm: 1500, _tile: 0 },
+    { room: '洋室(N)', code: 'G24', wall_length_mm: 1500, _tile: 0 },
+  ]);
+  check('読取時（aggregate）でも2クラスタ以上のペアは縮退', pls(res, '洋室(N)'), [
+    { code: 'C04', wall_length_mm: 2000 },
+    { code: 'G24', wall_length_mm: 1500 },
+  ]);
+}
+
+console.log('--- ガード3: 開口控除の物理上限 ---');
+{
+  // 面幅を超える開口は棄却（実例: 幻覚窓AWD-102=4120mmが洋室の面3685に付き壁net 0に潰れた）
+  const elevations = { rooms: [
+    { name: '洋室(G3)', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 3000,
+        openings: [{ type: '引違い窓', symbol: 'AWD-102', width_mm: 4120, height_mm: 1900 }] },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('面幅超過の開口は控除から棄却（壁PB=面全面7.32）',
+    [t.wall_pb_sqm, t.opening_guard.width_over_face], [7.32, 1]);
+}
+{
+  // 開口合計>90%の面では完全同一開口（符号+寸法一致）の2件目以降を落とす
+  // （実例: 玄関B面にSD-101A 1600×2000が2回転記され開口111%→壁net 0）
+  const elevations = { rooms: [
+    { name: '玄関(G3)', ceiling_height_mm: 2400, faces: [
+      { face: 'B', width_mm: 2000, openings: [
+        { type: '片開き戸', symbol: 'SD-101A', width_mm: 1600, height_mm: 2000 },
+        { type: '片開き戸', symbol: 'SD-101A', width_mm: 1600, height_mm: 2000 },
+      ] },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  // gross 4.88・重複を1件落とし控除3.2（66%）→ net 1.68
+  check('超過面の完全同一開口は2件目を落とす（net 1.68）',
+    [t.wall_pb_sqm, t.opening_guard.dup_dropped], [1.68, 1]);
+}
+{
+  // 重複を落としても90%超なら面積比例で縮退+警告（net=面面積の10%を確保）
+  const elevations = { rooms: [
+    { name: '洋室(G3c)', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 2000, openings: [
+        { type: '片開き戸', width_mm: 1500, height_mm: 2000 },
+        { type: '引違い戸', width_mm: 900, height_mm: 2000 },
+      ] },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  // gross 4.88・控除4.8（98%）→ 0.9×4.88=4.392へ縮退 → net 0.49
+  check('重複なしの超過は比率縮退+警告（net 0.49）',
+    [t.wall_pb_sqm, t.opening_guard.clamped_faces, t._warnings.length >= 1], [0.49, 1, true]);
+}
+{
+  // 超過していない面では同一寸法の実在ペアを守る（Claude記録LDK B面の片開き戸800×2175×2）
+  const elevations = { rooms: [
+    { name: 'LDK(G3)', ceiling_height_mm: 2400, faces: [
+      { face: 'B', width_mm: 6660, openings: [
+        { type: '片開き戸', width_mm: 800, height_mm: 2175 },
+        { type: '片開き戸', width_mm: 800, height_mm: 2175 },
+      ] },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  // gross 16.25・控除3.48（21%）→ ガード非発動で両方控除 → net 12.77
+  check('通常面の同一寸法ペアは両方控除（実在の2枚を守る・net 12.77）', t.wall_pb_sqm, 12.77);
+}
+
+console.log('--- ガード4: 高さ誤転記疑い寸法（CH一致）の降格・耐水除外 ---');
+{
+  // CH2400と完全一致する寸法は降格: 非疑い候補（D14@2360・d30）が疑い候補（C04@2400・d10）より
+  // 先に面を取る（旧実装は距離順でC04が勝ち、D14のEV面が消えていた）
+  const elevations = { rooms: [
+    { name: '玄関(G4)', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 2390, openings: [] },
+    ], plan_placements: [
+      { code: 'C04', wall_length_mm: 2400 },
+      { code: 'D14', wall_length_mm: 2360 },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('CH一致寸法は降格され非疑い候補が面を取る（D14→EV面5.83）',
+    [t.ev_wall_pb_sqm, t.wall_pb_sqm], [5.83, 0]);
+}
+{
+  // 他に候補が無い面では疑い寸法も従来どおり割り付く（実面幅=CH偶然一致の保護）
+  const elevations = { rooms: [
+    { name: '洋室(G4)', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 2360, openings: [] },
+    ], plan_placements: [{ code: 'C04', wall_length_mm: 2400 }] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('単独候補の疑い寸法は割付維持（C04→打放で壁PB 0）', t.wall_pb_sqm, 0);
+}
+{
+  // 耐水記号（中間2/5）×疑い寸法は割付自体を止める（実例: パウダーのG24@2400=居室CHの
+  // 誤転記が面幅2360±80に化けて耐水+5.3㎡。鏡像加算・第2パス救済まで連鎖するため除外）
+  const elevations = { rooms: [
+    { name: 'パウダールーム', ceiling_height_mm: 2200, faces: [
+      { face: 'A', width_mm: 2360, openings: [] },
+    ], plan_placements: [{ code: 'G24', wall_length_mm: 2400 }] },
+    { name: '洋室(G4b)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('耐水×疑い寸法は割付しない（面はデフォルトG14へ・耐水0）',
+    [t.waterproof_pb_sqm, t.wall_pb_sqm], [0, 5.29]);
+}
+
+console.log('--- ガード5: 耐水救済の重複燃料の遮断 ---');
+{
+  // 同記号・同寸ペア（1クラスタ=縮退対象外）の残骸が第2パス救済（±300mm）で
+  // 別面へ二重に割り付くのを防ぐ（実例: パウダーB/D両面がG24@1725で二重救済）
+  const elevations = { rooms: [
+    { name: 'トイレ(G5)', ceiling_height_mm: 2200, faces: [
+      { face: 'A', width_mm: 1725, openings: [] },
+      { face: 'B', width_mm: 1900, openings: [] },
+    ], plan_placements: [
+      { code: 'G24', wall_length_mm: 1725 },
+      { code: 'G24', wall_length_mm: 1725 },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  // 1枚目はA面（±80マッチ）。2枚目は同寸の消費済みキー → 救済に使わずB面はデフォルトG14
+  check('消費済みと同寸の残骸は救済に使わない（耐水3.86・壁PB 4.26）',
+    [t.waterproof_pb_sqm, t.wall_pb_sqm], [3.86, 4.26]);
+}
+
+console.log('--- ガード7: UB内部立面のスキップ ---');
+{
+  // UB=完成品ユニットでボード拾いなし（正しい読取ではUB内部は展開図に現れない。
+  // 幻出したUB室が耐水・壁PBのジャンク燃料になるため部屋ごとスキップ）
+  const elevations = { rooms: [
+    { name: 'UB', ceiling_height_mm: 2200, faces: [
+      { face: 'C', width_mm: 1400, openings: [] },
+      { face: 'D', width_mm: 950, openings: [] },
+    ], plan_placements: [{ code: 'G24', wall_length_mm: 1416 }] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('UB室は拾わない（壁0・耐水0・部屋リスト外）',
+    [t.wall_pb_sqm, t.waterproof_pb_sqm, t.rooms.length], [0, 0, 0]);
+}
+{
+  // 名前の部分一致では消さない（「UB前室」等の実在部屋を守る完全一致）
+  const elevations = { rooms: [
+    { name: 'UB前室', ceiling_height_mm: 2200, faces: [
+      { face: 'A', width_mm: 1000, openings: [] },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('UBを含むだけの部屋名はスキップしない（完全一致のみ）', t.wall_pb_sqm, 2.24);
 }
 
 console.log(`\n合計: ✅ ${pass} / ✗ ${fail}`);

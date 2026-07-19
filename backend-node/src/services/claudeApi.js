@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import { validateAndNormalize, reconcileDualResults } from './aiReadingValidator.js';
+import { collapseDoubledPlacements } from './buildupCalculator.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -719,7 +720,11 @@ export function aggregateWallCodeItems(raw) {
       const count = Math.min(MAX_SAME_WALL, maxSameLen);
       for (let n = 0; n < count; n++) placements.push({ code: cl.code, wall_length_mm: cl.len });
     }
-    results.push({ room, codes: [...new Set(placements.map((p) => p.code))], placements });
+    // 二重転記ノイズの縮退（2026-07-19）: 部屋内に「同記号・完全等寸のペア」が2クラスタ以上ある回は
+    // 「ほぼ全記号を二重に書き出す癖」の読取とみなし、全ペアを1件へ縮退する（等寸×2保持の適用は
+    // 対面C04想定の1クラスタまで）。詳細な根拠は buildupCalculator.collapseDoubledPlacements のコメント参照
+    const finalPlacements = collapseDoubledPlacements(placements);
+    results.push({ room, codes: [...new Set(finalPlacements.map((p) => p.code))], placements: finalPlacements });
   }
   return results;
 }

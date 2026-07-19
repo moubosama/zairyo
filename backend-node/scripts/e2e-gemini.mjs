@@ -110,9 +110,19 @@ for (const [i, doorPath] of DOORS.entries()) {
   });
   saveRaw(`door${i + 1}`, doorRes?.rawText);
   if (doorRes?.parsed?.drawing_type === 'door_schedule' && Array.isArray(doorRes.parsed.doors)) {
-    const { doors, added } = mergeDoorSchedule(parsedData.door_schedule, doorRes.parsed.doors);
+    const { doors, added, warnings: doorWarnings } =
+      mergeDoorSchedule(parsedData.door_schedule, doorRes.parsed.doors);
     parsedData.door_schedule = doors;
-    console.log('  符号追加:', added, '/ 累計:', doors.length, '件');
+    // 寸法矛盾の警告を記録JSONにも残す（本番/auxルートと同じ_warningsマージ。
+    // door_conflictsの発生有無をreplay/分析で確認できるようにする）
+    if (doorWarnings.length > 0) {
+      const prevWarnings = parsedData._warnings || [];
+      const newOnes = doorWarnings.filter(
+        (w) => !prevWarnings.some((p) => p.field === w.field && p.message === w.message));
+      parsedData._warnings = [...prevWarnings, ...newOnes];
+    }
+    console.log('  符号追加:', added, '/ 累計:', doors.length, '件',
+      '/ 寸法矛盾:', doorWarnings.length, '件');
   } else {
     console.error('  建具表として読めませんでした（drawing_type:', doorRes?.parsed?.drawing_type, '）');
   }

@@ -41,6 +41,20 @@ const STUD_PLENUM_M = 0.37;
 // 耐水は水回りにしか出ない記号のため、救済は水回り部屋に限定して誤爆面を絞る
 const WET_ROOM_NAME_RE = /パウダー|洗面|トイレ|便所|UB|浴/;
 
+// UB（ユニットバス）内部の立面はボード拾いの対象外（完成品ユニットのためPB/耐水PBの現場張りが
+// 無く、XLSタイプ別シートにもUB内部の行は存在しない。耐水PBは「UB廻り」=隣室側の面で拾う）。
+// 正しい読取ではUB内部は展開図に描かれない（Gタイプ実測: Claude記録×2・Gemini0717記録とも
+// 展開図8室にUBなし）ため、UB室が現れた場合は読取ノイズとして部屋ごとスキップする
+// （2026-07-19 Gemini記録で幻出したUB室が耐水+117%とジャンク壁PBの燃料になった実例）
+const UB_ROOM_NAME_RE = /^(UB|ユニットバス|浴室)$/;
+
+// 開口控除の物理上限（面面積に対する開口合計の比率）。壁一面がほぼ開口で埋まることは
+// 物理的に無い（袖壁・垂れ壁が残る）ため、超過は開口の幻覚・重複転記とみなして
+// ①面内の完全同一開口（符号/type+寸法一致）の2件目以降を落とす → ②なお超過なら比率まで縮退+警告。
+// 0.9の根拠（2026-07-19の4記録実測）: ノイズ記録の暴発面は111〜178%、クリーン記録の最大は92%
+// （Claudeキッチン面=実在の開口密集）→ 0.9はクリーン側に僅かに掛かるが控除縮退=壁過大側で安全
+const OPENING_MAX_FACE_RATIO = 0.9;
+
 // 壁ボード類の拾い高さ = 天井高 + 40mm（天井PBへの飲み込み代）
 // XLSタイプ別シート（Gタイプ）の壁(ボード)行で直接確認: 玄関・廊下 4.84×2.24（CH2200+40）/
 // 洋室 3.64×2.44（CH2400+40）。耐水PBも (0.95+1.925)×2.24=6.44 vs 正解6.4535（差は丸め）で整合。
@@ -180,6 +194,18 @@ export function resolveOpening(opening, doorLookup, roomName = null) {
   const key = normalizeDoorSymbol(opening.symbol);
   const hit = key ? lookup.bySymbol.get(key) : undefined;
   if (hit) {
+    // 寸法整合ガード（2026-07-19 Gemini読取ノイズ対策）: 転記済み寸法が建具表の実寸と
+    // 大きく矛盾する場合は符号マッチを拒否する（符号と寸法のどちらかが誤読で、どちらが正か
+    // 確定できない。実例: 幻覚開口WD-120A転記幅1800 vs 建具表605 → 拒否しないと高さ2320が
+    // 補完され4.2㎡の架空控除になる）。許容差は推定マッチと同じ帯（幅±30/高さ±15=作図/読取差）。
+    // 拒否時はこれ以上の推定マッチも重ねない（矛盾データに推測を積むと悪化するため転記値のまま。
+    // 欠け寸法は既存のfallback高さで控除される）
+    const dimConflict =
+      (opening.width_mm && hit.width_mm != null &&
+        Math.abs(opening.width_mm - hit.width_mm) > OPENING_WIDTH_TOL_MM) ||
+      (opening.height_mm && hit.height_mm != null &&
+        Math.abs(opening.height_mm - hit.height_mm) > OPENING_HEIGHT_TOL_MM);
+    if (dimConflict) return resolved;
     if (!resolved.width_mm) resolved.width_mm = hit.width_mm;
     if (!resolved.height_mm) resolved.height_mm = hit.height_mm;
     if (!resolved.type) resolved.type = hit.name;
@@ -269,6 +295,41 @@ export function normalizeRoomName(name) {
 }
 
 /**
+ * 同一部屋のplacementのうち「同記号・完全同寸のペア」が2クラスタ以上ある場合、全ペアを1件へ縮退する（純関数）
+ *
+ * 等寸×2保持（claudeApi.js aggregateWallCodeItems の MAX_SAME_WALL=2）は「矩形部屋の等幅対面2枚」
+ * （対面C04が典型）のための仕組みだが、Gemini実読みで「部屋内のほぼ全記号を二重転記する癖」を観測
+ * （2026-07-19記録: placement123件中76件が同一部屋・同記号・完全等寸のペア。0717記録は0件）。
+ * 実在の等幅対面は1部屋にせいぜい1組であり、2クラスタ以上のペアは転記ノイズの疑いが強い
+ * → その部屋の全ペアを1件へ縮退する（ペアが1クラスタだけの部屋は従来どおり×2を保持=対面C04を守る）。
+ * 縮退はマッチング層の二重除外（壁PB過少）と耐水第2パス救済の重複燃料（耐水過大）の両方を断つ。
+ * クリーン記録（Claude×2・Gemini0717）にはペアが1件も無いことを確認済み=挙動不変。
+ * 読取時（aggregateWallCodeItems）と再計算時（computeElevationTakeoff）の両方から適用する
+ * （ノイズ入りのまま保存された記録のリプレイ・再計算でも効かせるため）
+ */
+export function collapseDoubledPlacements(placements) {
+  if (!Array.isArray(placements)) return placements;
+  const keyOf = (p) => `${String(p.code).toUpperCase()}|${p.wall_length_mm}`;
+  const counts = new Map();
+  for (const p of placements) {
+    if (!p?.code || !Number.isFinite(p.wall_length_mm)) continue;
+    const k = keyOf(p);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  let pairClusters = 0;
+  for (const n of counts.values()) if (n >= 2) pairClusters++;
+  if (pairClusters < 2) return placements; // 対面1組までは実在とみなす（従来挙動）
+  const seen = new Set();
+  return placements.filter((p) => {
+    if (!p?.code || !Number.isFinite(p.wall_length_mm)) return true; // 寸法nullは対象外
+    const k = keyOf(p);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+/**
  * メイン: 展開図データから部位別数量を積み上げる
  * @param elevations { rooms: [{ name, ceiling_height_mm, skirting, faces: [{ width_mm, height_mm?, wall_code?, openings: [] }] }] }
  * @param doorSchedule [{ symbol, name, width_mm, height_mm }]
@@ -305,8 +366,22 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // 開口×建具表マッチの内訳。symbol=符号確定 / inferred=推定補完 /
     // unresolved=解決後も寸法欠けのままの開口数（符号マッチしたが建具表行に寸法が無い場合も含む）
     opening_match: { symbol: 0, inferred: 0, unresolved: 0 },
+    // 開口控除の物理ガード発動数（2026-07-19）: width_over_face=面幅超過で棄却 /
+    // dup_dropped=超過面で落とした完全同一開口 / clamped_faces=比率縮退した面数
+    opening_guard: { width_over_face: 0, dup_dropped: 0, clamped_faces: 0 },
     rooms: [],
   };
+  // ガード発動などの要確認事項（applyElevationTakeoffがresult._warningsへ載せ替える）
+  t._warnings = [];
+
+  // 高さ誤転記の疑い寸法（2026-07-19 Gemini読取ノイズ対策）: 平面図タイルの壁寸法(wall_length_mm)に
+  // 天井高（2,400/2,200等の図面内の高さ表記）が混入する実例があるため、いずれかの部屋のCHと
+  // 完全一致する寸法は「高さの誤転記疑い」として面割付の優先度を下げる。
+  // 実在の面幅がCHと偶然一致するケース（例: キッチン面幅2200=CH2200）を殺さないため
+  // 除外はせず降格のみ（他に±80mm候補が無い面では従来どおり割り付く）。
+  // ただし耐水記号（中間2/5）は誤爆時の増幅が大きい（耐水過大+間仕切鏡像加算+第2パス救済が連鎖）
+  // ため、疑い寸法は割付に使わない（実例: パウダーのG24@2400=居室CHの誤転記が面幅2360に化けて耐水+5.3㎡）
+  const suspectHeights = new Set(rooms.map((r) => r.ceiling_height_mm).filter(Boolean));
 
   // 間仕切下地(木): 部屋間の壁は両部屋の展開図に現れる（ドア開口が両側の面に出ることを実データで確認）
   // ため、面ごとの拾いを合算して最後に÷2し「壁1枚1回」のXLS方式に合わせる。
@@ -318,6 +393,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   const d6ByElevRoom = new Map(); // 正規化部屋名 -> D6*面幅合計(m)
 
   for (const room of rooms) {
+    // UB内部の立面は拾わない（UB_ROOM_NAME_RE参照。読取ノイズで幻出した室のスキップ）
+    if (UB_ROOM_NAME_RE.test(normalizeRoomName(room.name))) continue;
     const ch = (room.ceiling_height_mm || 2400) / 1000;
     const studH = ch + STUD_PLENUM_M; // 下地はスラブまで通す（XLSの下地高2.57/2.77と同義）
     const faces = Array.isArray(room.faces) ? room.faces : [];
@@ -352,8 +429,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     const PLACEMENT_TOL_MM = 80; // 平面図の壁寸法と展開図の面幅の許容差（芯/内法の差を吸収）
     const placementByFace = new Map(); // faceIndex -> parsed code
     if (Array.isArray(room.plan_placements) && faces.length >= 1) {
+      // 二重転記ノイズの縮退（保存済み記録にもノイズが残るため読取時と再計算時の両方で適用）
+      const planPlacements = collapseDoubledPlacements(room.plan_placements);
       const used = new Set();
       const usedPl = new Set();
+      // 消費済みの(記号|寸法)キー。縮退をすり抜けた同記号・同寸の残骸が第2パス救済の
+      // 燃料になって同じ壁を二重に割り付けるのを防ぐ（ガード5・2026-07-19）
+      const consumedKeys = new Set();
+      const plKey = (pl) => `${String(pl.code).toUpperCase()}|${pl.wall_length_mm}`;
 
       // 第0パス: 展開図の面記号(wall_code)で実測済みの壁に対応するplacementを消費済みにする。
       // 同一記号・寸法±80mmのplacementが未消費のまま残ると、等幅の無記号面へ割り付いて
@@ -362,7 +445,7 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       // 記号一致かつ寸法一致の面ごとに最も近い1件だけ消費する（寸法の合わないplacementは
       // 実在の第2の壁でありうるため残す）。
       const codedCands = [];
-      for (const pl of room.plan_placements) {
+      for (const pl of planPlacements) {
         const c = parseWallCode(pl?.code);
         const len = pl?.wall_length_mm;
         if (!c || !Number.isFinite(len) || len <= 0) continue;
@@ -378,20 +461,23 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (used.has(cand.i) || usedPl.has(cand.pl)) continue;
         used.add(cand.i); // 記号付き面は元々cands対象外だが、消費済みの記録として揃えておく
         usedPl.add(cand.pl);
+        consumedKeys.add(plKey(cand.pl));
       }
 
       // 寸法差が小さい割付から確定させる（曖昧なマッチが確実なマッチの面を奪わないように）
       const cands = [];
-      for (const pl of room.plan_placements) {
+      for (const pl of planPlacements) {
         if (usedPl.has(pl)) continue; // 第0パスで実測面に消費済み
         const c = parseWallCode(pl?.code);
         const len = pl?.wall_length_mm;
         if (!c || !Number.isFinite(len) || len <= 0) continue;
+        const susp = suspectHeights.has(len) ? 1 : 0; // 高さ誤転記疑い（suspectHeights参照）
+        if (susp && (c.mid === 2 || c.mid === 5)) continue; // 耐水記号×疑い寸法は割付しない（増幅遮断）
         for (let i = 0; i < faces.length; i++) {
           const fw = faces[i].width_mm || 0;
           if (fw <= 0 || parseWallCode(faces[i].wall_code)) continue; // 展開図の面記号は実測として優先
           const d = Math.abs(fw - len);
-          if (d <= PLACEMENT_TOL_MM) cands.push({ pl, c, i, d });
+          if (d <= PLACEMENT_TOL_MM) cands.push({ pl, c, i, d, susp });
         }
       }
       // タイ解決（寸法差の同点=等幅の対面が典型）: 面index順で機械的に選ぶと、C04（打放・
@@ -414,11 +500,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (ops.some((op) => isWindow(op))) r -= 1;
         return r;
       };
-      cands.sort((a, b) => (a.d - b.d) || (tieRank(a) - tieRank(b)) || (a.i - b.i));
+      // 高さ誤転記疑い（susp）は他の候補より後回し（=非疑い候補が面を取り切った残りにだけ割り付く。
+      // 2400が面幅2360±80に化ける経路の抑制。距離より優先して降格する）
+      cands.sort((a, b) => (a.susp - b.susp) || (a.d - b.d) || (tieRank(a) - tieRank(b)) || (a.i - b.i));
       for (const cand of cands) {
         if (used.has(cand.i) || usedPl.has(cand.pl)) continue;
         used.add(cand.i);
         usedPl.add(cand.pl);
+        consumedKeys.add(plKey(cand.pl));
         placementByFace.set(cand.i, cand.c);
       }
 
@@ -434,12 +523,16 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       if (WET_ROOM_NAME_RE.test(room.name || '')) {
         const WATERPROOF_RESCUE_TOL_MM = 300;
         const rescue = [];
-        for (const pl of room.plan_placements) {
+        for (const pl of planPlacements) {
           if (usedPl.has(pl)) continue;
           const c = parseWallCode(pl?.code);
           const len = pl?.wall_length_mm;
           if (!c || !(c.mid === 2 || c.mid === 5)) continue; // 耐水記号のみ
           if (!Number.isFinite(len) || len <= 0) continue;
+          if (suspectHeights.has(len)) continue; // 高さ誤転記疑いは救済に使わない（suspectHeights参照）
+          // 同記号・同寸を第0/1パスで消費済みなら、その残骸は二重転記の疑い → 救済の燃料にしない
+          // （実例: パウダーのG24@1725ペアがB/D両面へ二重救済され耐水過大・2026-07-19）
+          if (consumedKeys.has(plKey(pl))) continue;
           for (let i = 0; i < faces.length; i++) {
             if (used.has(i)) continue;
             const fw = faces[i].width_mm || 0;
@@ -470,9 +563,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       const h = (face.height_mm ? face.height_mm : (room.ceiling_height_mm || 2400) + WALL_PICKUP_EXTRA_MM) / 1000;
       perimeter += w;
 
-      // 開口控除
+      // 開口控除（物理ガード付き・2026-07-19 Gemini読取ノイズ対策）
       let openingArea = 0;
       let openingAreaStud = 0; // 下地用（下地高=CH+370まで見るので面の仕上げ高でキャップしない）
+      const resolvedOps = [];
       for (const raw of face.openings || []) {
         const op = resolveOpening(raw, doorLookup, room.name);
         // マッチ結果の印を元データに付ける（このリクエスト内限りのインメモリ観測点。寸法は書き戻さない。
@@ -487,13 +581,62 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         const ow = (op.width_mm || 0) / 1000;
         const oh = (op.height_mm || 0) / 1000;
         if (ow <= 0) continue;
+        // ガード①: 面幅を超える開口は物理的に載らない → 控除から棄却
+        // （実例: 幻覚窓AWD-102=4120mmが洋室の面3685/2360に付き、面の壁がゼロに潰れた）
+        if ((face.width_mm || 0) > 0 && op.width_mm > face.width_mm) {
+          t.opening_guard.width_over_face++;
+          t._warnings.push({
+            field: 'opening_guard',
+            message: `${room.name}${face.face ? face.face + '面' : ''}: 開口${op.symbol || op.type || ''}` +
+              `(幅${op.width_mm}mm)が面幅${face.width_mm}mmを超えるため控除から除外しました（読取誤りの疑い）`,
+            before: null, after: null,
+          });
+          continue;
+        }
         // 高さ不明の開口: 窓=腰窓標準1.1m / 戸=2.0m。面の高さは超えない
         const fallbackH = isWindow(op) ? 1.1 : 2.0;
         const effH = Math.min(oh > 0 ? oh : fallbackH, h);
-        openingArea += ow * effH;
-        openingAreaStud += ow * Math.min(oh > 0 ? oh : fallbackH, studH);
         const reachesFloor = !isWindow(op) || (op.height_mm || 0) >= FLOOR_OPENING_MIN_HEIGHT_MM;
-        if (reachesFloor) floorOpeningWidth += ow;
+        resolvedOps.push({
+          area: ow * effH,
+          areaStud: ow * Math.min(oh > 0 ? oh : fallbackH, studH),
+          floorW: reachesFloor ? ow : 0,
+          // 完全同一開口の判定キー（符号優先・無ければtype。寸法は解決後の値）
+          dupKey: `${normalizeDoorSymbol(op.symbol) || op.type || ''}|${op.width_mm}|${op.height_mm}`,
+        });
+      }
+      // ガード②: 開口合計が面面積の90%超（OPENING_MAX_FACE_RATIO）は幻覚・重複転記とみなす。
+      // まず面内の完全同一開口（dupKey一致）の2件目以降を落とし、なお超過なら比率まで縮退+警告。
+      // ※ 同一寸法の実在ペア（例: Claude記録LDKの片開き戸800×2175×2）を守るため、
+      //   重複落としは超過した面でのみ発動する（通常面では従来どおり全件控除）
+      let ops = resolvedOps;
+      const grossFace = w * h;
+      const sumArea = (list) => list.reduce((s, x) => s + x.area, 0);
+      if (grossFace > 0 && sumArea(ops) > OPENING_MAX_FACE_RATIO * grossFace) {
+        const seen = new Set();
+        ops = ops.filter((x) => {
+          if (seen.has(x.dupKey)) { t.opening_guard.dup_dropped++; return false; }
+          seen.add(x.dupKey);
+          return true;
+        });
+        const total = sumArea(ops);
+        if (total > OPENING_MAX_FACE_RATIO * grossFace) {
+          // 面積比例で縮退（残す開口を選べないため一律スケール。下地控除も同率）
+          const scale = (OPENING_MAX_FACE_RATIO * grossFace) / total;
+          for (const x of ops) { x.area *= scale; x.areaStud *= scale; }
+          t.opening_guard.clamped_faces++;
+        }
+        t._warnings.push({
+          field: 'opening_guard',
+          message: `${room.name}${face.face ? face.face + '面' : ''}: 開口控除の合計が面面積の90%を超えたため` +
+            '縮退しました（開口の重複・幻覚読取の疑い。この面の壁数量は要確認です）',
+          before: null, after: null,
+        });
+      }
+      for (const x of ops) {
+        openingArea += x.area;
+        openingAreaStud += x.areaStud;
+        floorOpeningWidth += x.floorW;
       }
 
       const net = Math.max(0, w * h - openingArea);
@@ -749,6 +892,12 @@ export function applyElevationTakeoff(result, takeoff) {
   }
   set((m) => m.name === '木胴縁（界壁面）', dobuchiVol,
     `RC面木 ${takeoff.rc_furring_sqm}㎡ × 横胴縁@455 = ${Math.round(dobuchiLen)}m × 断面45×30`);
+
+  // 開口ガード等、takeoff側で検出した要確認事項を結果の警告へ載せ替える
+  // （/calculateの警告マージ経路（サイクルC）に乗り、結果画面の警告パネルに表示される）
+  if (Array.isArray(takeoff._warnings) && takeoff._warnings.length > 0) {
+    result._warnings = [...(result._warnings || []), ...takeoff._warnings];
+  }
 
   // サマリーにも反映
   if (result.summary) {

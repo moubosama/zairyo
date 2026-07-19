@@ -60,9 +60,40 @@ console.log('--- 符号マッチ ---');
     [r.width_mm, r.height_mm, r.type, r.matched_by], [800, 2175, '片開き戸', 'symbol']);
 }
 {
-  const r = resolveOpening({ symbol: 'WD-2A', width_mm: 850, height_mm: 2100 }, LOOKUP);
-  check('転記済み寸法は上書きしない（符号マッチでも補完のみ）',
-    [r.width_mm, r.height_mm, r.matched_by], [850, 2100, 'symbol']);
+  // 許容差内のズレ（幅803→800の作図/読取差など）は矛盾でない → 符号マッチ+転記値は上書きしない
+  const r = resolveOpening({ symbol: 'WD-2A', width_mm: 803, height_mm: 2085 }, LOOKUP);
+  check('転記済み寸法は上書きしない（許容差内なら符号マッチ・補完のみ）',
+    [r.width_mm, r.height_mm, r.matched_by], [803, 2085, 'symbol']);
+}
+
+// ============ 2b. 符号マッチの寸法整合ガード（2026-07-19 Gemini読取ノイズ対策） ============
+console.log('--- 符号マッチの寸法整合ガード ---');
+{
+  // 実例の再現: 幻覚開口WD-120A転記幅1800 vs 建具表605（差1195≫±30）
+  // 旧実装は符号マッチで高さ2320を補完し 1800×2320=4.2㎡ の架空控除になった
+  // → 矛盾時は符号マッチ拒否（高さはnull維持=fallback高さ2.0mで控除・matched_byなし）
+  const r = resolveOpening({ symbol: 'WD-120A', width_mm: 1800 }, LOOKUP);
+  check('転記幅が建具表と矛盾（1800 vs 605）→ 符号マッチ拒否・高さを補完しない',
+    [r.width_mm, r.height_mm, r.matched_by ?? null], [1800, null, null]);
+}
+{
+  // 高さ側の矛盾でも拒否（幅±30/高さ±15の帯は推定マッチと同一）
+  const r = resolveOpening({ symbol: 'WD-2A', height_mm: 2320 }, LOOKUP);
+  check('転記高さが建具表と矛盾（2320 vs 2080）→ 符号マッチ拒否・幅を補完しない',
+    [r.width_mm ?? null, r.height_mm, r.matched_by ?? null], [null, 2320, null]);
+}
+{
+  // 矛盾拒否後に推定マッチへ流れない（矛盾データへ推測を重ねない安全側。
+  // typeがあっても寸法帯フィルタが転記幅で効くため誤補完しないことの確認）
+  const r = resolveOpening({ symbol: 'WD-120A', type: '2枚折戸', width_mm: 1800 }, LOOKUP, 'クロゼット');
+  check('矛盾拒否後は推定マッチも重ねない', [r.height_mm ?? null, r.matched_by ?? null], [null, null]);
+}
+{
+  // 両寸法とも転記済みで矛盾 → 数値は転記のまま・印だけ付かない（数値挙動は不変）
+  const r = resolveOpening({ symbol: 'SD-101A', width_mm: 1600, height_mm: 2000 },
+    buildDoorLookup([{ symbol: 'SD-101A', name: '片開きスチールドア', width_mm: 850, height_mm: 1900 }]));
+  check('両寸法転記済みの矛盾は転記値のまま（matched_byなし）',
+    [r.width_mm, r.height_mm, r.matched_by ?? null], [1600, 2000, null]);
 }
 
 // ============ 3. 推定マッチ（フォールバック） ============
