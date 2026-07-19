@@ -237,9 +237,10 @@ console.log('--- 修正3: 収納推定のD6*控除（実測済み収納が別収
 {
   // クロゼット(1)は展開図に実測あり（skip済み・D64面2000mm）。物入は平面図のみ。
   // 旧実装: 戸全体アキュムレータでD64の2.0mが物入の推定4.157mから引かれ半減以下
-  //   → majikiri = (4.157−2.0)×2.77÷2 = 2.99（物入分の計上漏れ）
+  //   → majikiri = (4.157−2.0)×2.57÷2 = 2.77（物入分の計上漏れ）
   // 修正後: 平面図の部屋名と一致する展開図収納のD64は控除プール外
-  //   → majikiri = 4.157×2.77÷2 = 5.76
+  //   → majikiri = 4.157×2.57÷2 = 5.34
+  //   （下地高は現場定数2.57。2026-07-19の総監査A-2修正でCH+370=2.77から変更）
   const elevations = { rooms: [
     { name: 'クロゼット(1)', ceiling_height_mm: 2345, faces: [
       { face: 'A', width_mm: 2000, wall_code: 'D64', openings: [] },
@@ -250,12 +251,12 @@ console.log('--- 修正3: 収納推定のD6*控除（実測済み収納が別収
     { name: '物入', area_sqm: 1.92 },
   ];
   const t = computeElevationTakeoff(elevations, [], { planRooms });
-  check('実測済み収納のD64は平面図のみの収納（物入）の推定を消さない（5.76）',
-    t.majikiri_shitaji_m, 5.76);
+  check('実測済み収納のD64は平面図のみの収納（物入）の推定を消さない（5.34）',
+    t.majikiri_shitaji_m, 5.34);
 }
 {
   // 回帰確認: 平面図に対応の無い合算立面（クロゼット内RC面）のD64控除は維持される
-  // （推定4.157−2.0=2.157 → ×2.77÷2 = 2.99。RC面と推定の重複控除という元来の意図）
+  // （推定4.157−2.0=2.157 → ×2.57÷2 = 2.77。RC面と推定の重複控除という元来の意図）
   const elevations = { rooms: [
     { name: 'クロゼット内RC面', ceiling_height_mm: 2345, faces: [
       { face: 'A', width_mm: 2000, wall_code: 'D64', openings: [] },
@@ -263,8 +264,180 @@ console.log('--- 修正3: 収納推定のD6*控除（実測済み収納が別収
   ]};
   const planRooms = [{ name: '物入', area_sqm: 1.92 }];
   const t = computeElevationTakeoff(elevations, [], { planRooms });
-  check('平面図に無い合算立面（クロゼット内RC面）のD64控除は維持（2.99）',
-    t.majikiri_shitaji_m, 2.99);
+  check('平面図に無い合算立面（クロゼット内RC面）のD64控除は維持（2.77）',
+    t.majikiri_shitaji_m, 2.77);
+}
+
+// ============ 遮音壁ルール+下地高（2026-07-19 数式化・総監査A-2/A-3修正） ============
+console.log('--- 遮音壁ルール: DEFAULT_SOUND_WALL_PAIRS（LDK↔洋1 1.45m + LDK↔洋3 1.05m） ---');
+{
+  // 両ペアの部屋が存在 → 記号読みゼロでも数式で計上される
+  //   PB両面: 2×(1.45+1.05)×2.57 = 12.85 / GW壁1枚1回: (1.45+1.05)×2.57 = 6.43
+  //   （XLS正解: PB 12.9785（台所裏面1.1の作図差-1%）/ GW 6.425完全一致）
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('両ペア成立で記号なしでも遮音壁を数式計上（PB 12.85 / GW 6.43 / 2ペア）',
+    [t.sound_wall_pb_sqm, t.gw_sqm, t.sound_rule_pairs], [12.85, 6.43, 2]);
+}
+{
+  // ペアの片部屋しか無い読取では幻の壁を積まない（安全側ゲート）: 洋室(3)なし → pair2は不成立
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('片部屋欠けのペアは計上しない（pair1のみ: PB 2×1.45×2.57=7.45）',
+    [t.sound_wall_pb_sqm, t.sound_rule_pairs], [7.45, 1]);
+}
+{
+  // LDK表記ゆれ（'LDK'）でもペア成立（soundRoomMatchesのLDK系同一視）
+  const elevations = { rooms: [
+    { name: 'LDK', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('LDK表記ゆれでもペア成立（PB 12.85）', t.sound_wall_pb_sqm, 12.85);
+}
+{
+  // opts.soundWallRule.pairs = [] で無効化できる（他タイプでの誤計上防止の逃げ道）
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, [], { soundWallRule: { pairs: [] } });
+  check('pairs:[]で遮音壁ルール無効化', [t.sound_wall_pb_sqm, t.sound_rule_pairs], [0, 0]);
+}
+{
+  // 面単位のused管理: L14の面（eval fixtureの洋室(1)C1=1450と同型）はルールと同じ壁
+  //   → 面側の遮音計上をスキップし二重計上しない（PBは12.85のままでルール分のみ）
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [
+      { face: 'C1', width_mm: 1450, wall_code: 'L14', openings: [] },
+    ] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('L14面はルールに消費され二重計上しない（PB 12.85 / GW 6.43）',
+    [t.sound_wall_pb_sqm, t.gw_sqm], [12.85, 6.43]);
+}
+{
+  // 記号なしのペア幅一致面はwall_pb/間仕切下地から除外される（遮音壁への振替）
+  //   洋室(1)の1450面（記号なし=デフォルトG14）+ 無関係の2000面
+  //   → wall_pb = 2000面のみ 2.0×2.44 = 4.88 / majikiri = 2.0×2.57÷2 = 2.57
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 1450, openings: [] },
+      { face: 'B', width_mm: 2000, openings: [] },
+    ] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('ペア幅一致の無記号面はwall_pbから遮音へ振替（壁PB 4.88 / 下地2.57）',
+    [t.wall_pb_sqm, t.majikiri_shitaji_m], [4.88, 2.57]);
+}
+{
+  // C04（打放・元々壁PB外）の面は消費対象外: 幅が偶然一致してもルールの面扱いにしない
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 1450, wall_code: 'C04', openings: [] },
+    ] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('C04面は消費されずルール値のみ（PB 12.85・壁PB 0）',
+    [t.sound_wall_pb_sqm, t.wall_pb_sqm], [12.85, 0]);
+}
+{
+  // ペア幅（±80mm）に合わないL/O/W placementはルール適用時に採用しない（部屋帰属ノイズ遮断。
+  // 実例: Gemini記録の玄関・廊下L14@1000→面965。※1000は|1000-1050|=50でpair2帯に入るため
+  // このテストでは帯外の@2200で再現）→ 面はデフォルトG14で壁PBへ（安全側）
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+    { name: '玄関・廊下', ceiling_height_mm: 2200, faces: [
+      { face: 'C', width_mm: 2200, openings: [] },
+    ], plan_placements: [{ code: 'L14', wall_length_mm: 2200 }] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  // 遮音=ルール12.85のみ / 廊下面はG14デフォルト → 壁PB 2.2×2.24 = 4.93
+  check('ペア幅外のL14 placementは採用せず面はG14へ（遮音12.85・壁PB 4.93）',
+    [t.sound_wall_pb_sqm, t.wall_pb_sqm], [12.85, 4.93]);
+}
+{
+  // ペア構成部屋以外のL/O/W placementは、ペア幅帯（±80mm）に偶然入っても採用しない
+  // （should-fix①・Gemini記録の実経路再現: 玄関・廊下L14@1000が|1000−1050|=50で帯内
+  //  → 面965=正はD14 EV面に割り付き遮音+0.53㎡/GW誤加算していた）
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+    { name: '玄関・廊下', ceiling_height_mm: 2200, faces: [
+      { face: 'C', width_mm: 965, openings: [] },
+    ], plan_placements: [{ code: 'L14', wall_length_mm: 1000 }] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  // 遮音=ルール12.85のみ / GW=6.43のみ / 廊下面965はG14デフォルト → 壁PB 0.965×2.24 = 2.16
+  check('非ペア部屋のL14はペア幅帯内でも採用しない（遮音12.85・GW6.43・壁PB2.16）',
+    [t.sound_wall_pb_sqm, t.gw_sqm, t.wall_pb_sqm], [12.85, 6.43, 2.16]);
+}
+{
+  // ペア構成部屋（洋室(1)）×ペア幅帯のL14 placementは従来どおり採用され、
+  // ルールの面消費で二重計上にならない（Claude記録の実経路=回帰確認）
+  const elevations = { rooms: [
+    { name: 'リビング・ダイニング', ceiling_height_mm: 2400, faces: [] },
+    { name: '洋室(1)', ceiling_height_mm: 2400, faces: [
+      { face: 'C1', width_mm: 1450, openings: [] },
+    ], plan_placements: [{ code: 'L14', wall_length_mm: 1450 }] },
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('ペア部屋×帯内のL14 placementは採用+ルール消費で二重計上なし（遮音12.85・壁PB0）',
+    [t.sound_wall_pb_sqm, t.wall_pb_sqm], [12.85, 0]);
+}
+{
+  // ルール非適用時（ペア部屋なし）はL14 placementの割付が従来どおり生きる
+  const elevations = { rooms: [
+    { name: '玄関・廊下', ceiling_height_mm: 2200, faces: [
+      { face: 'C', width_mm: 2200, openings: [] },
+    ], plan_placements: [{ code: 'L14', wall_length_mm: 2200 }] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  // 遮音 = 2.2×下地高2.57 = 5.65（面の遮音は下地高で拾う=A-3修正）
+  check('ルール非適用時はL14割付が従来どおり（遮音5.65=下地高2.57）',
+    [t.sound_wall_pb_sqm, t.wall_pb_sqm], [5.65, 0]);
+}
+
+console.log('--- 下地高: 現場定数2.57（水回りのみ2.77・CH非連動＝総監査A-2修正） ---');
+{
+  // 居室CH2400でも下地高2.57（旧CH+370=2.77は誤り）: majikiri = 2.0×2.57÷2 = 2.57
+  const elevations = { rooms: [
+    { name: '洋室(H1)', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 2000, openings: [] },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('居室CH2400の下地高は2.57（majikiri 2.57）', t.majikiri_shitaji_m, 2.57);
+}
+{
+  // 水回り（パウダールーム）はスラブ下がり分+0.2=2.77（旧CH2200+370=2.57は過少）
+  // G14面2000 → majikiri = 2.0×2.77÷2 = 2.77
+  const elevations = { rooms: [
+    { name: 'パウダールーム', ceiling_height_mm: 2200, faces: [
+      { face: 'A', width_mm: 2000, openings: [] },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('水回りの下地高は2.77（majikiri 2.77）', t.majikiri_shitaji_m, 2.77);
 }
 
 // ============ 修正4: 木製巾木マッチャの完全一致 ============

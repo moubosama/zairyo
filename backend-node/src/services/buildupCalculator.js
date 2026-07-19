@@ -30,10 +30,16 @@ const KITCHEN_COUNTER_H_M = 0.85;
 // 床まで達する開口（巾木・壁下部から引く）とみなす高さ
 const FLOOR_OPENING_MIN_HEIGHT_MM = 1800;
 
-// 間仕切下地の立上り高さ = 天井高 + 370mm（床仕上げ面〜上階スラブ下端まで通す）
-// XLSタイプ別シートの下地高 2.57/2.77 = CH2200/2400 + 370 を直接確認（G展開図の全高2810と整合:
-// 居室 2810−直貼40−2400=370 / 水回り 2810−置床200−仕上40−2200=370）。timberVolume.js参照。
-const STUD_PLENUM_M = 0.37;
+// 間仕切下地の立上り高さ（下地高）= 現場定数2.57m（標準スラブ間・床仕上げ面〜上階スラブ下端）。
+// 水回りのスラブ下がり(-200)部に立つ壁のみ +0.2 = 2.77m。天井高とは連動しない
+// （居室CH2400の下地も2.57。旧実装のCH+370説はCH2200の水回りで2.57に偶然一致していただけ
+//  = 計算ロジック総監査A-2で両方向誤りと確定・2026-07-19修正）。
+// 出典: XLS 'Ａタイプ'(=Gデータ)シートの間仕切下地行 E123/G123(H)/E177/E231/E284=2.57（居室）、
+//   H339/E340/E393/E394=2.77（便所・洗面の水回り壁）。
+// ※既知の近似: XLSは水回りブロック内でも標準スラブ上に立つ壁を2.57で拾う（便所D339=2.1×2.57）が、
+//   面単位のスラブ下がり判定情報が図面読取に無いため部屋名（WET_ROOM_NAME_RE）で一律に振る
+const STUD_HEIGHT_M = 2.57;
+const STUD_HEIGHT_WET_M = 2.77;
 
 // 耐水記号（中間2/5）救済マッチの適用部屋（部屋名ベースの水回り判定）。
 // 面幅の転記は芯々/内法・部分区間で揺れるため、±80mmの第1パスでは取り逃すことがある
@@ -294,6 +300,35 @@ export function normalizeRoomName(name) {
     .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
 }
 
+// ============================================================
+// 住戸内遮音壁の宣言的ルール（記号読みに依存しない数式化・2026-07-19）
+// 確定事実（XLS 'Ａタイプ'(=Gデータ)シートの数式セルで直接確認）:
+//   遮音壁 = 「LDK↔洋室(1)間の壁1.45m」と「LDK↔洋室(3)間の壁1.05m」の2枚だけ。
+//   - PBは両面計上・高さは下地高2.57: 洋室(1)ブロック P113=1.45×2.57 / 洋室(3) P221=1.05×2.57 /
+//     台所 P275=1.45×2.57+1.1×2.57（裏面。1.1≒1.05の作図差）→ 遮音壁PB計 12.9785㎡/戸
+//   - GWは壁1枚1回: 玄関ブロック P81=1.45×2.57 + P82=1.05×2.57 = 6.425㎡/戸
+// 平面図の記号はL14が洋室(1)側に1個あるだけで洋室(3)側には無い（図面は凡例の「遮音壁の範囲」
+// マーク+注意書きで指定）ため、記号読みでは原理的に全量を拾えない → 部屋ペア+壁幅の
+// 宣言的ルールで計上する（AIは部屋名の転記のみ・幾何判断をさせない）。
+// ※ Gタイプで検証済みのタイプ依存定数。他タイプでは特記仕様書(意匠図page_05)の「住戸内遮音壁」
+//   指定に依存する（部屋名が同じでも壁構成は別物）。他タイプの正解データ入手時に
+//   opts.soundWallRule = { pairs: [...] } でタイプ別ルールへ差し替えること
+// ============================================================
+export const DEFAULT_SOUND_WALL_PAIRS = [
+  { roomA: 'リビング・ダイニング', roomB: '洋室(1)', width_mm: 1450 }, // 'Ａタイプ'!D113/J275
+  { roomA: 'リビング・ダイニング', roomB: '洋室(3)', width_mm: 1050 }, // 'Ａタイプ'!D221/M275(1.1)
+];
+
+// 遮音壁ルールの部屋名照合: 正規化完全一致に加えLDK系の表記ゆれを同一視する。
+// 台所系も含めるのは、遮音壁のLDK側が平面上は台所ブロックに接する壁のため
+// （XLSも裏面を台所ブロックで拾う。読取が「キッチン」側の面として返しても対応させる）
+const LDK_LIKE_RE = /リビング|LDK|ダイニング|食事室|キッチン|台所/;
+function soundRoomMatches(ruleName, roomName) {
+  if (!ruleName || !roomName) return false;
+  if (normalizeRoomName(ruleName) === normalizeRoomName(roomName)) return true;
+  return LDK_LIKE_RE.test(String(ruleName)) && LDK_LIKE_RE.test(String(roomName));
+}
+
 /**
  * 同一部屋のplacementのうち「同記号・完全同寸のペア」が2クラスタ以上ある場合、全ペアを1件へ縮退する（純関数）
  *
@@ -333,14 +368,26 @@ export function collapseDoubledPlacements(placements) {
  * メイン: 展開図データから部位別数量を積み上げる
  * @param elevations { rooms: [{ name, ceiling_height_mm, skirting, faces: [{ width_mm, height_mm?, wall_code?, openings: [] }] }] }
  * @param doorSchedule [{ symbol, name, width_mm, height_mm }]
- * @param opts { planRooms?: [{ name, area_sqm }], closetInteriors?: [{ room, inner_width_mm }] }
+ * @param opts { planRooms?: [{ name, area_sqm }], closetInteriors?: [{ room, inner_width_mm }],
+ *               soundWallRule?: { pairs: [{ roomA, roomB, width_mm }] } }
  *   planRooms: 平面図の部屋一覧（展開図に現れない収納内の下地推定に使う）
  *   closetInteriors: 収納内側の下地幅実寸mm（見積明細の家具工事シート等。部屋名でplanRoomsと突合し、
  *     実寸がある収納は3×√面積の推定を実寸で置き換える。タイプ別に入力で与える=ハードコードしない）
+ *   soundWallRule: 住戸内遮音壁の宣言的ルール（未指定はDEFAULT_SOUND_WALL_PAIRS。
+ *     pairs: [] で無効化可。DEFAULT_SOUND_WALL_PAIRS参照）
  */
 export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}) {
   const rooms = elevations?.rooms || [];
   const doorLookup = buildDoorLookup(doorSchedule);
+
+  // 遮音壁ルールの適用対象: ペアの両部屋が展開図に存在する場合のみ（片方しか読めていない
+  // 読取で幻の壁を積まない安全側ゲート。Gタイプ以外の間取りで部屋名が偶然一致した場合に
+  // 誤計上するリスクはDEFAULT_SOUND_WALL_PAIRS側のコメント参照=他タイプ検証時に差し替え）
+  const soundPairs = (Array.isArray(opts.soundWallRule?.pairs)
+    ? opts.soundWallRule.pairs : DEFAULT_SOUND_WALL_PAIRS)
+    .filter((p) => p && Number.isFinite(p.width_mm) && p.width_mm > 0 &&
+      rooms.some((r) => soundRoomMatches(p.roomA, r.name)) &&
+      rooms.some((r) => soundRoomMatches(p.roomB, r.name)));
 
   const t = {
     // 面積系（㎡）
@@ -357,7 +404,7 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // 延長系（m）
     partition_face_length_m: 0, // 間仕切系下地の面延長（両面計上・参考値）
     // 間仕切下地(木)の拾い量。XLS慣行の"m"表記だが実態は「壁1枚あたり片面の下地面積(㎡)」
-    // = Σ(間仕切面幅×下地高(CH+370)−開口) を壁1枚換算(÷2)したもの。timberVolume.js解読メモ参照
+    // = Σ(間仕切面幅×下地高(2.57/水回り2.77)−開口) を壁1枚換算(÷2)したもの。timberVolume.js解読メモ参照
     majikiri_shitaji_m: 0,
     rc_furring_sqm: 0,       // RC面木(D下地)の面積 — 木胴縁の材積換算用（D14防露/EV面・D64収納内）
     skirting_m: { 木製: 0, ソフト: 0, 樹脂: 0 },
@@ -396,7 +443,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // UB内部の立面は拾わない（UB_ROOM_NAME_RE参照。読取ノイズで幻出した室のスキップ）
     if (UB_ROOM_NAME_RE.test(normalizeRoomName(room.name))) continue;
     const ch = (room.ceiling_height_mm || 2400) / 1000;
-    const studH = ch + STUD_PLENUM_M; // 下地はスラブまで通す（XLSの下地高2.57/2.77と同義）
+    // 下地高: 現場定数2.57（水回りのみ2.77）。CH非連動（STUD_HEIGHT_M定義の出典コメント参照）
+    const studH = WET_ROOM_NAME_RE.test(room.name || '') ? STUD_HEIGHT_WET_M : STUD_HEIGHT_M;
     const faces = Array.isArray(room.faces) ? room.faces : [];
     let perimeter = 0;
     let floorOpeningWidth = 0;
@@ -473,6 +521,20 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (!c || !Number.isFinite(len) || len <= 0) continue;
         const susp = suspectHeights.has(len) ? 1 : 0; // 高さ誤転記疑い（suspectHeights参照）
         if (susp && (c.mid === 2 || c.mid === 5)) continue; // 耐水記号×疑い寸法は割付しない（増幅遮断）
+        // 遮音壁ルール適用時、遮音記号（L/O/W）placementの採用は
+        // 「ペア構成部屋（roomA/roomB該当室）×ペア幅±80mm」に限定する:
+        // 遮音壁は確定2枚だけ＝それ以外のL系読取は部屋帰属ノイズの疑いが強い。
+        // 部屋限定が無いと、非ペア部屋のL14がペア幅帯に偶然入って素通りする
+        // （実例: Gemini記録の玄関・廊下L14@1000が|1000−1050|=50で帯内→面965に割り付き
+        //  遮音+0.53㎡/GW誤加算。真の壁記号はD14=EV面）。
+        // 不採用のplacementは捨てられ、面はデフォルトG14へ落ちる（壁PB側=読取ノイズとして安全側）。
+        // 展開図の面記号（face.wall_code）のL/O/Wは実測として従来どおり尊重する
+        if (soundPairs.length > 0 && ['L', 'O', 'W'].includes(c.base)) {
+          const inPairRoom = soundPairs.some((p) =>
+            soundRoomMatches(p.roomA, room.name) || soundRoomMatches(p.roomB, room.name));
+          const inBand = soundPairs.some((p) => Math.abs(len - p.width_mm) <= PLACEMENT_TOL_MM);
+          if (!inPairRoom || !inBand) continue;
+        }
         for (let i = 0; i < faces.length; i++) {
           const fw = faces[i].width_mm || 0;
           if (fw <= 0 || parseWallCode(faces[i].wall_code)) continue; // 展開図の面記号は実測として優先
@@ -553,6 +615,36 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
           break;
         }
       }
+    }
+
+    // 遮音壁ルールと同じ壁を指す面の消費（面単位のused管理・二重計上防止）:
+    // この部屋が関与するペアごとに、幅がpair.width_mm±80mmの面を最大1面
+    // 「ルール側で計上済み」としてマークする。対象は遮音記号（L/O/W）の面と
+    // 間仕切PB扱いになる面（G×中間1/4・記号なしデフォルト含む）のみ。
+    // C04/D64等（元々壁PBに入らない面）は消費しない。遮音記号の面を最優先
+    // （既にL14で遮音に入っている面と数式ルールが同じ壁を指すケース＝eval fixtureの洋室(1)C1面）
+    const soundConsumed = new Set();
+    for (const p of soundPairs) {
+      if (!soundRoomMatches(p.roomA, room.name) && !soundRoomMatches(p.roomB, room.name)) continue;
+      let best = -1;
+      let bestD = Infinity;
+      let bestSound = false;
+      for (let i = 0; i < faces.length; i++) {
+        if (soundConsumed.has(i)) continue;
+        const fw = faces[i].width_mm || 0;
+        if (fw <= 0) continue;
+        const d = Math.abs(fw - p.width_mm);
+        if (d > PLACEMENT_TOL_MM) continue;
+        const c = parseWallCode(faces[i].wall_code) || placementByFace.get(i)
+          || roomDefaultCode || { base: 'G', mid: 1, surf: 4 };
+        const isSoundCode = ['L', 'O', 'W'].includes(c.base);
+        const isPartitionPb = c.base === 'G' && (c.mid === 1 || c.mid === 4);
+        if (!isSoundCode && !isPartitionPb) continue;
+        if ((isSoundCode && !bestSound) || (isSoundCode === bestSound && d < bestD)) {
+          best = i; bestD = d; bestSound = isSoundCode;
+        }
+      }
+      if (best >= 0) soundConsumed.add(best);
     }
 
     for (let faceIdx = 0; faceIdx < faces.length; faceIdx++) {
@@ -647,6 +739,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       const code = parseWallCode(face.wall_code) || placementByFace.get(faceIdx)
         || roomDefaultCode || { base: 'G', mid: 1, surf: 4 };
 
+      // 遮音壁ルールで計上済みの面: PB/GW/下地系の振り分けをスキップ（ルール側で
+      // PB両面×2.57+GW1回を計上済み。二重計上防止）。周長・巾木・開口・部屋統計は
+      // 上で計上済みのまま、クロス（表面4/5）だけは面の実仕上げとして拾う
+      if (soundConsumed.has(faceIdx)) {
+        if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
+        continue;
+      }
+
       // 間仕切下地(木)の拾い（XLS方式: G下地のみ。遮音壁L/O/Wは「遮音壁PB張り」の部位で別拾い）
       if (code.base === 'G') {
         majikiriDouble += Math.max(0, w * studH - openingAreaStud);
@@ -670,10 +770,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
 
       // 下地
       if (['L', 'O', 'W'].includes(code.base)) {
-        t.sound_wall_pb_sqm += net;
+        // 遮音壁はボードをスラブ下まで張る（図面注意書き「遮音壁はボードをスラブ下まで+GW24kg充填」・
+        // XLS 'Ａタイプ'!E113等=下地高2.57）→ 面の仕上げ高（CH+40）ではなく下地高で拾う。
+        // 開口控除も下地高キャップ側（openingAreaStud）を使う（総監査A-3の修正・2026-07-19）
+        const netSlab = Math.max(0, w * studH - openingAreaStud);
+        t.sound_wall_pb_sqm += netSlab;
         t.partition_face_length_m += w;
-        if (code.base !== 'O') t.gw_sqm += net;
-        if (code.base === 'O') t.sound_sheet_sqm += net;
+        if (code.base !== 'O') t.gw_sqm += netSlab;
+        if (code.base === 'O') t.sound_sheet_sqm += netSlab;
       } else {
         if (code.base === 'G') t.partition_face_length_m += w;
         if (code.base === 'S') t.gw_sqm += net;
@@ -726,6 +830,19 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     });
   }
 
+  // 遮音壁ルールの計上（DEFAULT_SOUND_WALL_PAIRS参照）:
+  //   PBは両面（XLSは隣接する各室ブロックの面で両側を拾う: 12.9785㎡/戸）= 2×幅×2.57
+  //   GWは壁1枚1回（玄関ブロックP81/P82: 6.425㎡/戸）= 幅×2.57
+  // 高さは下地高2.57固定（遮音壁はLDK↔居室間=標準スラブ部。開口は無い壁のため控除なし）。
+  // 対応する面が展開図で特定できた場合は上のsoundConsumedで面側の計上を止めており、
+  // 特定できない場合（面が大きな面に合算されている読取等）もルール値だけが立つ
+  for (const p of soundPairs) {
+    const w = p.width_mm / 1000;
+    t.sound_wall_pb_sqm += 2 * w * STUD_HEIGHT_M;
+    t.gw_sqm += w * STUD_HEIGHT_M;
+  }
+  t.sound_rule_pairs = soundPairs.length; // 観測点（テスト・デバッグ用）
+
   // 収納（WIC/CL等）の内側は展開図に現れないが間仕切下地は必要。
   // 優先順位: ①実寸（opts.closetInteriors。見積明細 家具工事シートの固定棚実寸から
   //   「棚に沿う内側3辺」= コ型W(w1+w2+w3)なら w1+w2+w3 / 単棚W×Dなら W+D×2 に換算した幅mmを入力で受ける）
@@ -769,7 +886,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     if (!planRoomNames.has(rn)) d6DeductWidth += wsum;
   }
   closetEstWidth = Math.max(0, closetEstWidth - d6DeductWidth);
-  majikiriDouble += (closetActualWidth + closetEstWidth) * (2.4 + STUD_PLENUM_M);
+  // 収納内側の下地高も現場定数2.57（収納は標準スラブ上=居室と同じ。XLSに収納別の下地高行は無い）
+  majikiriDouble += (closetActualWidth + closetEstWidth) * STUD_HEIGHT_M;
 
   // 両面計上 → 壁1枚換算（XLSの拾い方に一致。検証: Gタイプ 77.6 vs XLS正解84.082 = −7.7%）
   t.majikiri_shitaji_m = majikiriDouble / 2;
@@ -868,7 +986,7 @@ export function applyElevationTakeoff(result, takeoff) {
   // 間仕切下地(木): XLSの拾い量（壁1枚あたり片面の下地面積。"m"表記はXLS慣行）を実測で上書き
   set((m) => m.name === '間仕切下地(木)',
     Math.round(takeoff.majikiri_shitaji_m * 10) / 10,
-    `間仕切面 Σ幅×下地高(CH+370mm)−開口 の壁1枚換算`);
+    `間仕切面 Σ幅×下地高(2.57m/水回り2.77m)−開口 の壁1枚換算`);
   // 間仕切木軸の材積: 拾い面積 → 両面×縦横@450の実材長 → 断面45×30で材積化（timberVolume.js）
   const majikiriLen = majikiriTimberLengthM(takeoff.majikiri_shitaji_m);
   set((m) => m.name === '間仕切木軸',
