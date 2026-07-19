@@ -1,0 +1,1525 @@
+{
+  "document_type": "floor_plan",
+  "is_analyzable": true,
+  "property_name": "アルファステイツ新宮町",
+  "layout_type": "3LDK",
+  "outer_dimensions_mm": {
+    "width": 5900,
+    "depth": 11500
+  },
+  "total_floor_area_sqm": 67.3,
+  "partition_wall_length_m": 28.5,
+  "ceiling_height_mm": 2400,
+  "rooms": [
+    {
+      "name": "リビング・ダイニング",
+      "area_jou": "10.3",
+      "area_sqm_label": "16.75",
+      "area_sqm": 16.8,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "キッチン",
+      "area_jou": "3.4",
+      "area_sqm_label": "5.66",
+      "area_sqm": 5.7,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室(1)",
+      "area_jou": "6.0",
+      "area_sqm_label": "9.72",
+      "area_sqm": 9.7,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室(2)",
+      "area_jou": "5.0",
+      "area_sqm_label": "8.10",
+      "area_sqm": 8.1,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室(3)",
+      "area_jou": "4.7",
+      "area_sqm_label": "7.76",
+      "area_sqm": 7.8,
+      "floor_type": "flooring",
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "廊下",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 3.15,
+      "floor_type": "flooring",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "玄関",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 1.5,
+      "floor_type": "tile",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "パウダールーム",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 2.5,
+      "floor_type": "cf",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "トイレ",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 1.2,
+      "floor_type": "cf",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "浴室",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 2.24,
+      "floor_type": "cf",
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "ウォークインクローゼット",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 2,
+      "floor_type": "flooring",
+      "area_source": "ai_estimate"
+    }
+  ],
+  "wall_finish_codes": [
+    {
+      "room": "洋室(1)",
+      "codes": [
+        "C04",
+        "I14"
+      ],
+      "placements": [
+        {
+          "code": "C04",
+          "wall_length_mm": 2575
+        },
+        {
+          "code": "C04",
+          "wall_length_mm": 3540
+        },
+        {
+          "code": "I14",
+          "wall_length_mm": 1220
+        }
+      ]
+    },
+    {
+      "room": "洋室(2)",
+      "codes": [
+        "I14"
+      ],
+      "placements": [
+        {
+          "code": "I14",
+          "wall_length_mm": 2285
+        },
+        {
+          "code": "I14",
+          "wall_length_mm": 1735
+        }
+      ]
+    },
+    {
+      "room": "ウォークインクローゼット",
+      "codes": [
+        "D64"
+      ],
+      "placements": [
+        {
+          "code": "D64",
+          "wall_length_mm": 965
+        },
+        {
+          "code": "D64",
+          "wall_length_mm": 2075
+        },
+        {
+          "code": "D64",
+          "wall_length_mm": 1735
+        },
+        {
+          "code": "D64",
+          "wall_length_mm": 1200
+        }
+      ]
+    },
+    {
+      "room": "クロゼット",
+      "codes": [
+        "D64"
+      ],
+      "placements": [
+        {
+          "code": "D64",
+          "wall_length_mm": 835
+        }
+      ]
+    },
+    {
+      "room": "玄関",
+      "codes": [
+        "I14"
+      ],
+      "placements": [
+        {
+          "code": "I14",
+          "wall_length_mm": 1260
+        }
+      ]
+    },
+    {
+      "room": "キッチン",
+      "codes": [
+        "C04"
+      ],
+      "placements": [
+        {
+          "code": "C04",
+          "wall_length_mm": 2200
+        }
+      ]
+    },
+    {
+      "room": "リビング・ダイニング",
+      "codes": [
+        "C04",
+        "I14"
+      ],
+      "placements": [
+        {
+          "code": "C04",
+          "wall_length_mm": 1700
+        },
+        {
+          "code": "I14",
+          "wall_length_mm": 3290
+        },
+        {
+          "code": "C04",
+          "wall_length_mm": 3810
+        },
+        {
+          "code": "I14",
+          "wall_length_mm": 3540
+        }
+      ]
+    },
+    {
+      "room": "洋室(3)",
+      "codes": [
+        "I14",
+        "D64"
+      ],
+      "placements": [
+        {
+          "code": "I14",
+          "wall_length_mm": 3290
+        },
+        {
+          "code": "I14",
+          "wall_length_mm": 3290
+        },
+        {
+          "code": "D64",
+          "wall_length_mm": 735
+        }
+      ]
+    },
+    {
+      "room": "パウダールーム",
+      "codes": [
+        "I14"
+      ],
+      "placements": [
+        {
+          "code": "I14",
+          "wall_length_mm": 1075
+        }
+      ]
+    },
+    {
+      "room": "廊下",
+      "codes": [
+        "I14"
+      ]
+    },
+    {
+      "room": "トイレ",
+      "codes": [
+        "I14"
+      ]
+    }
+  ],
+  "openings": [
+    {
+      "type": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2075,
+      "room": "洋室(1)"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2075,
+      "room": "洋室(2)"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2075,
+      "room": "洋室(3)"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2075,
+      "room": "リビング・ダイニング"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2075,
+      "room": "パウダールーム"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 700,
+      "height_mm": 2075,
+      "room": "トイレ"
+    },
+    {
+      "type": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2075,
+      "room": "ウォークインクローゼット"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 850,
+      "height_mm": 2080,
+      "room": "洋室(2)"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 850,
+      "height_mm": 2080,
+      "room": "洋室(3)"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 760,
+      "height_mm": 2080,
+      "room": "廊下"
+    }
+  ],
+  "equipment": {
+    "ub_size": "1416",
+    "kitchen": "I型2200",
+    "washstand": "W900"
+  },
+  "storage": [
+    {
+      "name": "ウォークインクローゼット",
+      "width_mm": 1500,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "洋室(2)クローゼット",
+      "width_mm": 850,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "洋室(3)クローゼット",
+      "width_mm": 850,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "廊下物入",
+      "width_mm": 760,
+      "has_makuradana": false,
+      "has_hanger_pipe": false
+    }
+  ],
+  "special": [
+    "キッチン対面カウンター",
+    "リネン庫（パウダールーム内）"
+  ],
+  "total_area_source": "user_input",
+  "_validated": true,
+  "_warnings": [],
+  "_ai_disagreements": [],
+  "elevations": {
+    "drawing_type": "elevation",
+    "unit_type": "Gタイプ",
+    "rooms": [
+      {
+        "name": "玄関・廊下",
+        "ceiling_height_mm": 2200,
+        "skirting": "樹脂巾木",
+        "wall_finish": "PB t=9.5ノ上 ビニールクロス貼",
+        "faces": [
+          {
+            "face": "A",
+            "width_mm": 1385,
+            "wall_code": null,
+            "openings": []
+          },
+          {
+            "face": "B",
+            "width_mm": 4840,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "66",
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "引戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "C",
+            "width_mm": 965,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "片開き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "D",
+            "width_mm": 4840,
+            "wall_code": null,
+            "openings": []
+          }
+        ],
+        "plan_codes": [
+          "I14"
+        ],
+        "plan_placements": [
+          {
+            "code": "I14",
+            "wall_length_mm": 1260
+          }
+        ]
+      },
+      {
+        "name": "トイレ",
+        "ceiling_height_mm": 2200,
+        "skirting": "ソフト巾木 H=40",
+        "wall_finish": "PB t=9.5ノ上 ビニールクロス貼",
+        "faces": [
+          {
+            "face": "A",
+            "width_mm": 1400,
+            "wall_code": null,
+            "openings": []
+          },
+          {
+            "face": "B",
+            "width_mm": 950,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "片引き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "C",
+            "width_mm": 1400,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "片引き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "D",
+            "width_mm": 950,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "06",
+                "width_mm": 550,
+                "height_mm": 750
+              },
+              {
+                "type": "片開き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": 2200
+              }
+            ]
+          }
+        ],
+        "plan_codes": [
+          "I14"
+        ]
+      },
+      {
+        "name": "キッチン",
+        "ceiling_height_mm": 2200,
+        "skirting": "木製巾木 H=40",
+        "wall_finish": "PB t=9.5ノ上 ビニールクロス貼",
+        "faces": [
+          {
+            "face": "A",
+            "width_mm": 2575,
+            "wall_code": null,
+            "openings": []
+          },
+          {
+            "face": "B",
+            "width_mm": 2200,
+            "wall_code": null,
+            "openings": []
+          },
+          {
+            "face": "C",
+            "width_mm": 2575,
+            "wall_code": null,
+            "openings": []
+          },
+          {
+            "face": "D",
+            "width_mm": 2200,
+            "wall_code": null,
+            "openings": []
+          }
+        ],
+        "plan_codes": [
+          "C04"
+        ],
+        "plan_placements": [
+          {
+            "code": "C04",
+            "wall_length_mm": 2200
+          }
+        ]
+      },
+      {
+        "name": "パウダールーム",
+        "ceiling_height_mm": 2200,
+        "skirting": "ソフト巾木 H=40",
+        "wall_finish": "PB t=9.5ノ上 ビニールクロス貼",
+        "faces": [
+          {
+            "face": "A",
+            "width_mm": 2360,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "片開き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": 2200
+              }
+            ]
+          },
+          {
+            "face": "B",
+            "width_mm": 1925,
+            "wall_code": null,
+            "openings": []
+          },
+          {
+            "face": "C",
+            "width_mm": 2360,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "08",
+                "width_mm": 200,
+                "height_mm": 600
+              }
+            ]
+          },
+          {
+            "face": "D",
+            "width_mm": 1925,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "引戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": 2200
+              }
+            ]
+          }
+        ],
+        "plan_codes": [
+          "I14"
+        ],
+        "plan_placements": [
+          {
+            "code": "I14",
+            "wall_length_mm": 1075
+          }
+        ]
+      },
+      {
+        "name": "リビング・ダイニング",
+        "ceiling_height_mm": 2400,
+        "skirting": "木製巾木 H=40",
+        "wall_finish": "PB t=9.5ノ上 ビニールクロス貼（一部アクセントクロス貼）",
+        "faces": [
+          {
+            "face": "A",
+            "width_mm": 3540,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "開口",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "B",
+            "width_mm": 6660,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "引き違い窓",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "C",
+            "width_mm": 3540,
+            "wall_code": null,
+            "openings": []
+          },
+          {
+            "face": "D",
+            "width_mm": 6660,
+            "wall_code": null,
+            "openings": []
+          }
+        ],
+        "plan_codes": [
+          "C04",
+          "I14"
+        ],
+        "plan_placements": [
+          {
+            "code": "C04",
+            "wall_length_mm": 1700
+          },
+          {
+            "code": "I14",
+            "wall_length_mm": 3290
+          },
+          {
+            "code": "C04",
+            "wall_length_mm": 3810
+          },
+          {
+            "code": "I14",
+            "wall_length_mm": 3540
+          }
+        ]
+      },
+      {
+        "name": "洋室(1)",
+        "ceiling_height_mm": 2400,
+        "skirting": "木製巾木 H=40",
+        "wall_finish": "PB t=9.5ノ上 ビニールクロス貼",
+        "faces": [
+          {
+            "face": "A",
+            "width_mm": 2575,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "引き違い窓",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G6",
+                "width_mm": 650,
+                "height_mm": 750
+              }
+            ]
+          },
+          {
+            "face": "B",
+            "width_mm": 5190,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "66",
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "片引き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "片開き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": 1900
+              },
+              {
+                "type": "窓",
+                "symbol": "03",
+                "width_mm": 550,
+                "height_mm": 750
+              },
+              {
+                "type": "窓",
+                "symbol": "G6",
+                "width_mm": 650,
+                "height_mm": 750
+              },
+              {
+                "type": "引違い戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "折戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "C",
+            "width_mm": 2575,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "引違い窓",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": 1700
+              },
+              {
+                "type": "窓",
+                "symbol": "03",
+                "width_mm": 550,
+                "height_mm": 750
+              },
+              {
+                "type": "片引き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "D",
+            "width_mm": 5190,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "03",
+                "width_mm": 550,
+                "height_mm": 750
+              },
+              {
+                "type": "折戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G6",
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          }
+        ],
+        "plan_codes": [
+          "C04",
+          "I14"
+        ],
+        "plan_placements": [
+          {
+            "code": "C04",
+            "wall_length_mm": 2575
+          },
+          {
+            "code": "C04",
+            "wall_length_mm": 3540
+          },
+          {
+            "code": "I14",
+            "wall_length_mm": 1220
+          }
+        ]
+      },
+      {
+        "name": "洋室(2)",
+        "ceiling_height_mm": 2400,
+        "skirting": "木製巾木 H=40",
+        "wall_finish": "PB t=9.5ノ上 ビニールクロス貼",
+        "faces": [
+          {
+            "face": "A",
+            "width_mm": 2360,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "G9",
+                "width_mm": 650,
+                "height_mm": 950
+              },
+              {
+                "type": "窓",
+                "symbol": "G5",
+                "width_mm": 380,
+                "height_mm": 700
+              }
+            ]
+          },
+          {
+            "face": "B",
+            "width_mm": 3685,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "引戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G6",
+                "width_mm": 650,
+                "height_mm": 750
+              },
+              {
+                "type": "窓",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "引違い窓",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "C",
+            "width_mm": 2360,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "片開き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G5",
+                "width_mm": 380,
+                "height_mm": 700
+              },
+              {
+                "type": "折戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G9",
+                "width_mm": 650,
+                "height_mm": 950
+              },
+              {
+                "type": "窓",
+                "symbol": "G9",
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "D",
+            "width_mm": 4635,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "05",
+                "width_mm": 550,
+                "height_mm": 750
+              },
+              {
+                "type": "折戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G6",
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          }
+        ],
+        "plan_codes": [
+          "I14"
+        ],
+        "plan_placements": [
+          {
+            "code": "I14",
+            "wall_length_mm": 2285
+          },
+          {
+            "code": "I14",
+            "wall_length_mm": 1735
+          }
+        ]
+      },
+      {
+        "name": "洋室(3)",
+        "ceiling_height_mm": 2400,
+        "skirting": "木製巾木 H=40",
+        "wall_finish": "PB t=9.5ノ上 ビニールクロス貼",
+        "faces": [
+          {
+            "face": "A",
+            "width_mm": 2360,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "折戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G5",
+                "width_mm": 380,
+                "height_mm": 700
+              },
+              {
+                "type": "窓",
+                "symbol": "G9",
+                "width_mm": 650,
+                "height_mm": 950
+              }
+            ]
+          },
+          {
+            "face": "B",
+            "width_mm": 4140,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "引違い戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G3",
+                "width_mm": 550,
+                "height_mm": 750
+              },
+              {
+                "type": "引違い窓",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G3",
+                "width_mm": null,
+                "height_mm": 1900
+              }
+            ]
+          },
+          {
+            "face": "C",
+            "width_mm": 2360,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "G5",
+                "width_mm": 380,
+                "height_mm": 700
+              },
+              {
+                "type": "窓",
+                "symbol": "G9",
+                "width_mm": 650,
+                "height_mm": 650
+              },
+              {
+                "type": "片開き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              },
+              {
+                "type": "窓",
+                "symbol": "G9",
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          },
+          {
+            "face": "D",
+            "width_mm": 3290,
+            "wall_code": null,
+            "openings": [
+              {
+                "type": "窓",
+                "symbol": "G3",
+                "width_mm": null,
+                "height_mm": 1900
+              },
+              {
+                "type": "片開き戸",
+                "symbol": null,
+                "width_mm": null,
+                "height_mm": null
+              }
+            ]
+          }
+        ],
+        "plan_codes": [
+          "I14",
+          "D64"
+        ],
+        "plan_placements": [
+          {
+            "code": "I14",
+            "wall_length_mm": 3290
+          },
+          {
+            "code": "I14",
+            "wall_length_mm": 3290
+          },
+          {
+            "code": "D64",
+            "wall_length_mm": 735
+          }
+        ]
+      }
+    ]
+  },
+  "door_schedule": [
+    {
+      "symbol": "SD-101A",
+      "name": "片開きスチールドア",
+      "width_mm": 850,
+      "height_mm": 1900,
+      "location": "住戸玄関",
+      "quantity": 39,
+      "material": "鋼製"
+    },
+    {
+      "symbol": "SD-101B",
+      "name": "片開きスチールドア",
+      "width_mm": 850,
+      "height_mm": 1900,
+      "location": "住戸玄関",
+      "quantity": 28,
+      "material": "鋼製"
+    },
+    {
+      "symbol": "SD-102A",
+      "name": "片開きスチールドア",
+      "width_mm": 600,
+      "height_mm": 1885,
+      "location": "MB",
+      "quantity": 21,
+      "material": "鋼製"
+    },
+    {
+      "symbol": "SD-102B",
+      "name": "片開きスチールドア",
+      "width_mm": 600,
+      "height_mm": 1885,
+      "location": "MB",
+      "quantity": 47,
+      "material": "鋼製"
+    },
+    {
+      "symbol": "SD-103A",
+      "name": "片開きスチールドア",
+      "width_mm": 600,
+      "height_mm": 1900,
+      "location": "EPS",
+      "quantity": 10,
+      "material": "鋼製"
+    },
+    {
+      "symbol": "SD-103B",
+      "name": "片開きスチールドア",
+      "width_mm": 600,
+      "height_mm": 1900,
+      "location": "EPS",
+      "quantity": 10,
+      "material": "鋼製"
+    },
+    {
+      "symbol": "AWD-101",
+      "name": "4枚引違窓",
+      "width_mm": 4120,
+      "height_mm": 2000,
+      "location": "リビング・ダイニング",
+      "quantity": 1,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AWD-102",
+      "name": "4枚引違窓",
+      "width_mm": 4120,
+      "height_mm": 1900,
+      "location": "リビング・ダイニング",
+      "quantity": 9,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AWD-103A",
+      "name": "連窓 引違窓+片開き戸",
+      "width_mm": 2270,
+      "height_mm": 2000,
+      "location": "リビング・ダイニング",
+      "quantity": 1,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AWD-103B",
+      "name": "連窓 引違窓+片開き戸",
+      "width_mm": 2270,
+      "height_mm": 2000,
+      "location": "リビング・ダイニング",
+      "quantity": 1,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AWD-104",
+      "name": "引違窓",
+      "width_mm": 2000,
+      "height_mm": 2000,
+      "location": "リビング・ダイニング",
+      "quantity": 1,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AWD-105",
+      "name": "引違窓",
+      "width_mm": 2000,
+      "height_mm": 1900,
+      "location": "リビング・ダイニング",
+      "quantity": 36,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AWD-106",
+      "name": "引違窓",
+      "width_mm": 1700,
+      "height_mm": 1900,
+      "location": "リビング・ダイニング",
+      "quantity": 18,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AWD-107",
+      "name": "引違窓",
+      "width_mm": 1200,
+      "height_mm": 2000,
+      "location": "洋室",
+      "quantity": 3,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AWD-108",
+      "name": "引違窓",
+      "width_mm": 1200,
+      "height_mm": 1900,
+      "location": "洋室",
+      "quantity": 36,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-101",
+      "name": "引違窓",
+      "width_mm": 1000,
+      "height_mm": 1000,
+      "location": "洋室",
+      "quantity": 19,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-102",
+      "name": "引違窓",
+      "width_mm": 950,
+      "height_mm": 1000,
+      "location": "洋室",
+      "quantity": 20,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-103",
+      "name": "引違窓",
+      "width_mm": 900,
+      "height_mm": 1100,
+      "location": "洋室",
+      "quantity": 19,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-104",
+      "name": "引違窓",
+      "width_mm": 900,
+      "height_mm": 1000,
+      "location": "洋室",
+      "quantity": 29,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-105",
+      "name": "引違窓",
+      "width_mm": 850,
+      "height_mm": 1100,
+      "location": "洋室",
+      "quantity": 10,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-106",
+      "name": "引違窓",
+      "width_mm": 850,
+      "height_mm": 1050,
+      "location": "洋室",
+      "quantity": 10,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-107",
+      "name": "引違窓",
+      "width_mm": 700,
+      "height_mm": 1000,
+      "location": "洋室",
+      "quantity": 9,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-108",
+      "name": "引違窓(ALC枠指定)",
+      "width_mm": 1000,
+      "height_mm": 850,
+      "location": "洋室",
+      "quantity": 19,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-109",
+      "name": "引違窓(ALC枠指定)",
+      "width_mm": 600,
+      "height_mm": 850,
+      "location": "洋室",
+      "quantity": 19,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AW-110",
+      "name": "引違窓(ALC枠指定)",
+      "width_mm": 600,
+      "height_mm": 600,
+      "location": "UB、キッチン",
+      "quantity": 19,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AD-101A",
+      "name": "片開き戸",
+      "width_mm": 600,
+      "height_mm": 1900,
+      "location": "洋室",
+      "quantity": 9,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "AD-101B",
+      "name": "片開き戸",
+      "width_mm": 600,
+      "height_mm": 1900,
+      "location": "洋室",
+      "quantity": 9,
+      "material": "アルミ"
+    },
+    {
+      "symbol": "WD-1TA",
+      "name": "中抜き窓付片開きフラッシュ戸",
+      "width_mm": 850,
+      "height_mm": 2175,
+      "location": "リビング・ダイニング",
+      "quantity": 67,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-2A",
+      "name": "片開きフラッシュ戸",
+      "width_mm": 800,
+      "height_mm": 2080,
+      "location": "洋室",
+      "quantity": 57,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-2TA",
+      "name": "片開きフラッシュ戸",
+      "width_mm": 800,
+      "height_mm": 2175,
+      "location": "洋室",
+      "quantity": 116,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-3TB",
+      "name": "片開きフラッシュ戸",
+      "width_mm": 700,
+      "height_mm": 2175,
+      "location": "トイレ",
+      "quantity": 67,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-6A",
+      "name": "片開きフラッシュ戸",
+      "width_mm": 600,
+      "height_mm": 2080,
+      "location": "クロゼット、収納",
+      "quantity": 19,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-6TA",
+      "name": "片開きフラッシュ戸",
+      "width_mm": 600,
+      "height_mm": 2175,
+      "location": "ファミリークロゼット、マルチクロゼット",
+      "quantity": 30,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-6TBA",
+      "name": "片開きフラッシュ戸",
+      "width_mm": 600,
+      "height_mm": 2210,
+      "location": "SIC",
+      "quantity": 9,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-6C",
+      "name": "片開きフラッシュ戸",
+      "width_mm": 450,
+      "height_mm": 2080,
+      "location": "物入",
+      "quantity": 10,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-8A",
+      "name": "片引き戸",
+      "width_mm": 660,
+      "height_mm": 2075,
+      "location": "ウォークインクロゼット",
+      "quantity": 28,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-8B",
+      "name": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2075,
+      "location": "パウダールーム",
+      "quantity": 48,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-8TB",
+      "name": "片引き戸",
+      "width_mm": 760,
+      "height_mm": 2170,
+      "location": "パウダールーム",
+      "quantity": 19,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-102C",
+      "name": "引違戸",
+      "width_mm": 1825,
+      "height_mm": 2075,
+      "location": "洋室",
+      "quantity": 9,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-01",
+      "name": "引違戸",
+      "width_mm": 2270,
+      "height_mm": 2170,
+      "location": "洋室",
+      "quantity": 10,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-12AL",
+      "name": "2枚折戸",
+      "width_mm": 605,
+      "height_mm": 2005,
+      "location": "クロゼット",
+      "quantity": 9,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-12C",
+      "name": "2枚折戸",
+      "width_mm": 803,
+      "height_mm": 2080,
+      "location": "収納",
+      "quantity": 9,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-12E",
+      "name": "2枚折戸",
+      "width_mm": 983,
+      "height_mm": 2080,
+      "location": "収納",
+      "quantity": 9,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-120A",
+      "name": "2枚折戸",
+      "width_mm": 605,
+      "height_mm": 2320,
+      "location": "クロゼット",
+      "quantity": 38,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-120B",
+      "name": "2枚折戸",
+      "width_mm": 701,
+      "height_mm": 2320,
+      "location": "クロゼット",
+      "quantity": 10,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-120C",
+      "name": "2枚折戸",
+      "width_mm": 803,
+      "height_mm": 2320,
+      "location": "クロゼット",
+      "quantity": 20,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-120D",
+      "name": "2枚折戸",
+      "width_mm": 905,
+      "height_mm": 2320,
+      "location": "クロゼット",
+      "quantity": 9,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-120E",
+      "name": "2枚折戸",
+      "width_mm": 983,
+      "height_mm": 2320,
+      "location": "クロゼット",
+      "quantity": 20,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-160B",
+      "name": "6枚折戸",
+      "width_mm": 2091,
+      "height_mm": 2320,
+      "location": "マルチクロゼット、クロゼット",
+      "quantity": 29,
+      "material": "木製"
+    }
+  ]
+}

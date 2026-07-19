@@ -189,6 +189,27 @@ gemini-2.5-proは無料枠quota=0で未測定（Billing有効化後に `node scr
 - 次の1発の手順: `cd backend-node; node scripts/e2e-gemini.mjs` → 記録が保存されreplayが自動実行。
   ブラウザでやる場合はRenderに AI_PROVIDER=gemini / GEMINI_RETRY_MAX=4 を設定してから（2026-07-17設定済み・本番Gemini稼働中）
 
+**Gemini課金化+モデル調査+タイルスキップ穴の修正（2026-07-19・coder/reviewer分離・承認済み・09e5dcb）**:
+- **課金有効化**（¥2,000前払い・Tier1・オートチャージOFF・検証済み）: 日次20リクエスト制限が消滅。
+  フル解析1回≈10円（2.5-flash）。1日1回サイクル→随時実験可能に
+- **モデル一覧を実測**: gemini-2.5-proは新規ユーザー廃止(404)。**gemini-3.5-flash等の新世代が利用可能**
+  （3-pro/3.1-pro-preview/3.5-flash他。ListModels APIで確認）
+- **3.5-flash試験**: 読み質は歴代最高（展開図面幅を全問正解・平面図警告0・記号ジャンクなし・STEP1で28.5m素通し）。
+  ただし①STEP1が部屋別codes（placementsなし）を返す→タイル解析スキップ条件の穴で面割付全滅=壁PB148枚+70%
+  ②開口タイルの符号を別形式（G6/03等）で転記し建具表と0件マッチ→開口控除ゼロ（opening_match unresolved:35）
+- **①の穴は修正済み（09e5dcb）**: wallCodesNeedTileReread（寸法付きplacementが1件も無ければ再実行）+
+  mergeWallFinishCodes（タイル結果を正に部屋名ゆれ突合で上書き・未読部屋は保持）。ユニット15✅新設・全ゲート緑
+- **②が3.5-flash採用の残る障壁**（次サイクル本命）: ELEV_OPENING_TILE_PROMPTの符号転記強化 or 姿図番号→符号対応層。
+  レビュー指摘: 開口控除だけでなくC04面割付の±80mm不一致も併存（差85.8㎡の内訳を閉じないこと）。
+  検証素材は scripts/recordings/diagnostic/（3.5記録・2.5の耐水3枚ブレサンプル）
+- **回間ブレの実測**: 2.5-flashは同一図面で壁PB 75枚（ブラウザ）↔92枚（直後のE2E）。耐水も3〜9枚で振れる。
+  ブレ根治の選択肢=3.5-flash化（②解決後）or 複数回読み多数決（課金で可能に）
+- レビューshould-fix繰越: STEP1がplacements付きwall_finish_codesを幻覚するとスキップ判定を素通りする残存穴
+  （validatorでplacements剥がし推奨）・merge包含突合の「洋室(1)クロゼット」型テスト追加
+- **ブラウザ実測で初の合格（2026-07-19・09e5dcbデプロイ後・2.5-flash）**: **壁 石膏ボード90枚(+3%)**・耐水4枚・天井42枚・
+  KP3枚。ガード発動も正常（AWD-102幻覚2件除外・開口90%縮退3面）。残✗は遮音壁0.22㎡（既知・LDK隣接数式化で解消予定）。
+  ブラウザ推移: 73→75→**90枚**。「壁が完璧になったら次のミーティングで床編」のマイルストーンに接近
+
 **本番Gemini運用のmust-fix 2件（2026-07-17・最終監査→coder→差し戻し再レビュー承認）**:
 - **タイル部分失敗の顕在化+sticky解消**: analyzeTilesが{results, failedTiles, totalTiles}を返し（API障害と「記号なし」を区別。
   Claude経路も対応）、部分失敗時は `_wall_codes_partial` + _warnings「壁記号の読取N件失敗・過大の可能性・再アップロードで再読取」。
