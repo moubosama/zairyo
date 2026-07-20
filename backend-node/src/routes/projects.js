@@ -229,6 +229,33 @@ export function wallCodesNeedTileReread(analysisResult) {
  * 部屋名は正規化+包含で突合（plan_codesマージと同じゆれ対策）。タイル結果を先頭に置くため、
  * 後段のplan_codes突合（find=先勝ち）でも近縁名が残った場合はタイル側が勝つ
  */
+/**
+ * タイル失敗理由の内訳文字列（純関数・test-tile-failures.mjsで検証）
+ * analyzeTilesのfailedReasons [{tile, kind, detail}] を「レート制限×2・解析失敗×1」形式に集計し、
+ * repairedTiles（途切れ救済採用=結果はあるが欠落の可能性）は末尾に「途切れ救済×N」で足す。
+ * 旧記録・テストモック等でどちらも無い場合は ''（呼び出し側で内訳なし文言にフォールバック）
+ */
+const TILE_FAILURE_KIND_LABELS = {
+  rate_limit: 'レート制限', // 429（RPM/日次quota）
+  server: 'サーバーエラー', // 5xx
+  parse: '解析失敗',        // JSONパース失敗（出力途切れの救済不能を含む）
+  empty: '応答なし',        // r=null（キー未設定等）
+  error: 'その他',          // 401/403・ネットワーク断等
+};
+export function tileFailureBreakdown(failedReasons, repairedTiles = 0) {
+  const parts = [];
+  if (Array.isArray(failedReasons) && failedReasons.length > 0) {
+    const counts = new Map();
+    for (const f of failedReasons) {
+      const kind = f?.kind || 'error';
+      counts.set(kind, (counts.get(kind) || 0) + 1);
+    }
+    parts.push(...[...counts].map(([kind, n]) => `${TILE_FAILURE_KIND_LABELS[kind] || kind}×${n}`));
+  }
+  if (repairedTiles > 0) parts.push(`途切れ救済×${repairedTiles}`);
+  return parts.join('・');
+}
+
 export function mergeWallFinishCodes(prev, tiledResults) {
   const prevList = Array.isArray(prev) ? prev : [];
   const kept = prevList.filter((w) => {
@@ -284,13 +311,20 @@ export async function attachElevationData(analysisResult, elevParsed, planPath, 
       console.log('壁記号タイル読取:', JSON.stringify(tiledCodes.results));
     }
     // 部分失敗の顕在化: API制限（429/quota切れ）で空になったタイルを「記号なし」と区別して
-    // フラグ+警告に残す。全タイル成功でフラグ・警告とも解除（再読取ループを止める）
+    // フラグ+警告に残す。全タイル成功でフラグ・警告とも解除（再読取ループを止める）。
+    // 途切れ救済採用（repairedTiles）も「不完全」に含める（結果はあるが要素欠落の可能性が
+    // あるため、警告表示+再アップロードでの再読取対象にする・レビューS-2）
     const otherWarnings = (analysisResult._warnings || []).filter((w) => w.field !== 'wall_codes_partial');
-    if (tiledCodes.failedTiles > 0) {
+    const repairedTiles = tiledCodes.repairedTiles || 0;
+    if (tiledCodes.failedTiles > 0 || repairedTiles > 0) {
       analysisResult._wall_codes_partial = true;
+      // 失敗理由の内訳を文言に含める（旧文言はAPI制限決め打ちで、パース失敗（出力途切れ）等を
+      // 診断できなかった・2026-07-20）。failedReasonsが無い旧経路は内訳なしで従来相当
+      const breakdown = tileFailureBreakdown(tiledCodes.failedReasons, repairedTiles);
       analysisResult._warnings = [...otherWarnings, {
         field: 'wall_codes_partial',
-        message: `壁記号の読取タイル ${tiledCodes.failedTiles}/${tiledCodes.totalTiles}件がAPI制限で失敗しました。` +
+        message: `壁記号の読取タイル ${tiledCodes.failedTiles + repairedTiles}/${tiledCodes.totalTiles}件が不完全です` +
+          `${breakdown ? `（内訳: ${breakdown}）` : ''}。` +
           '壁数量が過大になる可能性があります。展開図を再アップロードすると再読取します',
         before: null,
         after: null,

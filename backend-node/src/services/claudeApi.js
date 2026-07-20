@@ -387,7 +387,16 @@ async function analyzeWithGemini(filePath, base64Data, mimeType, promptText = SY
       const model = genAI.getGenerativeModel({
         // 読み取りモデル（環境変数で切替可能。flash/proの読み質比較用）
         model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-        generationConfig: { temperature: 0 }, // 転記タスクの再現性優先
+        generationConfig: {
+          temperature: 0, // 転記タスクの再現性優先
+          // maxOutputTokensは指定しない（レビューM-1・2026-07-20）: 2.5系のデフォルト上限は65,536で、
+          // 8192の明示は上限を「下げる」変更になる。さらに2.5系はthinking既定有効でthinkingトークンが
+          // この予算に食い込み、本文が途切れるMAX_TOKENS事故を誘発する（SDK 0.24.xはthinkingBudget制御不可）
+          // タイル系プロンプト（options.jsonResponse=true）はコードフェンス無しの純JSONを要求
+          // （フェンス閉じ忘れ・前置き文による途切れ/パース失敗の余地を減らす。
+          //  parseJsonResponseはフェンス有無両対応なので受け側の変更は不要）
+          ...(options.jsonResponse ? { responseMimeType: 'application/json' } : {}),
+        },
       });
 
       const result = await model.generateContent([
@@ -402,7 +411,10 @@ async function analyzeWithGemini(filePath, base64Data, mimeType, promptText = SY
 
       const response = await result.response;
       const text = response.text();
-      return { parsed: parseJsonResponse(text), rawText: text };
+      // 途切れ救済はタイル呼び出し（jsonResponse=true）限定（レビューS-1: dualモードで
+      // 救済されたGeminiの部分roomsがreconcileの土台に勝つ退行経路を作らない。
+      // メイン・aux経路は従来どおり 途切れ→パース例外→error持ち帰り）
+      return parseAiText(text, options.jsonResponse === true);
     } catch (error) {
       // 429/503は時間をおけば通ることが多い（無料枠のRPM制限・混雑）。
       // ただし日次上限（quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier）は
@@ -428,8 +440,9 @@ async function analyzeWithGemini(filePath, base64Data, mimeType, promptText = SY
       if (options.rethrowApiErrors && (error.status || isGeminiSdkError || isFetchFailure)) {
         throw error;
       }
-      // 障害原因の切り分け用にステータスを持ち帰る（429=レート制限/401=キー無効 等）
-      return { parsed: null, rawText: null, error: { status: error.status ?? null, message: String(error.message).slice(0, 200) } };
+      // 障害原因の切り分け用にステータス+エラー名を持ち帰る（429=レート制限/401=キー無効 等。
+      // name はタイル失敗理由の分類用: SyntaxError=JSONパース失敗（救済も不能だった場合））
+      return { parsed: null, rawText: null, error: { status: error.status ?? null, name: error.name ?? null, message: String(error.message).slice(0, 200) } };
     }
   }
 }
@@ -494,7 +507,8 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
 
     console.log('Claude API response received');
     const text = response.content[0].text;
-    return { parsed: parseJsonResponse(text), rawText: text };
+    // 途切れ救済はタイル呼び出し（jsonResponse=true）限定（Gemini側と同じ理由・レビューS-1）
+    return parseAiText(text, options.jsonResponse === true);
   } catch (error) {
     console.error('Claude API error:', error.message);
     console.error('Claude API error details:', JSON.stringify(error, null, 2));
@@ -503,8 +517,8 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
     if (options.rethrowApiErrors && (error.status || error.name === 'APIConnectionError')) {
       throw error;
     }
-    // 障害原因の切り分け用にステータスを持ち帰る
-    return { parsed: null, rawText: null, error: { status: error.status ?? null, message: String(error.message).slice(0, 200) } };
+    // 障害原因の切り分け用にステータス+エラー名を持ち帰る（nameはタイル失敗理由の分類用）
+    return { parsed: null, rawText: null, error: { status: error.status ?? null, name: error.name ?? null, message: String(error.message).slice(0, 200) } };
   }
 }
 
@@ -520,6 +534,8 @@ function analyzeSingle(filePath, base64Data, mimeType, promptText, options = {})
 
 /**
  * JSONレスポンスをパース
+ * （コードフェンス付き・純JSON（responseMimeType='application/json'）の両対応:
+ *  フェンスが無ければ最初の{〜最後の}をそのままJSON.parseする既存経路が純JSONを受ける）
  */
 function parseJsonResponse(text) {
   let jsonText = text;
@@ -537,6 +553,94 @@ function parseJsonResponse(text) {
   }
 
   return JSON.parse(jsonText);
+}
+
+/**
+ * AI応答テキスト→JSON（allowRepair=trueなら末尾切れ救済付き）
+ * 救済の適用はタイル呼び出し（options.jsonResponse=true）限定（レビューS-1）:
+ * メイン（平面図）・aux経路は allowRepair=false で従来どおり
+ * 途切れ→パース例外→error持ち帰り（dualならClaude採用/単体なら失敗）。
+ * 復旧成功: _truncated_repaired: true を付けて返す（analyzeTilesが失敗扱いでスイープに回し、
+ * スイープでも途切れた場合のみ採用+repairedTilesに計上。保存データには出さない）。
+ * 復旧不能: 元のパース例外を投げる → 呼び出し元catchが error{name:'SyntaxError'} で持ち帰り、
+ * タイル解析では kind:'parse' の失敗として計上される
+ * export はユニットテスト用（scripts/test-tile-failures.mjs・S-1限定適用の検証）
+ */
+export function parseAiText(text, allowRepair) {
+  try {
+    return { parsed: parseJsonResponse(text), rawText: text };
+  } catch (parseError) {
+    if (!allowRepair) throw parseError; // メイン・aux経路は救済しない（S-1）
+    const repaired = repairTruncatedJson(text);
+    if (repaired !== undefined) {
+      console.warn('AI応答JSONが途切れ — 最後の完全な要素までで閉じて救済:', String(parseError.message).slice(0, 80));
+      return { parsed: repaired, rawText: text, _truncated_repaired: true };
+    }
+    throw parseError;
+  }
+}
+
+/**
+ * 末尾が途切れたJSONの救済パーサー（2026-07-20・タイル出力が位置4994で切れる実測への対策）
+ * 配列要素・オブジェクトの途中で切れているテキストを「最後に閉じた要素」まで巻き戻し、
+ * 未閉鎖の括弧を補って再パースする。復旧できない場合は undefined（例外は投げない）。
+ * export はユニットテスト用（scripts/test-tile-failures.mjs）
+ */
+export function repairTruncatedJson(text) {
+  if (typeof text !== 'string' || text.length === 0) return undefined;
+
+  // コードフェンスを除去（途切れ応答は閉じ```が無いことがあるため末尾は$も許容）
+  let t = text;
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)(?:\s*```|$)/);
+  if (fence && /```/.test(t)) t = fence[1];
+
+  const start = t.search(/[{[]/);
+  if (start < 0) return undefined;
+  t = t.slice(start);
+
+  // 末尾側の '}' / ']'（=何かの要素が閉じた位置）を新しい順に試し、
+  // そこまでで切って未閉鎖の括弧列を補い、パースが通った最初の候補を採用する
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const cut = Math.max(t.lastIndexOf('}'), t.lastIndexOf(']'));
+    if (cut < 0) return undefined;
+    const candidate = t.slice(0, cut + 1);
+    const closers = missingClosers(candidate);
+    if (closers !== null) {
+      try {
+        return JSON.parse(candidate + closers);
+      } catch {
+        // この位置では閉じられない（文字列内の'}'等）→ さらに前の要素で再試行
+      }
+    }
+    t = t.slice(0, cut);
+  }
+  return undefined;
+}
+
+/**
+ * 未閉鎖の { [ に対応する閉じ括弧列を返す（文字列リテラル・エスケープを考慮）。
+ * 末尾が文字列の途中・括弧の対応が壊れている場合は null（その切り位置は救済不能）
+ */
+function missingClosers(s) {
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of s) {
+    if (escaped) { escaped = false; continue; }
+    if (inString) {
+      if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') {
+      const open = stack.pop();
+      if ((ch === '}' && open !== '{') || (ch === ']' && open !== '[')) return null;
+    }
+  }
+  if (inString) return null;
+  return stack.reverse().map((c) => (c === '{' ? '}' : ']')).join('');
 }
 
 /**
@@ -632,7 +736,12 @@ const TILE_SWEEP_DELAY_MS = 5000;
  *   → 失敗2タイルなら+約1分、全滅6タイルでも+約3分5秒が上限
  *
  * @param deps ユニットテスト用の注入口（scripts/test-tile-pool.mjs。本番は既定値で動く）
- * @returns { results, failedTiles, totalTiles } | null（PDF等でタイル分割不可）
+ * @returns { results, failedTiles, totalTiles, failedReasons, repairedTiles } |
+ *          null（PDF等でタイル分割不可）
+ *          failedReasons = [{tile(1始まり), kind, detail}]（kindの分類は classifyTileFailure 参照）
+ *          repairedTiles = 途切れJSONの救済結果を採用したタイル数（レビューS-2:
+ *          第1スイープの途切れは救済可能でも失敗扱いで第2スイープに回し、スイープでも
+ *          途切れた/失敗した場合のみ救済採用。呼び出し元が警告内訳「途切れ救済×N」に配線する）
  */
 export async function analyzeTiles(filePath, prompt, resultKey, deps = {}) {
   const {
@@ -652,30 +761,47 @@ export async function analyzeTiles(filePath, prompt, resultKey, deps = {}) {
   });
   if (!tiles) return null; // PDF等は分割不可
 
-  // 1タイルの解析。成功: {items:[...]} / 失敗: {failed:true}
+  // 1タイルの解析。成功: {items:[...]} / 失敗: {failed:true, kind, detail}
   // r.error = API障害の持ち帰り（analyzeWithGemini/Claudeのrethrowなし時）、
-  // r = null はキー未設定。いずれも「読めた結果が空=[]」ではないので失敗に数える
+  // r = null はキー未設定、r.parsedがnull（AIが"null"等を返しJSONオブジェクトが取れなかった）も
+  // 「読めた結果が空=[]」ではないので失敗に数える（parsedが配列/オブジェクトで空 → 成功扱いの区別は維持）
   const runTile = async (i, phase) => {
     try {
       // スイープ時は呼び出し内リトライ（GEMINI_RETRY_MAX）を無効化: retryMax:0。
       // スイープ自体が再試行層なので二重リトライは不要（直列で待機が積み上がるのを防ぐ）。
-      // Claude経路は呼び出し内リトライを持たないためretryMaxは無視される（無害）
+      // Claude経路は呼び出し内リトライを持たないためretryMax/jsonResponseは無視される（無害）
       const r = await analyze(filePath, tiles[i].base64Data, tiles[i].mimeType, prompt,
-        phase === 'sweep' ? { retryMax: 0 } : {});
-      if (!r || r.error) {
-        console.warn(`タイル${i + 1}/${tiles.length} 解析失敗(${phase}):`, r?.error?.status ?? '', r?.error?.message ?? 'no result');
-        return { failed: true };
+        phase === 'sweep' ? { retryMax: 0, jsonResponse: true } : { jsonResponse: true });
+      const failure = classifyTileFailure(r);
+      if (failure) {
+        console.warn(`タイル${i + 1}/${tiles.length} 解析失敗(${phase}/${failure.kind}):`, failure.detail);
+        return { failed: true, ...failure };
       }
       // どのタイルから読めたかを付記（_tile）。壁記号の集約で「タイル重なりの二重検出」と
       // 「同一タイル内に実在する等寸の別壁（対面）」を区別するのに使う。
       // 呼び出し側（aggregateWallCodeItems / analyzeOpeningsTiled）で消費し、外へは出さない
-      return {
-        items: (r.parsed?.[resultKey] || []).map((item) =>
-          (item && typeof item === 'object' ? { ...item, _tile: i } : item)),
-      };
+      const items = (r.parsed?.[resultKey] || []).map((item) =>
+        (item && typeof item === 'object' ? { ...item, _tile: i } : item));
+      if (r._truncated_repaired === true) {
+        // 途切れ救済（レビューS-2）: 第1スイープでは救済可能でも失敗扱いにして第2スイープへ回す
+        // （temperature 0でも再実行で全量回復する回があるため。初回の部分救済で確定させると
+        //  placements欠落=壁PB過大が警告なしで起きる）。救済結果は縮退用に持っておき、
+        //  スイープでも回復しなかった場合のみ採用する（スイープ後の採否は呼び出し側ループ）
+        if (phase === '1st') {
+          console.warn(`タイル${i + 1}/${tiles.length} 出力途切れ(1st/truncated): 救済可能だがスイープで再試行`);
+          return { failed: true, kind: 'truncated', detail: '出力途切れ（救済結果あり・スイープで再試行）', repairedItems: items };
+        }
+        return { items, truncatedRepaired: true }; // スイープでも途切れ → 救済採用
+      }
+      return { items };
     } catch (e) {
-      console.warn(`タイル${i + 1}/${tiles.length} 解析失敗(${phase}):`, e?.message);
-      return { failed: true };
+      // throw経路（rethrowApiErrors設定時等）も持ち帰りエラーと同じ基準で分類する
+      const failure = classifyTileFailure({
+        parsed: null,
+        error: { status: e?.status ?? null, name: e?.name ?? null, message: e?.message },
+      });
+      console.warn(`タイル${i + 1}/${tiles.length} 解析失敗(${phase}/${failure.kind}):`, failure.detail);
+      return { failed: true, ...failure };
     }
   };
 
@@ -692,21 +818,64 @@ export async function analyzeTiles(filePath, prompt, resultKey, deps = {}) {
   await Promise.all(
     Array.from({ length: Math.min(TILE_CONCURRENCY, tiles.length) }, () => worker()));
 
-  // 第2スイープ: 失敗タイルだけを直列で1回ずつ再試行（上記JSDoc参照）
+  // 第2スイープ: 失敗タイルだけを直列で1回ずつ再試行（上記JSDoc参照）。
+  // parse失敗（出力途切れ・救済不能）もスイープ対象: temperature 0でも入力順や負荷で
+  // 出力が変わることがあるため1回は再試行の価値がある（2026-07-20実測: 再現しない回あり）
   const failedIdx = outcomes.flatMap((o, i) => (o.failed ? [i] : []));
   if (failedIdx.length > 0) {
     await sleep(TILE_SWEEP_DELAY_MS);
     for (const i of failedIdx) {
       const retry = await runTile(i, 'sweep');
-      if (!retry.failed) outcomes[i] = retry; // 回復 → failedTilesから除外
+      if (!retry.failed) {
+        outcomes[i] = retry; // 回復 → failedTilesから除外（クリーン回復 or スイープでも途切れ=救済採用）
+      } else if (outcomes[i].repairedItems) {
+        // スイープも失敗（429等）だが第1スイープに救済結果がある → 捨てずに救済採用へ縮退
+        // （failedTilesには数えず repairedTiles として警告内訳「途切れ救済×N」に出す）
+        outcomes[i] = { items: outcomes[i].repairedItems, truncatedRepaired: true };
+      }
     }
   }
 
+  // 失敗理由の内訳（スイープ後の最終状態。タイル番号は1始まり=ログ表記と揃える）
+  const failedReasons = outcomes.flatMap((o, i) =>
+    (o.failed ? [{ tile: i + 1, kind: o.kind || 'error', detail: o.detail || '' }] : []));
   return {
     results: outcomes.flatMap((o) => o.items || []), // タイル順を維持（旧Promise.allと同じ）
-    failedTiles: outcomes.filter((o) => o.failed).length,
+    failedTiles: failedReasons.length,
     totalTiles: tiles.length,
+    failedReasons,
+    repairedTiles: outcomes.filter((o) => o.truncatedRepaired).length,
   };
+}
+
+/**
+ * タイル解析1回分の結果を失敗として分類する（成功なら null）
+ * kind:
+ *  - 'rate_limit' = 429（RPM/日次quota）
+ *  - 'server'     = 5xx（高負荷・サーバー障害）
+ *  - 'parse'      = JSONパース失敗（救済不能の出力途切れ等）または parsedがオブジェクトでない
+ *  - 'empty'      = r=null（APIキー未設定等で解析自体が走らなかった）
+ *  - 'error'      = その他（401/403・ネットワーク断等）
+ * detailは先頭80字+APIキー系クエリの伏せ字（警告・ログに出すため秘匿情報を含めない）
+ */
+function classifyTileFailure(r) {
+  if (!r) return { kind: 'empty', detail: 'no result（APIキー未設定等）' };
+  if (r.error) {
+    const status = r.error.status;
+    const detail = String(r.error.message || '')
+      .replace(/key=[^&\s"']+/gi, 'key=***') // 万一URL付きメッセージにキーが乗っても伏せる
+      .slice(0, 80);
+    if (status === 429) return { kind: 'rate_limit', detail };
+    if (typeof status === 'number' && status >= 500) return { kind: 'server', detail };
+    if (r.error.name === 'SyntaxError') return { kind: 'parse', detail };
+    return { kind: 'error', detail };
+  }
+  // エラーなしでもJSONオブジェクトが取れていない（AIが"null"等を返した）→ パース失敗扱い。
+  // 「記号なし」は {codes: []} のようにオブジェクトで返るため、ここには来ない
+  if (r.parsed === null || r.parsed === undefined || typeof r.parsed !== 'object') {
+    return { kind: 'parse', detail: 'AI応答からJSONオブジェクトを取得できませんでした' };
+  }
+  return null; // 成功
 }
 
 /**
@@ -719,7 +888,13 @@ export async function analyzeWallCodesTiled(filePath, context = {}) {
   const tiled = await analyzeTiles(filePath, PLAN_CODE_TILE_PROMPT + roomContextNote(context.roomNames), 'codes');
   if (!tiled) return null;
   const results = aggregateWallCodeItems(tiled.results);
-  return { results, failedTiles: tiled.failedTiles, totalTiles: tiled.totalTiles };
+  return {
+    results,
+    failedTiles: tiled.failedTiles,
+    totalTiles: tiled.totalTiles,
+    failedReasons: tiled.failedReasons,   // 失敗理由の内訳（警告文言の分類表示に使う）
+    repairedTiles: tiled.repairedTiles,   // 途切れJSON救済の内部統計
+  };
 }
 
 /**
@@ -822,7 +997,13 @@ export async function analyzeOpeningsTiled(filePath, context = {}) {
     seen.add(key);
     openings.push(op);
   }
-  return { results: openings, failedTiles: tiled.failedTiles, totalTiles: tiled.totalTiles };
+  return {
+    results: openings,
+    failedTiles: tiled.failedTiles,
+    totalTiles: tiled.totalTiles,
+    failedReasons: tiled.failedReasons,
+    repairedTiles: tiled.repairedTiles,
+  };
 }
 
 /**
