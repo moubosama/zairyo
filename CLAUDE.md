@@ -234,6 +234,23 @@ gemini-2.5-proは無料枠quota=0で未測定（Billing有効化後に `node scr
 - 混入検査: materialCalculator.jsに並行セッション由来の未レビュー変更（従来パスisWindowのsymbol対応）を発見→
   **コミットから除外**（buildup側isWindowとの二重実装・判定不一致あり。共通化+テスト付きで別サイクル再提出が筋）
 
+**AIプロバイダ選定を実測で確定=Gemini単独が最良（2026-07-20・Claude課金後の3構成直接比較）**:
+ユーザーが「AIに2つ読ませて精度を上げる（Gemini3回+Claude3回で決める）」ためClaude APIに$22課金。dual二人読みを実装し実AI検証。
+- **temperature 400バグ発見・修正（5d34c1d・本番Claude経路の障害）**: opus-4.7/4.8系・sonnet-5・fable-5はtemperature廃止で
+  400 "temperature is deprecated for this model"。dual実読みで本番Claude経路が毎回400で死んでいたのを発見（Gemini単独運用で表面化せず）。
+  TEMP_DEPRECATED_RE=/(opus-4-[78]|sonnet-5|fable-5|mythos-5)/で該当時はtemperature送らない。旧モデルのみ0付与。修正後Claude result:OK確認。
+- **壁記号タイルの二人読み多数決を実装（adf99c4）**: buildWallCodeReadPlan/providerReadCount新設。WALL_CODE_READS_GEMINI(3)/CLAUDE(3)で
+  Gemini×Gn+Claude×Cnの計(Gn+Cn)票をvoteWallCodeRunsへ。analyzeSingleにoptions.provider追加（未指定=従来のAI_PROVIDER追従・後方互換）。
+  test-wallcode-vote 45✅。両AI一致記号は強く採用・片方の幻覚は落選・片AI全滅runは分母除外でもう片AIの票で成立。
+- **実測結果（Gタイプ壁PB・正解87.2枚）: Gemini単独90枚(+3%)✅≫dual二人読み121枚(+39%)✗≫Claude単独158枚(+81%)✗（最悪）**。
+  ローカルClaude単独E2E（recordings/diagnostic/claude-read-2026-07-20.json）+ブラウザdual実測で確定。費用: Gemini¥10/回・Claude/dual¥250/回（25倍）。
+- **なぜClaudeが弱いか（ログで観測）**: Claudeは壁記号を読むがwall_length_mm:nullで返し面幅に割付できず全面PB扱い→過大。
+  Geminiは記号＋寸法mmセットで返せるので面割付が効く。Claudeは外形寸法も誤読(11500×5900)。dual121枚は多数決でClaudeの過剰記号が
+  Geminiの正しい読みを引き上げた中間値。外部ベンチ（Koncile・裏取り済み）もスキャン画像抽出でGemini94%>GPT91%>Claude90%と方向一致。
+- **結論: 本番はAI_PROVIDER=geminiに戻す**（Render・ユーザー操作）。二人読み実装は残す（将来Claudeの面割付改善時に使える）。
+  ChatGPT(OpenAI)は未実装・未検証（画像は外部OCR依存でGeminiに劣る可能性・投資対効果微妙）。詳細メモリ: ai-provider-gemini-best.md
+- 反省: 「業界評価が一致」と言ってソースを1件捏造（Claude text-first説は原文になかった）→ユーザー指摘で撤回。一次データ（自前実測）＞外部記事。
+
 **本番Gemini運用のmust-fix 2件（2026-07-17・最終監査→coder→差し戻し再レビュー承認）**:
 - **タイル部分失敗の顕在化+sticky解消**: analyzeTilesが{results, failedTiles, totalTiles}を返し（API障害と「記号なし」を区別。
   Claude経路も対応）、部分失敗時は `_wall_codes_partial` + _warnings「壁記号の読取N件失敗・過大の可能性・再アップロードで再読取」。
