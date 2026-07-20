@@ -76,7 +76,8 @@ console.log('  rooms:', parsedData.rooms?.length ?? 0,
   '/ 警告:', (parsedData._warnings || []).length);
 
 // STEP2: 展開図（段階式auxと同じ: roomContext付き解析 → attachElevationData で
-// タイル詳細パス（平面図の壁記号+展開図の開口。Gemini 12回）ごと統合）
+// タイル詳細パス（平面図の壁記号=6タイル×WALL_CODE_READS回の多数決読み+展開図の開口6タイル。
+// デフォルト3回読みでGemini 24回）ごと統合）
 console.log('STEP2: 展開図', path.basename(ELEV));
 const roomNames = (parsedData.rooms || []).map((r) => r.name).filter(Boolean);
 const elevRes = await analyzeAuxDrawing(ELEV, 'elevation', { roomNames }).catch((e) => {

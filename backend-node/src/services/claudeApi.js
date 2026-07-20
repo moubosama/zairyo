@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import { validateAndNormalize, reconcileDualResults } from './aiReadingValidator.js';
-import { collapseDoubledPlacements } from './buildupCalculator.js';
+import { collapseDoubledPlacements, normalizeRoomName } from './buildupCalculator.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -487,10 +487,13 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
           }
         };
 
-    const response = await anthropic.messages.create({
+    // temperatureはopus-4.7/4.8系・sonnet-5・fable-5では廃止され400になる（"temperature is deprecated for this model"）。
+    // これらのモデルでは送らない。旧モデル（sonnet-4-6以前・haiku等）でのみ転記の再現性のため0を付与する。
+    // 2026-07-20: dual実読みE2Eで本番Claude経路が毎回400で死んでいたのを発見して修正。
+    const TEMP_DEPRECATED_RE = /(opus-4-[78]|sonnet-5|fable-5|mythos-5)/;
+    const claudeRequest = {
       model: CLAUDE_MODEL,
       max_tokens: 4096,
-      temperature: 0, // 図面の転記タスク: 同一図面で読み取りが回ごとにブレるのを抑える
       messages: [
         {
           role: 'user',
@@ -503,7 +506,11 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
           ]
         }
       ]
-    });
+    };
+    if (!TEMP_DEPRECATED_RE.test(CLAUDE_MODEL)) {
+      claudeRequest.temperature = 0; // 旧モデルのみ: 図面の転記タスクで読み取りブレを抑える
+    }
+    const response = await anthropic.messages.create(claudeRequest);
 
     console.log('Claude API response received');
     const text = response.content[0].text;
@@ -879,23 +886,241 @@ function classifyTileFailure(r) {
 }
 
 /**
- * 平面詳細図から壁仕上記号を抽出（タイル分割・詳細パス）
+ * 壁記号タイルの読み取り回数（多数決用）。環境変数 WALL_CODE_READS で調整
+ * - デフォルト3 = 3回読み+多数決（2026-07-20実装。ブラウザ実測7回で壁PB 73〜108枚の
+ *   回間ブレ=C04/L14/G24のplacementが出たり出なかったり・幻覚混入への対策。課金済みで読み増し許容）
+ * - 1 = 従来の1回読み（多数決層を通らない完全互換）
+ * - 上限5（コスト暴走ガード）
+ * 呼び出し時に評価する（E2E/テストがimport後にenvを設定しても効くように=aiProviderと同じ流儀）
+ */
+export function wallCodeReadCount() {
+  const n = parseInt(process.env.WALL_CODE_READS || '', 10);
+  if (!Number.isFinite(n) || n < 1) return 3;
+  return Math.min(n, 5);
+}
+
+/**
+ * 平面詳細図から壁仕上記号を抽出（タイル分割・詳細パス・WALL_CODE_READS回読み+多数決）
+ *
+ * 実行モデル（2026-07-20 多数決化）:
+ * - 同じ6タイルを WALL_CODE_READS回（デフォルト3回）読み、部屋×記号×寸法クラスタ単位で
+ *   「何回のrunに出現したか」の過半数で採否を決める（voteWallCodeRuns参照）。
+ *   幻覚（1/3回だけ出る記号）を落とし、正当な読み（2/3回以上）だけを採用する
+ * - run同士は直列実行。並列度はanalyzeTiles内のTILE_CONCURRENCY=3のまま増やさない
+ *   （同時着弾のRPMバースト対策を維持。ジッターも従来どおり）
+ * - タイル画像はsharpで1回だけ生成し全runで共有（クロップ×拡大をreads回繰り返さない）
+ * - 所要時間・費用の目安（デフォルト3回・課金Tier1・gemini-2.5-flash）:
+ *   呼び出し数 = 6タイル×3run = 18回（開口タイル6回は別系統・従来どおり1回読み）。
+ *   3並列×2巡=20〜60秒/run が直列3run → 約1〜3分/系統。費用は約10円/run → 約20〜30円/回
+ *   （従来1回読み≈10円。ユーザー方針「精度を上げろ」で増分は承認済み）
+ *
  * @returns { results: [{room, codes:[...], placements}], failedTiles, totalTiles } |
  *          null（タイル分割不可）。failedTiles>0 のとき results は部分結果
- *          （呼び出し元で _wall_codes_partial の保存と再読取判定に使う）
+ *          （呼び出し元で _wall_codes_partial の保存と再読取判定に使う。
+ *          多数決時の統計は「タイルとして全run失敗したか」ベース=mergeWallCodeRunStats参照）
  */
 export async function analyzeWallCodesTiled(filePath, context = {}) {
-  const tiled = await analyzeTiles(filePath, PLAN_CODE_TILE_PROMPT + roomContextNote(context.roomNames), 'codes');
-  if (!tiled) return null;
-  const results = aggregateWallCodeItems(tiled.results);
+  const prompt = PLAN_CODE_TILE_PROMPT + roomContextNote(context.roomNames);
+  const reads = wallCodeReadCount();
+  // タイル画像のキャッシュ（全runで同一の分割画像を共有。sharp処理は1回だけ）
+  let tilesPromise = null;
+  const loadTilesOnce = () => {
+    if (!tilesPromise) {
+      tilesPromise = import('./drawingTiles.js').then(({ makeTiles }) => makeTiles(filePath));
+    }
+    return tilesPromise;
+  };
+  const runs = [];
+  for (let k = 0; k < reads; k++) {
+    const tiled = await analyzeTiles(filePath, prompt, 'codes', { loadTiles: loadTilesOnce });
+    if (!tiled) {
+      if (runs.length === 0) return null; // タイル分割不可（PDF等）
+      break; // 保険（タイルはキャッシュ済みでほぼ到達しない）: 読めたrunだけで多数決続行
+    }
+    runs.push(tiled);
+  }
+  if (runs.length === 1) {
+    // WALL_CODE_READS=1: 従来動作（1回読みの集約をそのまま返す・多数決層を通らない）
+    const tiled = runs[0];
+    return {
+      results: aggregateWallCodeItems(tiled.results),
+      failedTiles: tiled.failedTiles,
+      totalTiles: tiled.totalTiles,
+      failedReasons: tiled.failedReasons,   // 失敗理由の内訳（警告文言の分類表示に使う）
+      repairedTiles: tiled.repairedTiles,   // 途切れJSON救済の内部統計
+    };
+  }
+  const results = voteWallCodeRuns(runs.map((t) => ({
+    items: t.results,
+    // analyzeTilesのfailedReasons.tileは1始まり（ログ表記）→ _tileの0始まりへ変換
+    failedTiles: (t.failedReasons || []).map((r) => r.tile - 1),
+  })));
+  return { results, ...mergeWallCodeRunStats(runs) };
+}
+
+/**
+ * 複数runのタイル統計を「タイルとして全滅したか」ベースで合成する（純関数・test-wallcode-vote.mjs）
+ * - failedTiles/failedReasons: 全runで失敗したタイルだけを失敗に数える
+ *   （1runでも読めたタイルは多数決の材料がある=部分失敗警告の対象にしない。
+ *   代表理由は最後のrunのもの=最新の失敗状態）
+ * - repairedTiles: 全runが途切れ救済を要した場合のみ計上（min。runごとに別タイルが
+ *   救済された場合は過小になるが、その欠落は他runの通常読みが多数決で補完済みのため
+ *   「不完全」警告を出さないのが実態に合う）
+ * @param runs [{ failedReasons: [{tile(1始まり), kind, detail}], repairedTiles, totalTiles }]
+ */
+export function mergeWallCodeRunStats(runs) {
+  const n = runs.length;
+  const byTile = new Map(); // tile(1始まり) -> そのタイルが失敗したrunの理由リスト
+  for (const r of runs) {
+    for (const fr of r.failedReasons || []) {
+      if (!byTile.has(fr.tile)) byTile.set(fr.tile, []);
+      byTile.get(fr.tile).push(fr);
+    }
+  }
+  const failedReasons = [...byTile.entries()]
+    .filter(([, reasons]) => reasons.length >= n) // 1タイル1run1回失敗 → 件数=n が全run失敗
+    .sort((a, b) => a[0] - b[0])
+    .map(([, reasons]) => reasons[reasons.length - 1]);
   return {
-    results,
-    failedTiles: tiled.failedTiles,
-    totalTiles: tiled.totalTiles,
-    failedReasons: tiled.failedReasons,   // 失敗理由の内訳（警告文言の分類表示に使う）
-    repairedTiles: tiled.repairedTiles,   // 途切れJSON救済の内部統計
+    failedTiles: failedReasons.length,
+    totalTiles: runs[0]?.totalTiles || 0,
+    failedReasons,
+    repairedTiles: Math.min(...runs.map((r) => r.repairedTiles || 0)),
   };
 }
+
+// 多数決の寸法クラスタ許容差。run間の同一壁の読み取り揺れ（±100mm）を1クラスタに束ねる
+// （aggregateWallCodeItemsのタイル重複統合TILE_DUP_TOL_MMと同じ根拠・実例: G24@950と@965）
+const VOTE_CLUSTER_TOL_MM = 100;
+
+/**
+ * 壁記号タイルの複数run読み取りを多数決で1つの結果に集約する（純関数・test-wallcode-vote.mjs）
+ *
+ * 背景（2026-07-20）: Gemini 2.5-flashは同一図面でも回によってC04/L14/G24のplacementが
+ * 出たり出なかったり・幻覚が混ざったりして壁PBが73〜108枚に振れる。数式化済み8部位は安定で、
+ * ブレの残る壁記号読みだけを複数回読み+過半数採用でならす。
+ *
+ * ルール:
+ * - 各runをまず従来の部屋内集約（aggregateWallCodeItems: タイル重複統合・対面2枚カウント・
+ *   二重転記縮退）に通し、その出力を 部屋×記号×寸法クラスタ(±100mm) 単位で投票する
+ * - 分母（有効run数）はクラスタの元タイルが「そのrunで読めたか」で数える:
+ *   タイル全滅runは見えなかっただけなので反対票にしない（3回中1回タイル失敗 → 残り2回で続行）。
+ *   採用しきい値 = ceil(有効run数/2)。3runなら2票（1/3の幻覚は落選）、
+ *   有効2runなら1票（2/2一致=採用・1/2は過半数不成立だが「読めた事実を尊重」で採用側に倒す）
+ * - 対面2枚の件数も多数決: run別の出現件数の最頻値（例: run1=2件,run2=2件,run3=1件 → 2件採用。
+ *   同数タイは先のrunの件数=先勝ち）
+ * - 寸法はクラスタ内の最頻値（同数タイは先勝ち）
+ * - codesのみ（寸法null）: しきい値以上のrunでその部屋にその記号が出現（寸法有無問わず）すれば
+ *   codesに残す（寸法付きが採用された記号のnullは従来ルールどおり破棄）。
+ *   寸法が回ごとにバラバラでどのクラスタも過半数に届かない記号も、出現自体が過半数なら
+ *   codesのみへ降格して残す（寸法はノイズ・記号の存在は実在の合図）
+ * - 部屋名はrun間の表記ゆれをnormalizeRoomNameで束ね、最頻の生表記を代表に使う
+ * - 採用ゼロの部屋は出力しない（幻覚部屋の除去。mergeWallFinishCodes側でSTEP1の読取が保持される）
+ * - _tileは内部情報 → 出力placementsには漏らさない
+ *
+ * @param runs [{ items: [タイル生アイテム(_tile付き)], failedTiles: [0始まりの失敗タイル番号] }]
+ * @returns [{ room, codes, placements }]（analyzeWallCodesTiled.resultsと同形）
+ */
+export function voteWallCodeRuns(runs) {
+  const n = runs.length;
+  if (n === 0) return [];
+  const failedSets = runs.map((r) => new Set(r.failedTiles || []));
+  const perRun = runs.map((r) => aggregateWallCodeItems(r.items || [], { keepTile: true }));
+  if (n === 1) {
+    // 1runは多数決なし=従来の集約結果そのまま（_tileだけ剥がす）
+    return perRun[0].map(({ room, codes, placements }) => ({
+      room, codes, placements: placements.map(({ _tile, ...p }) => p),
+    }));
+  }
+
+  // 最頻値（同数タイは先勝ち=先に出現した値）
+  const modeOf = (values) => {
+    const counts = new Map();
+    for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
+    let best = null, bestN = 0;
+    for (const [v, c] of counts) if (c > bestN) { best = v; bestN = c; }
+    return best;
+  };
+  // クラスタの元タイルが読めたrun数（=投票の分母）としきい値
+  const requiredVotes = (tiles) => {
+    let eligible = 0;
+    for (let k = 0; k < n; k++) {
+      const ok = tiles.size === 0 || [...tiles].some((t) => !failedSets[k].has(t));
+      if (ok) eligible++;
+    }
+    return Math.max(1, Math.ceil(eligible / 2));
+  };
+
+  // 部屋をnormalizeRoomNameで束ねる（run間の「洋室(1)/洋室（１）」ゆれ対策）
+  const roomsMap = new Map(); // key -> { names: Map(生表記->件数), byRun: Array(n)<placements|null> }
+  perRun.forEach((results, k) => {
+    for (const entry of results) {
+      const key = normalizeRoomName(entry.room);
+      if (!key) continue;
+      if (!roomsMap.has(key)) {
+        roomsMap.set(key, { names: new Map(), byRun: Array.from({ length: n }, () => null) });
+      }
+      const rec = roomsMap.get(key);
+      rec.names.set(entry.room, (rec.names.get(entry.room) || 0) + 1);
+      // 同一run内で正規化キーが衝突（同じ部屋の表記ゆれ2エントリ）したら連結
+      rec.byRun[k] = [...(rec.byRun[k] || []), ...entry.placements];
+    }
+  });
+
+  const results = [];
+  for (const rec of roomsMap.values()) {
+    // 記号×寸法クラスタ（±100mm・代表値=先勝ち）。寸法nullはクラスタ化せず出現記録のみ
+    const clusters = []; // { code, len, members: [{len, run, tile}] }
+    const codePresence = new Map(); // code -> { runs:Set, tiles:Set }（寸法有無を問わない出現）
+    for (let k = 0; k < n; k++) {
+      for (const pl of rec.byRun[k] || []) {
+        const code = pl.code;
+        const tile = pl._tile ?? null;
+        if (!codePresence.has(code)) codePresence.set(code, { runs: new Set(), tiles: new Set() });
+        const pres = codePresence.get(code);
+        pres.runs.add(k);
+        if (tile != null) pres.tiles.add(tile);
+        const len = Number.isFinite(pl.wall_length_mm) ? pl.wall_length_mm : null;
+        if (len === null) continue;
+        let c = clusters.find((cl) => cl.code === code
+          && Math.abs(cl.len - len) <= VOTE_CLUSTER_TOL_MM);
+        if (!c) { c = { code, len, members: [] }; clusters.push(c); }
+        c.members.push({ len, run: k, tile });
+      }
+    }
+
+    const placements = [];
+    const dimAdopted = new Set(); // 寸法付きで採用された記号
+    for (const cl of clusters) {
+      const tiles = new Set(cl.members.map((m) => m.tile).filter((t) => t != null));
+      const votes = new Set(cl.members.map((m) => m.run)).size;
+      if (votes < requiredVotes(tiles)) continue; // 過半数未満=幻覚・回間ノイズとして落選
+      // 件数の多数決（run順で数え、最頻値・タイは先勝ち）。上限は従来どおり対面2枚
+      const perRunCount = new Map();
+      for (const m of cl.members) perRunCount.set(m.run, (perRunCount.get(m.run) || 0) + 1);
+      const orderedCounts = [...perRunCount.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c);
+      const count = Math.min(MAX_SAME_WALL, modeOf(orderedCounts));
+      const len = modeOf(cl.members.map((m) => m.len)); // 寸法の最頻値（タイは先勝ち）
+      for (let i = 0; i < count; i++) placements.push({ code: cl.code, wall_length_mm: len });
+      dimAdopted.add(cl.code);
+    }
+    // codesのみの残留判定（寸法クラスタが採用に至らなかった記号）
+    for (const [code, pres] of codePresence) {
+      if (dimAdopted.has(code)) continue;
+      if (pres.runs.size < requiredVotes(pres.tiles)) continue;
+      placements.push({ code, wall_length_mm: null });
+    }
+    if (placements.length === 0) continue; // 全記号落選 → 部屋ごと出力しない（幻覚部屋の除去）
+    const room = [...rec.names.entries()].sort((a, b) => b[1] - a[1])[0][0]; // 最頻の生表記
+    results.push({ room, codes: [...new Set(placements.map((p) => p.code))], placements });
+  }
+  return results;
+}
+
+// 同一壁の読み取り揺れとみなす寸法差（実例: トイレG24@950と@965）
+const TILE_DUP_TOL_MM = 100;
+// 同記号・同寸クラスタの実在上限（矩形部屋の対面2枚を想定。多数決の件数上限にも使う）
+const MAX_SAME_WALL = 2;
 
 /**
  * タイル読取の壁記号アイテムを部屋ごとに集約する（純関数・test-buildup-placement.mjsで検証）
@@ -913,8 +1138,13 @@ export async function analyzeWallCodesTiled(filePath, context = {}) {
  * - _tileが無いアイテム（旧経路・保険）は各々を別タイル扱い → 従来どおり1件に統合（安全側）
  * ※ 離れた別タイルに写った等寸の別壁は max=1 に統合され拾えないが、過少除外
  *   （C04を1本分しか除外しない=壁PB過大側）で止まり、二重除外（過少側）にはならない
+ *
+ * @param opts.keepTile 出力placementsに読取元タイル番号を _tile として残す
+ *   （voteWallCodeRuns専用の内部オプション: 多数決の分母=そのタイルが読めたrun数の判定に使う。
+ *   デフォルトfalse=従来どおり_tileを外へ漏らさない）
  */
-export function aggregateWallCodeItems(raw) {
+export function aggregateWallCodeItems(raw, opts = {}) {
+  const keepTile = opts.keepTile === true;
   const byRoom = new Map(); // room -> [{code, len, tile}]
   for (const item of raw) {
     if (!item?.room || !item?.code) continue;
@@ -926,8 +1156,6 @@ export function aggregateWallCodeItems(raw) {
     byRoom.get(item.room).push({ code, len, tile: item._tile });
   }
 
-  const TILE_DUP_TOL_MM = 100; // 同一壁の読み取り揺れとみなす寸法差（実例: トイレG24@950と@965）
-  const MAX_SAME_WALL = 2;     // 同記号・同寸クラスタの実在上限（矩形部屋の対面2枚を想定）
   const results = [];
   for (const [room, items] of byRoom) {
     const placements = [];
@@ -938,7 +1166,9 @@ export function aggregateWallCodeItems(raw) {
       if (items.some((q) => q.code === p.code && q.len)) continue;
       if (nullSeen.has(p.code)) continue;
       nullSeen.add(p.code);
-      placements.push({ code: p.code, wall_length_mm: null });
+      placements.push(keepTile
+        ? { code: p.code, wall_length_mm: null, _tile: p.tile ?? null }
+        : { code: p.code, wall_length_mm: null });
     }
     // 同記号・寸法差≤100mmでクラスタ化（代表値=先勝ちの寸法。平均は取らない）
     const clusters = [];
@@ -966,7 +1196,11 @@ export function aggregateWallCodeItems(raw) {
         for (const n of byLen.values()) maxSameLen = Math.max(maxSameLen, n);
       }
       const count = Math.min(MAX_SAME_WALL, maxSameLen);
-      for (let n = 0; n < count; n++) placements.push({ code: cl.code, wall_length_mm: cl.len });
+      for (let n = 0; n < count; n++) {
+        placements.push(keepTile
+          ? { code: cl.code, wall_length_mm: cl.len, _tile: cl.members[0].tile ?? null }
+          : { code: cl.code, wall_length_mm: cl.len });
+      }
     }
     // 二重転記ノイズの縮退（2026-07-19）: 部屋内に「同記号・完全等寸のペア」が2クラスタ以上ある回は
     // 「ほぼ全記号を二重に書き出す癖」の読取とみなし、全ペアを1件へ縮退する（等寸×2保持の適用は
@@ -979,6 +1213,8 @@ export function aggregateWallCodeItems(raw) {
 
 /**
  * 展開図から開口を抽出（タイル分割・詳細パス）
+ * ※ 開口タイルは当面1回読みのまま（多数決はWALL_CODE_READSの壁記号タイルのみ・2026-07-20。
+ *   ブレの主因は壁記号placementsで、開口は建具マッチング層+読取ノイズガードが既にある。スコープ外）
  * @returns { results: [{room, face, type, symbol, width_mm, height_mm}], failedTiles, totalTiles } |
  *          null（タイル分割不可）
  */
