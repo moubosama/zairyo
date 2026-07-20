@@ -532,9 +532,16 @@ async function analyzeWithClaude(filePath, base64Data, mimeType, promptText = SY
 /**
  * 単発解析のプロバイダ振り分け（補助図面・タイル解析用）
  * dual/claude=Claude単体（現行動作）、gemini=Gemini単体。プロンプトは共通
+ *
+ * options.provider（'gemini'|'claude'）を渡すと AI_PROVIDER のグローバル分岐を無視して
+ * そのrunだけ明示プロバイダで読む（二人読み多数決 analyzeWallCodesTiled 用）。
+ * 未指定時は従来どおり aiProvider() に従う（後方互換）。
  */
 function analyzeSingle(filePath, base64Data, mimeType, promptText, options = {}) {
-  return aiProvider() === 'gemini'
+  const provider = options.provider === 'gemini' || options.provider === 'claude'
+    ? options.provider
+    : aiProvider();
+  return provider === 'gemini'
     ? analyzeWithGemini(filePath, base64Data, mimeType, promptText, options)
     : analyzeWithClaude(filePath, base64Data, mimeType, promptText, options);
 }
@@ -760,6 +767,10 @@ export async function analyzeTiles(filePath, prompt, resultKey, deps = {}) {
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
     jitterMs = () => TILE_JITTER_MIN_MS
       + Math.floor(Math.random() * (TILE_JITTER_MAX_MS - TILE_JITTER_MIN_MS + 1)),
+    // provider = このスイープをどのAIで読むか（'gemini'|'claude'）。
+    // 二人読み多数決（analyzeWallCodesTiled）が run 単位で明示指定する。
+    // 未指定なら analyzeSingle が AI_PROVIDER に従う（従来動作・後方互換）
+    provider = null,
   } = deps;
 
   const tiles = await loadTiles().catch((e) => {
@@ -777,8 +788,13 @@ export async function analyzeTiles(filePath, prompt, resultKey, deps = {}) {
       // スイープ時は呼び出し内リトライ（GEMINI_RETRY_MAX）を無効化: retryMax:0。
       // スイープ自体が再試行層なので二重リトライは不要（直列で待機が積み上がるのを防ぐ）。
       // Claude経路は呼び出し内リトライを持たないためretryMax/jsonResponseは無視される（無害）
+      // provider を指定した場合はグローバルAI_PROVIDERを無視してそのAIで読む（二人読み用）。
+      // provider=null（従来）なら analyzeSingle 側で AI_PROVIDER に従う
+      const providerOpt = provider ? { provider } : {};
       const r = await analyze(filePath, tiles[i].base64Data, tiles[i].mimeType, prompt,
-        phase === 'sweep' ? { retryMax: 0, jsonResponse: true } : { jsonResponse: true });
+        phase === 'sweep'
+          ? { retryMax: 0, jsonResponse: true, ...providerOpt }
+          : { jsonResponse: true, ...providerOpt });
       const failure = classifyTileFailure(r);
       if (failure) {
         console.warn(`タイル${i + 1}/${tiles.length} 解析失敗(${phase}/${failure.kind}):`, failure.detail);
@@ -900,19 +916,77 @@ export function wallCodeReadCount() {
 }
 
 /**
+ * プロバイダ別の壁記号読み取り回数（0以上・上限5）を環境変数から解釈する。
+ * - envName（WALL_CODE_READS_GEMINI / _CLAUDE）が明示されていればそれを採用
+ * - 未設定なら fallback（wallCodeReadCount()=WALL_CODE_READS。単一AI時の後方互換）
+ * - Gemini/Claude別に「そのAIで何回読むか」を持つ。0=そのAIは読まない（片AI運用）
+ * 呼び出し時に評価（envの後設定が効く=aiProvider/wallCodeReadCountと同じ流儀）
+ */
+function providerReadCount(envName, fallback) {
+  const raw = process.env[envName];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return Math.min(n, 5);
+}
+
+/**
+ * 二人読み多数決の run 計画 [{provider, count}] を組み立てる（純関数・test-wallcode-vote.mjs）
+ *
+ * ユーザー方針（2026-07-20）: 「AIに2つ読ませて多い票で決める」（Gemini3回+Claude3回）。
+ * AI_PROVIDER のグローバル設定と自然に噛み合わせる:
+ * - dual  : Gemini×Gn + Claude×Cn（既定 3+3=6run）＝二人読み多数決
+ * - gemini: Geminiのみ（Claude 0回）
+ * - claude: Claudeのみ（Gemini 0回）
+ * 回数は WALL_CODE_READS_GEMINI / WALL_CODE_READS_CLAUDE で各々指定。未設定なら
+ * WALL_CODE_READS（=共通フォールバック・従来の単一AI読み回数）を使う。
+ *
+ * 合計0runにならないよう防御（両方0や無効値の縮退時は fallback で最低限読む）。
+ * @param provider aiProvider() の返り値（'dual'|'gemini'|'claude'）
+ * @returns [{ provider:'gemini'|'claude', count:int>0 }]（count=0の系統は含めない）
+ */
+export function buildWallCodeReadPlan(provider = aiProvider()) {
+  const fallback = wallCodeReadCount(); // WALL_CODE_READS（1〜5）
+  const gemini = providerReadCount('WALL_CODE_READS_GEMINI', fallback);
+  const claude = providerReadCount('WALL_CODE_READS_CLAUDE', fallback);
+  const plan = [];
+  if (provider === 'gemini') {
+    plan.push({ provider: 'gemini', count: gemini });
+  } else if (provider === 'claude') {
+    plan.push({ provider: 'claude', count: claude });
+  } else {
+    // dual = 二人読み。両方の票を集めて多数決に混ぜる
+    if (gemini > 0) plan.push({ provider: 'gemini', count: gemini });
+    if (claude > 0) plan.push({ provider: 'claude', count: claude });
+  }
+  const filtered = plan.filter((p) => p.count > 0);
+  if (filtered.length > 0) return filtered;
+  // 全系統0（例: dualで両env=0、または片AI指定でそのenv=0）→ 最低1回は読む。
+  // 片AI指定ならそのAI、dualならGeminiを既定にする（無料枠・低コスト側）
+  const only = provider === 'claude' ? 'claude' : 'gemini';
+  return [{ provider: only, count: Math.max(1, fallback) }];
+}
+
+/**
  * 平面詳細図から壁仕上記号を抽出（タイル分割・詳細パス・WALL_CODE_READS回読み+多数決）
  *
- * 実行モデル（2026-07-20 多数決化）:
- * - 同じ6タイルを WALL_CODE_READS回（デフォルト3回）読み、部屋×記号×寸法クラスタ単位で
- *   「何回のrunに出現したか」の過半数で採否を決める（voteWallCodeRuns参照）。
- *   幻覚（1/3回だけ出る記号）を落とし、正当な読み（2/3回以上）だけを採用する
+ * 実行モデル（2026-07-20 二人読み多数決化）:
+ * - 同じ6タイルを「Gemini×Gn + Claude×Cn」の計(Gn+Cn)回読み（buildWallCodeReadPlan）、
+ *   部屋×記号×寸法クラスタ単位で「何回のrunに出現したか」の過半数で採否を決める
+ *   （voteWallCodeRuns参照）。幻覚（1回だけ出る記号）を落とし、両AIで一致する記号を強く採用する。
+ *   ユーザー方針: 「AIに2つ読ませて多い票で決める」（Gemini3回+Claude3回=既定6run）
+ * - 回数: WALL_CODE_READS_GEMINI（既定3）/ WALL_CODE_READS_CLAUDE（既定3）。未設定は
+ *   WALL_CODE_READS（共通フォールバック）。AI_PROVIDER=gemini→Geminiのみ / claude→Claudeのみ /
+ *   dual→両方（二人読み）。片AIが全run失敗しても、もう片AIの票で成立する（分母は有効run数）
  * - run同士は直列実行。並列度はanalyzeTiles内のTILE_CONCURRENCY=3のまま増やさない
- *   （同時着弾のRPMバースト対策を維持。ジッターも従来どおり）
- * - タイル画像はsharpで1回だけ生成し全runで共有（クロップ×拡大をreads回繰り返さない）
- * - 所要時間・費用の目安（デフォルト3回・課金Tier1・gemini-2.5-flash）:
- *   呼び出し数 = 6タイル×3run = 18回（開口タイル6回は別系統・従来どおり1回読み）。
- *   3並列×2巡=20〜60秒/run が直列3run → 約1〜3分/系統。費用は約10円/run → 約20〜30円/回
- *   （従来1回読み≈10円。ユーザー方針「精度を上げろ」で増分は承認済み）
+ *   （同時着弾のRPMバースト対策を維持。ジッターも従来どおり）。
+ *   ※コスト/RPM注意: 既定でGemini6タイル×3 + Claude6タイル×3=36呼び出し（開口タイル系統は別）。
+ *   Claudeは高負荷時に529 Overloadedを返しやすいが、analyzeTiles第2スイープ+
+ *   analyzeWithClaudeの持ち帰りエラー（1タイル失敗は分母から除外）で片AI全滅でも成立する設計
+ * - タイル画像はsharpで1回だけ生成し全run・全プロバイダで共有（loadTilesOnce）。
+ *   クロップ×拡大を(Gn+Cn)回繰り返さない
+ * - 費用の目安（既定3+3・課金Tier）: Gemini約10円/run×3 + Claude（opus系は高め）×3。
+ *   ユーザー方針「精度を上げろ・課金済み」で増分は承認済み
  *
  * @returns { results: [{room, codes:[...], placements}], failedTiles, totalTiles } |
  *          null（タイル分割不可）。failedTiles>0 のとき results は部分結果
@@ -921,8 +995,9 @@ export function wallCodeReadCount() {
  */
 export async function analyzeWallCodesTiled(filePath, context = {}) {
   const prompt = PLAN_CODE_TILE_PROMPT + roomContextNote(context.roomNames);
-  const reads = wallCodeReadCount();
-  // タイル画像のキャッシュ（全runで同一の分割画像を共有。sharp処理は1回だけ）
+  // 二人読みの run 計画（[{provider, count}]）。dualなら Gemini×Gn + Claude×Cn
+  const plan = buildWallCodeReadPlan();
+  // タイル画像のキャッシュ（全run・全プロバイダで同一の分割画像を共有。sharp処理は1回だけ）
   let tilesPromise = null;
   const loadTilesOnce = () => {
     if (!tilesPromise) {
@@ -931,16 +1006,20 @@ export async function analyzeWallCodesTiled(filePath, context = {}) {
     return tilesPromise;
   };
   const runs = [];
-  for (let k = 0; k < reads; k++) {
-    const tiled = await analyzeTiles(filePath, prompt, 'codes', { loadTiles: loadTilesOnce });
-    if (!tiled) {
-      if (runs.length === 0) return null; // タイル分割不可（PDF等）
-      break; // 保険（タイルはキャッシュ済みでほぼ到達しない）: 読めたrunだけで多数決続行
+  // プロバイダごとに count 回、直列で読む（Gemini→…→Claude→…）。RPMバースト回避で直列維持
+  for (const { provider, count } of plan) {
+    for (let k = 0; k < count; k++) {
+      const tiled = await analyzeTiles(filePath, prompt, 'codes',
+        { loadTiles: loadTilesOnce, provider });
+      if (!tiled) {
+        if (runs.length === 0) return null; // タイル分割不可（PDF等）
+        break; // 保険（タイルはキャッシュ済みでほぼ到達しない）: 読めたrunだけで多数決続行
+      }
+      runs.push(tiled);
     }
-    runs.push(tiled);
   }
   if (runs.length === 1) {
-    // WALL_CODE_READS=1: 従来動作（1回読みの集約をそのまま返す・多数決層を通らない）
+    // 計画が単一AI×1回（片AI指定で count=1 等）: 従来動作（集約をそのまま返す・多数決層を通らない）
     const tiled = runs[0];
     return {
       results: aggregateWallCodeItems(tiled.results),

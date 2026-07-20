@@ -21,9 +21,14 @@ delete process.env.ANTHROPIC_API_KEY;
 delete process.env.CLAUDE_API_KEY;
 delete process.env.GOOGLE_GEMINI_API_KEY;
 delete process.env.WALL_CODE_READS;
+delete process.env.WALL_CODE_READS_GEMINI;
+delete process.env.WALL_CODE_READS_CLAUDE;
+delete process.env.AI_PROVIDER;
 
-const { voteWallCodeRuns, mergeWallCodeRunStats, wallCodeReadCount, aggregateWallCodeItems } =
-  await import('../src/services/claudeApi.js');
+const {
+  voteWallCodeRuns, mergeWallCodeRunStats, wallCodeReadCount, aggregateWallCodeItems,
+  buildWallCodeReadPlan,
+} = await import('../src/services/claudeApi.js');
 
 let pass = 0;
 let fail = 0;
@@ -319,6 +324,198 @@ test('不正値（0・負・非数）→ デフォルト3 / 過大（9）→ 上
   process.env.WALL_CODE_READS = '9';
   assert.equal(wallCodeReadCount(), 5);
   delete process.env.WALL_CODE_READS;
+});
+
+// ---------------------------------------------------------------------------
+console.log('■ 二人読み多数決: Gemini票+Claude票の合算（provider混在run）');
+
+// 二人読みでは vote に渡る runs はプロバイダ非依存の生run列（provider は実行時の関心事で
+// vote 層には現れない）。ここでは「Gemini起源run」「Claude起源run」を模した run を混ぜ、
+// 合算過半数が正しく効くこと・provider ラベルが結果に漏れないことを確認する。
+const gem = (...items) => ({ items, failedTiles: [], _provider: 'gemini' }); // _providerは無視される想定
+const cla = (...items) => ({ items, failedTiles: [], _provider: 'claude' });
+
+test('両AI一致記号は強く採用（Gemini3+Claude3の6run中6出現）', () => {
+  const res = voteWallCodeRuns([
+    gem(it('LDK', 'G14', 3000)), gem(it('LDK', 'G14', 3000)), gem(it('LDK', 'G14', 3010)),
+    cla(it('LDK', 'G14', 2990)), cla(it('LDK', 'G14', 3000)), cla(it('LDK', 'G14', 3000)),
+  ]);
+  assert.deepEqual(plStr(roomOf(res, 'LDK')), ['G14@3000'], '6/6一致=堅く採用');
+});
+
+test('片AIの1runだけに出た記号は幻覚として落選（6run中1票<しきい値3）', () => {
+  // 分母6・しきい値ceil(6/2)=3。C04はGeminiの1runにしか出ない=幻覚 → 落選。
+  // 「片方AIだけ=過半数閾値次第で落選」を1/6で厳密に確認する
+  const res = voteWallCodeRuns([
+    gem(it('洋室(2)', 'G14', 1500), it('洋室(2)', 'C04', 2360)),
+    gem(it('洋室(2)', 'G14', 1500)),                       // C04はこのGeminiで欠落
+    gem(it('洋室(2)', 'G14', 1500)),
+    cla(it('洋室(2)', 'G14', 1500)),
+    cla(it('洋室(2)', 'G14', 1500)),
+    cla(it('洋室(2)', 'G14', 1500)),
+  ]);
+  // C04は6run中1回=幻覚 → 落選。G14は全run → 採用
+  assert.deepEqual(plStr(roomOf(res, '洋室(2)')), ['G14@1500']);
+  assert.deepEqual(roomOf(res, '洋室(2)').codes, ['G14'], 'C04はcodesにも残らない（1/6）');
+});
+
+test('片AIだけの記号でも過半数(3/6)に届けば採用（Gemini全3が一致・Claudeは読み漏れ）', () => {
+  const res = voteWallCodeRuns([
+    gem(it('洋室(3)', 'C04', 2360)), gem(it('洋室(3)', 'C04', 2360)), gem(it('洋室(3)', 'C04', 2360)),
+    cla(), cla(), cla(), // Claudeはこの壁を読み漏れ（記号なし=反対票）
+  ]);
+  // 分母6・出現3 = ceil(6/2)=3 → 採用（Gemini側の一致が過半数ちょうどを満たす）
+  assert.deepEqual(plStr(roomOf(res, '洋室(3)')), ['C04@2360']);
+});
+
+test('Claude全滅run（タイル失敗）混在でもGemini票で成立（分母=有効run）', () => {
+  const res = voteWallCodeRuns([
+    gem(it('トイレ', 'G24', 950, 0)), gem(it('トイレ', 'G24', 950, 0)), gem(it('トイレ', 'G24', 950, 0)),
+    { items: [], failedTiles: [0], _provider: 'claude' }, // Claude run1: タイル0全滅
+    { items: [], failedTiles: [0], _provider: 'claude' }, // Claude run2: タイル0全滅
+    { items: [], failedTiles: [0], _provider: 'claude' }, // Claude run3: タイル0全滅
+  ]);
+  // タイル0はClaude3runで全滅 → 分母から除外。有効run=Gemini3・出現3 → 採用
+  assert.deepEqual(plStr(roomOf(res, 'トイレ')), ['G24@950'], 'Claude全滅でもGemini票で成立');
+});
+
+test('Gemini全滅run混在でもClaude票で成立（対称）', () => {
+  const res = voteWallCodeRuns([
+    { items: [], failedTiles: [0], _provider: 'gemini' },
+    { items: [], failedTiles: [0], _provider: 'gemini' },
+    { items: [], failedTiles: [0], _provider: 'gemini' },
+    cla(it('洗面', 'G24', 1925, 0)), cla(it('洗面', 'G24', 1925, 0)), cla(it('洗面', 'G24', 1925, 0)),
+  ]);
+  assert.deepEqual(plStr(roomOf(res, '洗面')), ['G24@1925']);
+});
+
+test('両AIで寸法が食い違う（Gemini2360×3 vs Claude2410×3）→ 最頻値6票中3-3タイは先勝ち', () => {
+  const res = voteWallCodeRuns([
+    gem(it('洋室(1)', 'C04', 2360)), gem(it('洋室(1)', 'C04', 2360)), gem(it('洋室(1)', 'C04', 2360)),
+    cla(it('洋室(1)', 'C04', 2410)), cla(it('洋室(1)', 'C04', 2410)), cla(it('洋室(1)', 'C04', 2410)),
+  ]);
+  // 2360と2410は差50<100mm=同一クラスタ。最頻値は3対3タイ → run順で先の2360
+  assert.deepEqual(plStr(roomOf(res, '洋室(1)')), ['C04@2360']);
+});
+
+test('片AI幻覚部屋は6run中1回でも部屋ごと出力されない（provider混在）', () => {
+  const res = voteWallCodeRuns([
+    gem(it('LDK', 'G14', 3000), it('幻の間', 'I14', 2000)),
+    gem(it('LDK', 'G14', 3000)), gem(it('LDK', 'G14', 3000)),
+    cla(it('LDK', 'G14', 3000)), cla(it('LDK', 'G14', 3000)), cla(it('LDK', 'G14', 3000)),
+  ]);
+  assert.equal(roomOf(res, '幻の間'), undefined);
+  assert.equal(res.length, 1);
+});
+
+test('providerラベル（_provider）は入力runの余分フィールドで、結果に一切漏れない', () => {
+  const res = voteWallCodeRuns([
+    gem(it('LDK', 'G14', 3000, 1)), gem(it('LDK', 'G14', 3000, 1)),
+    cla(it('LDK', 'G14', 3000, 1)),
+  ]);
+  const json = JSON.stringify(res);
+  assert.ok(!/_provider/.test(json), '_providerが結果に漏れている');
+  assert.ok(!/_tile/.test(json), '_tileが結果に漏れている');
+  for (const e of res) {
+    assert.deepEqual(Object.keys(e).sort(), ['codes', 'placements', 'room']);
+  }
+});
+
+test('対面2枚の件数多数決はAIをまたいで効く（Gemini2件×3 + Claude1件×3 → 2件）', () => {
+  const res = voteWallCodeRuns([
+    gem(it('洋室(2)', 'C04', 2360, 2), it('洋室(2)', 'C04', 2360, 2)),
+    gem(it('洋室(2)', 'C04', 2360, 2), it('洋室(2)', 'C04', 2360, 2)),
+    gem(it('洋室(2)', 'C04', 2360, 2), it('洋室(2)', 'C04', 2360, 2)),
+    cla(it('洋室(2)', 'C04', 2360, 2)),
+    cla(it('洋室(2)', 'C04', 2360, 2)),
+    cla(it('洋室(2)', 'C04', 2360, 2)),
+  ]);
+  // 件数の最頻値: 2件×3run vs 1件×3run → 3-3タイ・先勝ち=先のGemini(2件)
+  assert.deepEqual(plStr(roomOf(res, '洋室(2)')), ['C04@2360', 'C04@2360']);
+});
+
+// ---------------------------------------------------------------------------
+console.log('■ buildWallCodeReadPlan: 二人読み run 計画の組み立て');
+
+const clearReadEnv = () => {
+  delete process.env.WALL_CODE_READS;
+  delete process.env.WALL_CODE_READS_GEMINI;
+  delete process.env.WALL_CODE_READS_CLAUDE;
+};
+
+test('dual・env未設定 → Gemini3 + Claude3（既定の二人読み）', () => {
+  clearReadEnv();
+  assert.deepEqual(buildWallCodeReadPlan('dual'),
+    [{ provider: 'gemini', count: 3 }, { provider: 'claude', count: 3 }]);
+});
+
+test('dual・GEMINI/CLAUDE個別指定が効く（G2+C4）', () => {
+  clearReadEnv();
+  process.env.WALL_CODE_READS_GEMINI = '2';
+  process.env.WALL_CODE_READS_CLAUDE = '4';
+  assert.deepEqual(buildWallCodeReadPlan('dual'),
+    [{ provider: 'gemini', count: 2 }, { provider: 'claude', count: 4 }]);
+  clearReadEnv();
+});
+
+test('AI_PROVIDER=gemini → Geminiのみ（Claude0回・計画に含まれない）', () => {
+  clearReadEnv();
+  assert.deepEqual(buildWallCodeReadPlan('gemini'), [{ provider: 'gemini', count: 3 }]);
+});
+
+test('AI_PROVIDER=claude → Claudeのみ', () => {
+  clearReadEnv();
+  assert.deepEqual(buildWallCodeReadPlan('claude'), [{ provider: 'claude', count: 3 }]);
+});
+
+test('dual・片AIを0回に → もう片AIだけの計画（Claude0でGeminiのみ）', () => {
+  clearReadEnv();
+  process.env.WALL_CODE_READS_CLAUDE = '0';
+  assert.deepEqual(buildWallCodeReadPlan('dual'), [{ provider: 'gemini', count: 3 }]);
+  clearReadEnv();
+});
+
+test('個別env未設定時は共通フォールバックWALL_CODE_READSを使う（dual: G2+C2）', () => {
+  clearReadEnv();
+  process.env.WALL_CODE_READS = '2';
+  assert.deepEqual(buildWallCodeReadPlan('dual'),
+    [{ provider: 'gemini', count: 2 }, { provider: 'claude', count: 2 }]);
+  clearReadEnv();
+});
+
+test('WALL_CODE_READS_GEMINIは共通フォールバックを上書きする（G5・Claudeは共通2）', () => {
+  clearReadEnv();
+  process.env.WALL_CODE_READS = '2';
+  process.env.WALL_CODE_READS_GEMINI = '5';
+  assert.deepEqual(buildWallCodeReadPlan('dual'),
+    [{ provider: 'gemini', count: 5 }, { provider: 'claude', count: 2 }]);
+  clearReadEnv();
+});
+
+test('両AI0回の縮退 → 最低1回は読む（Geminiで防御・0runを作らない）', () => {
+  clearReadEnv();
+  process.env.WALL_CODE_READS_GEMINI = '0';
+  process.env.WALL_CODE_READS_CLAUDE = '0';
+  const plan = buildWallCodeReadPlan('dual');
+  assert.equal(plan.length, 1);
+  assert.ok(plan[0].count >= 1, '合計0runにならない');
+  clearReadEnv();
+});
+
+test('過大値（9）は上限5にクランプ / 不正値は共通フォールバック', () => {
+  clearReadEnv();
+  process.env.WALL_CODE_READS_GEMINI = '9';
+  process.env.WALL_CODE_READS_CLAUDE = 'abc'; // 不正 → フォールバック=WALL_CODE_READS既定3
+  assert.deepEqual(buildWallCodeReadPlan('dual'),
+    [{ provider: 'gemini', count: 5 }, { provider: 'claude', count: 3 }]);
+  clearReadEnv();
+});
+
+test('AI_PROVIDER=claude・CLAUDE個別指定 → Claudeその回数のみ', () => {
+  clearReadEnv();
+  process.env.WALL_CODE_READS_CLAUDE = '2';
+  assert.deepEqual(buildWallCodeReadPlan('claude'), [{ provider: 'claude', count: 2 }]);
+  clearReadEnv();
 });
 
 // ---------------------------------------------------------------------------
