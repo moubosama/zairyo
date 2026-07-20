@@ -3,6 +3,10 @@ import { ref, computed } from 'vue'
 import * as api from '@/services/api'
 
 const SESSION_PROJECT_KEY = 'zairyo_current_project_id'
+// Homeウィザード（STEP1〜3）の状態。結果画面から戻ってもスロットの解析済み表示と
+// STEP2/3の差し替えアップロード導線を維持する（タイル部分失敗の警告が案内する
+// 「展開図の再アップロードで再読取」に必要）。同一タブ内のみ=sessionStorage
+const SESSION_HOME_KEY = 'zairyo_home_state'
 
 export const useProjectStore = defineStore('project', () => {
   // State
@@ -267,6 +271,47 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  /**
+   * 保存済みのプロジェクトIDで直接復元する（Homeウィザードの復元用。
+   * restoreFromSessionはSESSION_PROJECT_KEY頼みなので、Home状態に保存したIDで引ける版を分ける）
+   * @returns 復元できたらtrue（プロジェクトが削除済み・権限なし等はfalse）
+   */
+  async function restoreProjectById(id) {
+    try {
+      const response = await api.fetchProject(id)
+      applyProjectData(response.data)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Homeウィザードの状態（入力値+STEP1〜3のサマリー）を同一タブ内で永続化する。
+   * 中身はHome.vueが組み立てる: { projectId, projectName, totalAreaSqm,
+   * planSummary, elevSummary, doorSummary }
+   */
+  function saveHomeState(state) {
+    try {
+      sessionStorage.setItem(SESSION_HOME_KEY, JSON.stringify(state))
+    } catch {
+      // sessionStorage不可（プライベートモード等）でも機能全体は止めない
+    }
+  }
+
+  function loadHomeState() {
+    try {
+      const raw = sessionStorage.getItem(SESSION_HOME_KEY)
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  }
+
+  function clearHomeState() {
+    sessionStorage.removeItem(SESSION_HOME_KEY)
+  }
+
   function reset() {
     selectedPackage.value = null
     currentProject.value = null
@@ -277,6 +322,9 @@ export const useProjectStore = defineStore('project', () => {
     areas.value = null
     error.value = null
     sessionStorage.removeItem(SESSION_PROJECT_KEY)
+    // reset=「新規で始める」の意味（ログアウト・履歴の新規作成・現プロジェクト削除・
+    // 新しい現場を開始）なので、Homeウィザードの復元状態も一緒に破棄する
+    clearHomeState()
   }
 
   return {
@@ -307,6 +355,10 @@ export const useProjectStore = defineStore('project', () => {
     exportExcel,
     applyProjectData,
     restoreFromSession,
+    restoreProjectById,
+    saveHomeState,
+    loadHomeState,
+    clearHomeState,
     reset,
   }
 })

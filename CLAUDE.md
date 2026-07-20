@@ -224,6 +224,16 @@ gemini-2.5-proは無料枠quota=0で未測定（Billing有効化後に `node scr
 - should-fix繰越: ②デフォルト遮音ルール発火時の_warnings表示（他タイプ誤発火の可視化）③ペア消費の部屋横断キャップ
   （LDK_LIKE_RE複数部屋で最大3面消費しうる）・残る⏳1=木胴縁適用後-46%（A-7係数とセットで次サイクル）
 
+**タイル安定化+Home状態永続化サイクル（2026-07-20・coder/reviewer分離・差し戻し1往復・承認済み）**: 本番ブラウザで
+「壁記号タイル1〜2/6件失敗→壁PB98〜108枚(+12〜24%)」が毎回発生（課金Tier1でも12並列一斉でRPMバースト）への対応。
+- **analyzeTilesの3並列プール+ジッター100〜300ms+失敗タイル第2スイープ**（全完了後5秒待って失敗分だけ直列再試行・
+  スイープ呼び出しはretryMax:0で二重リトライ禁止=最悪でも+3分上限）。test-tile-pool.mjs 13✅新設
+- **Homeのアップロード状態をsessionStorageに永続化**: 結果画面から戻ってもSTEP1〜3・現場名・専有面積が復元
+  （リロード後はGET /projects/:idで復元）。「↺新しい現場を開始」ボタン新設。「戻ったら全部消えてる」問題の解消
+- 全ゲート緑（eval 19✅/replay3記録✅10/✗0・ユニット計159✅・build成功）。実AIでの並列絞り効果は次回ブラウザで確認
+- 混入検査: materialCalculator.jsに並行セッション由来の未レビュー変更（従来パスisWindowのsymbol対応）を発見→
+  **コミットから除外**（buildup側isWindowとの二重実装・判定不一致あり。共通化+テスト付きで別サイクル再提出が筋）
+
 **本番Gemini運用のmust-fix 2件（2026-07-17・最終監査→coder→差し戻し再レビュー承認）**:
 - **タイル部分失敗の顕在化+sticky解消**: analyzeTilesが{results, failedTiles, totalTiles}を返し（API障害と「記号なし」を区別。
   Claude経路も対応）、部分失敗時は `_wall_codes_partial` + _warnings「壁記号の読取N件失敗・過大の可能性・再アップロードで再読取」。

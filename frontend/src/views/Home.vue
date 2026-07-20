@@ -8,7 +8,15 @@
     <!-- Project Name + 専有面積 -->
     <div class="card mb-6 grid md:grid-cols-2 gap-4">
       <div>
-        <label class="block text-sm text-gray-400 mb-2">現場名</label>
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-sm text-gray-400">現場名</label>
+          <!-- 復元された前の現場を捨てて新規で始める導線（状態はsessionStorageに残るため明示リセットが必要） -->
+          <button
+            v-if="planDone || projectName"
+            @click="startNewSite"
+            class="text-xs text-gray-500 hover:text-gold underline"
+          >↺ 新しい現場を開始</button>
+        </div>
         <input
           v-model="projectName"
           type="text"
@@ -184,7 +192,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 
@@ -211,9 +219,74 @@ const doorSummary = ref(null)   // STEP3完了で {doors_total, added}
 const planDone = computed(() => planSummary.value !== null)
 const canAnalyzePlan = computed(() => !!selectedFile.value && !!projectName.value.trim())
 
-onMounted(() => {
-  store.reset()
+// --- Homeウィザード状態の同一タブ内復元（2026-07-20）---
+// 結果画面から戻るとSTEP状態が消え、タイル部分失敗の警告が案内する
+// 「展開図の再アップロードで再読取」の導線が使えなかった対策。
+// 保存: 入力値・サマリーが変わるたびにsessionStorageへ / 復元: マウント時。
+// 他タブ・翌日は新規開始でよい（sessionStorage）。selectedFile（Fileオブジェクト）は
+// 復元できないが、planDone後は不要なので対象外
+let suppressPersist = false // 復元中の中間状態で上書き保存しないためのガード
+const persistHomeState = () => {
+  if (suppressPersist) return
+  store.saveHomeState({
+    projectId: store.currentProject?.id ?? null,
+    projectName: projectName.value,
+    totalAreaSqm: totalAreaSqm.value,
+    planSummary: planSummary.value,
+    elevSummary: elevSummary.value,
+    doorSummary: doorSummary.value,
+  })
+}
+watch([projectName, totalAreaSqm, planSummary, elevSummary, doorSummary], persistHomeState)
+
+onMounted(async () => {
+  const saved = store.loadHomeState()
+  if (!saved) {
+    // 復元対象なし → 従来どおり新規開始（履歴閲覧などのstore残骸をクリア）
+    store.reset()
+    return
+  }
+  suppressPersist = true
+  try {
+    // 入力値は解析前でも復元する（専有面積の入れ忘れ対策: 値があれば戻す）
+    projectName.value = saved.projectName || ''
+    totalAreaSqm.value = saved.totalAreaSqm ?? null
+    if (saved.projectId != null) {
+      // SPA内の戻りならstoreが生きている。リロード後はAPIから再取得して復元
+      const alive = store.currentProject?.id === saved.projectId
+        || await store.restoreProjectById(saved.projectId)
+      if (alive && store.currentProject?.id === saved.projectId) {
+        planSummary.value = saved.planSummary || null
+        elevSummary.value = saved.elevSummary || null
+        doorSummary.value = saved.doorSummary || null
+      } else {
+        // プロジェクトが消えていた（ゲスト24h自動削除等）→ 入力値だけ残して新規扱い
+        store.reset()
+      }
+    } else {
+      // 保存状態にプロジェクトが無い（入力途中のみ）のにstoreに残骸がある場合
+      // （履歴閲覧の直後など）はクリアする。残骸idがpersist時にhome stateへ
+      // 紐付いてしまうのを防ぐ（入力値の復元はそのまま生かす）
+      store.reset()
+    }
+  } finally {
+    suppressPersist = false
+    persistHomeState() // reset経路で消えた保存分を現在の状態（入力値のみ等）で保存し直す
+  }
 })
+
+// 「新しい現場を開始」: 復元された状態とsessionStorageを明示的に捨てる
+const startNewSite = () => {
+  if (planDone.value && !window.confirm('入力中の現場をクリアして、新しい現場を開始しますか？\n（過去の見積もりはログイン時の履歴から再表示できます）')) return
+  store.reset() // Home状態(sessionStorage)も一緒に破棄される
+  selectedFile.value = null
+  projectName.value = ''
+  totalAreaSqm.value = null
+  planSummary.value = null
+  elevSummary.value = null
+  doorSummary.value = null
+  uiError.value = null
+}
 
 const triggerFileInput = () => {
   if (!planLoading.value) fileInput.value.click()
