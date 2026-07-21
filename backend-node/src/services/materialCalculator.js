@@ -83,6 +83,9 @@
 import {
   TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, ceilingFrameLengthM, dobuchiLengthM,
 } from './timberVolume.js';
+// 窓判定は buildupCalculator.js の isWindow に一本化（2026-07-21共通化）。
+// 従来ここに別実装 isOpeningWindow があり type.includes('aw') で誤爆＋判定基準がbuildup側とズレていた。
+import { isWindow as isOpeningWindow } from './buildupCalculator.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 【計算用定数】
@@ -686,14 +689,15 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   let windowCount = 0;
   let totalOpeningWidth = 0;
 
+  // 窓判定は buildupCalculator.js の isWindow を import（isOpeningWindow 別名）して共有。
+  // 二重実装・判定不一致（type.includes('aw')の誤爆）を解消。
+
   // 建具の型番はプロンプト改定で語彙が変わりうるため、
   // 「窓」でないもの＝建具（ドア類）として扱う（片開き戸/片引き戸/引違い戸/折戸すべてを拾う）
   openings.forEach(opening => {
-    const type = opening.type || '';
-    const isWindow = type === 'window' || type.includes('窓') || type.includes('サッシ') || type.includes('AW');
-    if (isWindow) {
+    if (isOpeningWindow(opening)) {
       windowCount++;
-    } else if (type) {
+    } else if (opening.type || opening.symbol) {
       doorCount++;
       totalOpeningWidth += (opening.width_mm || 800) / 1000;
     }

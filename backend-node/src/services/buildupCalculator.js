@@ -274,7 +274,12 @@ export function resolveOpening(opening, doorLookup, roomName = null) {
   return resolved;
 }
 
-function isWindow(opening) {
+// 開口が窓かどうかの単一の真実（buildup/materialCalculator 両方から使う・2026-07-21共通化）。
+// 旧: materialCalculator側に別実装 isOpeningWindow があり type.includes('aw')（小文字部分一致）で
+//     「aw を含む語」を窓と誤爆しうる+判定基準が食い違っていた。ここへ一本化し export で共有する。
+// 判定: type が window/窓/サッシ/AW（大文字・語として保持したまま照合。'aw'部分一致の誤爆を避ける）、
+//   または符号 AW/AWD-数字 / W-数字（WD-=木製建具は非該当。「Wの直後がハイフン＋数字」形のみ）
+export function isWindow(opening) {
   const t = String(opening.type || '');
   if (t === 'window' || t.includes('窓') || t.includes('サッシ') || t.includes('AW')) return true;
   // 建具符号でも窓を判定（tieRankの割付判断が依存するため頑健化・2026-07-18）:

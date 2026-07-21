@@ -993,6 +993,38 @@ export function buildWallCodeReadPlan(provider = aiProvider()) {
  *          （呼び出し元で _wall_codes_partial の保存と再読取判定に使う。
  *          多数決時の統計は「タイルとして全run失敗したか」ベース=mergeWallCodeRunStats参照）
  */
+/**
+ * 二人読み run 計画を直列実行して読めたrun配列を集める（純ロジック・test-wallcode-vote.mjs）
+ *
+ * readOneRun({provider, k}) は1回のタイル読取結果 tiled（analyzeTilesの返り値）または null（タイル分割不可）を返す。
+ * ガード（2026-07-21）:
+ * - Fix4: あるrunが「全タイル失敗」（totalTiles>0 かつ failedTiles>=totalTiles＝そのプロバイダのAPI全滅=529等）なら、
+ *   同プロバイダの残りcountはスキップ。無駄なopus呼び出し（第2スイープ・529リトライ）と課金・待機を避ける。
+ *   他プロバイダ/他runで既に読めた票は保持。過剰に賢くせず「全滅runが出たらそのプロバイダは以降スキップ」の単純ガード
+ *   （間欠失敗で1タイルだけ落ちた程度＝全滅ではないので継続）。
+ * - Fix7: readOneRunがnull（makeTiles失敗）を返したら内側だけでなく外側プロバイダループも抜ける
+ *   （次プロバイダで再度読取を試みる穴を塞ぐ。既に読めたrunがあればそれで多数決続行）。
+ * @returns { runs: [tiled...], tilesUnavailable: boolean }
+ */
+export async function runWallCodePlan(plan, readOneRun) {
+  const runs = [];
+  let tilesUnavailable = false;
+  for (const { provider, count } of plan) {
+    if (tilesUnavailable) break; // Fix7
+    for (let k = 0; k < count; k++) {
+      const tiled = await readOneRun({ provider, k });
+      if (!tiled) {
+        tilesUnavailable = true; // Fix7: 内側breakだけでは次プロバイダで再実行される穴を塞ぐ
+        break;
+      }
+      runs.push(tiled);
+      const wipedOut = tiled.totalTiles > 0 && tiled.failedTiles >= tiled.totalTiles;
+      if (wipedOut) break; // Fix4: このプロバイダは全滅 → 残りcountをスキップ
+    }
+  }
+  return { runs, tilesUnavailable };
+}
+
 export async function analyzeWallCodesTiled(filePath, context = {}) {
   const prompt = PLAN_CODE_TILE_PROMPT + roomContextNote(context.roomNames);
   // 二人読みの run 計画（[{provider, count}]）。dualなら Gemini×Gn + Claude×Cn
@@ -1005,19 +1037,11 @@ export async function analyzeWallCodesTiled(filePath, context = {}) {
     }
     return tilesPromise;
   };
-  const runs = [];
-  // プロバイダごとに count 回、直列で読む（Gemini→…→Claude→…）。RPMバースト回避で直列維持
-  for (const { provider, count } of plan) {
-    for (let k = 0; k < count; k++) {
-      const tiled = await analyzeTiles(filePath, prompt, 'codes',
-        { loadTiles: loadTilesOnce, provider });
-      if (!tiled) {
-        if (runs.length === 0) return null; // タイル分割不可（PDF等）
-        break; // 保険（タイルはキャッシュ済みでほぼ到達しない）: 読めたrunだけで多数決続行
-      }
-      runs.push(tiled);
-    }
-  }
+  // プロバイダごとに count 回、直列で読む（Gemini→…→Claude→…）。RPMバースト回避で直列維持。
+  // 実行ループは runWallCodePlan に切り出し（Fix4/Fix7 のガードを注入readerでユニットテスト可能にする）。
+  const { runs, tilesUnavailable } = await runWallCodePlan(plan, ({ provider }) =>
+    analyzeTiles(filePath, prompt, 'codes', { loadTiles: loadTilesOnce, provider }));
+  if (runs.length === 0 && tilesUnavailable) return null; // タイル分割不可（PDF等）: 1runも読めず
   if (runs.length === 1) {
     // 計画が単一AI×1回（片AI指定で count=1 等）: 従来動作（集約をそのまま返す・多数決層を通らない）
     const tiled = runs[0];
@@ -1068,9 +1092,15 @@ export function mergeWallCodeRunStats(runs) {
   };
 }
 
-// 多数決の寸法クラスタ許容差。run間の同一壁の読み取り揺れ（±100mm）を1クラスタに束ねる
-// （aggregateWallCodeItemsのタイル重複統合TILE_DUP_TOL_MMと同じ根拠・実例: G24@950と@965）
-const VOTE_CLUSTER_TOL_MM = 100;
+// ── 壁記号クラスタリングの共通定数（2026-07-21集約）────────────────────────
+// 同一壁の読み取り揺れとみなす寸法差（実例: トイレG24@950と@965・±100mm）。
+// aggregateWallCodeItemsのタイル重複統合と voteWallCodeRuns のrun間クラスタで同じ根拠のため一本化。
+// （旧: VOTE_CLUSTER_TOL_MM と TILE_DUP_TOL_MM に同値100mmで分裂していた）
+const TILE_DUP_TOL_MM = 100;
+// run間クラスタ許容差は同根拠のため TILE_DUP_TOL_MM を参照する（別名を残し呼び出し側の意味を保つ）
+const VOTE_CLUSTER_TOL_MM = TILE_DUP_TOL_MM;
+// 同記号・同寸クラスタの実在上限（矩形部屋の対面2枚を想定。多数決の件数上限にも使う）
+const MAX_SAME_WALL = 2;
 
 /**
  * 壁記号タイルの複数run読み取りを多数決で1つの結果に集約する（純関数・test-wallcode-vote.mjs）
@@ -1084,10 +1114,14 @@ const VOTE_CLUSTER_TOL_MM = 100;
  *   二重転記縮退）に通し、その出力を 部屋×記号×寸法クラスタ(±100mm) 単位で投票する
  * - 分母（有効run数）はクラスタの元タイルが「そのrunで読めたか」で数える:
  *   タイル全滅runは見えなかっただけなので反対票にしない（3回中1回タイル失敗 → 残り2回で続行）。
- *   採用しきい値 = ceil(有効run数/2)。3runなら2票（1/3の幻覚は落選）、
- *   有効2runなら1票（2/2一致=採用・1/2は過半数不成立だが「読めた事実を尊重」で採用側に倒す）
- * - 対面2枚の件数も多数決: run別の出現件数の最頻値（例: run1=2件,run2=2件,run3=1件 → 2件採用。
- *   同数タイは先のrunの件数=先勝ち）
+ * - 採用しきい値は寸法有無で非対称（2026-07-21 Fix3。面割付する寸法付きは厳格・記号の存在=codesは緩い）:
+ *   ・寸法付き（面割付に使う=壁PB過大に直結）: 厳格な過半数 floor(有効/2)+1。
+ *     有効run数が偶数のとき votes==有効/2 のタイ（1/2）は採用しない。有効2runなら2票（両run一致のみ）。
+ *     片run幻覚の寸法付き記号が面割付されて壁PBを過大にするのを防ぐ。
+ *   ・codesのみ（寸法null・面割付しない）: 「読めた事実を尊重」で緩め ceil(有効/2)。有効2runなら1票。
+ * - 対面2枚の件数も多数決: run別の出現件数の最頻値。母集団は「有効run全体」＝そのrunで0件でも0を数える
+ *   （2026-07-21 Fix2。例: run1=2件,run2=0件,run3=0件 → mode=0で不採用。旧はrun1の2件だけを見て
+ *   実質1/3の二重出力を対面2枚に化けさせていた）。同数タイは先のrunの件数=先勝ち
  * - 寸法はクラスタ内の最頻値（同数タイは先勝ち）
  * - codesのみ（寸法null）: しきい値以上のrunでその部屋にその記号が出現（寸法有無問わず）すれば
  *   codesに残す（寸法付きが採用された記号のnullは従来ルールどおり破棄）。
@@ -1120,15 +1154,23 @@ export function voteWallCodeRuns(runs) {
     for (const [v, c] of counts) if (c > bestN) { best = v; bestN = c; }
     return best;
   };
-  // クラスタの元タイルが読めたrun数（=投票の分母）としきい値
-  const requiredVotes = (tiles) => {
-    let eligible = 0;
+  // クラスタの元タイルが「そのrunで読めたか」= 投票の分母になる有効run集合。
+  // tiles空（_tileを持たない旧経路等）は全runを有効とみなす（分母縮小しない安全側）。
+  const eligibleRuns = (tiles) => {
+    const set = new Set();
     for (let k = 0; k < n; k++) {
       const ok = tiles.size === 0 || [...tiles].some((t) => !failedSets[k].has(t));
-      if (ok) eligible++;
+      if (ok) set.add(k);
     }
-    return Math.max(1, Math.ceil(eligible / 2));
+    return set;
   };
+  // codesのみ（寸法null・面割付しない）の残留しきい値: 「読めた事実を尊重」で緩め=ceil(有効/2)。
+  // 有効2runなら1票（1/2でも記号の存在記録は残す）。
+  const requiredVotesLoose = (tiles) => Math.max(1, Math.ceil(eligibleRuns(tiles).size / 2));
+  // 寸法付きクラスタ（面割付に使う=壁PB過大に直結）の採用しきい値: 厳格な過半数（floor/2+1）。
+  // 有効run数が偶数のとき votes==eligible/2 のタイ（1/2）は採用しない（片run幻覚の面割付を防ぐ・
+  // 2026-07-21 Fix3）。有効2runなら2票（両run一致のみ採用）、3runなら2票、4runなら3票。
+  const requiredVotesStrict = (tiles) => Math.max(1, Math.floor(eligibleRuns(tiles).size / 2) + 1);
 
   // 部屋をnormalizeRoomNameで束ねる（run間の「洋室(1)/洋室（１）」ゆれ対策）
   const roomsMap = new Map(); // key -> { names: Map(生表記->件数), byRun: Array(n)<placements|null> }
@@ -1172,21 +1214,28 @@ export function voteWallCodeRuns(runs) {
     const dimAdopted = new Set(); // 寸法付きで採用された記号
     for (const cl of clusters) {
       const tiles = new Set(cl.members.map((m) => m.tile).filter((t) => t != null));
+      const eligible = eligibleRuns(tiles);
       const votes = new Set(cl.members.map((m) => m.run)).size;
-      if (votes < requiredVotes(tiles)) continue; // 過半数未満=幻覚・回間ノイズとして落選
-      // 件数の多数決（run順で数え、最頻値・タイは先勝ち）。上限は従来どおり対面2枚
+      // 寸法付き=面割付に使う（過大リスク直結）→ 厳格な過半数を要求（1/2タイは不採用・Fix3）
+      if (votes < requiredVotesStrict(tiles)) continue;
+      // 件数の多数決（最頻値・タイは先勝ち）。分母は「有効run全体」＝0件のrunも数える（Fix2）。
+      // 旧: cl.membersだけを数えたため run1=2件/run2=0件/run3=0件 で mode=2 になり、
+      // 実質1/3の二重出力が対面2枚に化けて壁PB過大に振れていた。0件runを母集団へ入れて是正。
       const perRunCount = new Map();
-      for (const m of cl.members) perRunCount.set(m.run, (perRunCount.get(m.run) || 0) + 1);
+      for (const k of eligible) perRunCount.set(k, 0); // 有効runは既定0件
+      for (const m of cl.members) if (perRunCount.has(m.run)) perRunCount.set(m.run, perRunCount.get(m.run) + 1);
       const orderedCounts = [...perRunCount.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c);
       const count = Math.min(MAX_SAME_WALL, modeOf(orderedCounts));
+      if (count < 1) continue; // 件数の最頻値が0（大半のrunで未出現）→ 採用しない
       const len = modeOf(cl.members.map((m) => m.len)); // 寸法の最頻値（タイは先勝ち）
       for (let i = 0; i < count; i++) placements.push({ code: cl.code, wall_length_mm: len });
       dimAdopted.add(cl.code);
     }
-    // codesのみの残留判定（寸法クラスタが採用に至らなかった記号）
+    // codesのみの残留判定（寸法クラスタが採用に至らなかった記号）。
+    // 面割付しない記号の存在記録なので「読めた事実を尊重」で緩め（ceil/2・Fix3で寸法付きと非対称化）
     for (const [code, pres] of codePresence) {
       if (dimAdopted.has(code)) continue;
-      if (pres.runs.size < requiredVotes(pres.tiles)) continue;
+      if (pres.runs.size < requiredVotesLoose(pres.tiles)) continue;
       placements.push({ code, wall_length_mm: null });
     }
     if (placements.length === 0) continue; // 全記号落選 → 部屋ごと出力しない（幻覚部屋の除去）
@@ -1195,11 +1244,6 @@ export function voteWallCodeRuns(runs) {
   }
   return results;
 }
-
-// 同一壁の読み取り揺れとみなす寸法差（実例: トイレG24@950と@965）
-const TILE_DUP_TOL_MM = 100;
-// 同記号・同寸クラスタの実在上限（矩形部屋の対面2枚を想定。多数決の件数上限にも使う）
-const MAX_SAME_WALL = 2;
 
 /**
  * タイル読取の壁記号アイテムを部屋ごとに集約する（純関数・test-buildup-placement.mjsで検証）
