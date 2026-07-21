@@ -117,7 +117,7 @@
 
       <div v-if="elevLoading" class="flex items-center gap-3 py-2">
         <div class="spinner"></div>
-        <p class="text-gold text-sm">展開図を解析中（分割拡大読み取りを含む・1〜2分）...</p>
+        <p class="text-gold text-sm">展開図を解析中（壁記号を複数回読み精度を高めています・数分〜最大10分ほど）...</p>
       </div>
       <template v-else>
         <label v-if="planDone" class="border border-dashed border-dark-400 hover:border-gold rounded-lg block cursor-pointer text-center py-4">
