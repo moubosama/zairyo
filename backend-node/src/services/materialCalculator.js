@@ -696,8 +696,15 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // 「窓」でないもの＝建具（ドア類）として扱う（片開き戸/片引き戸/引違い戸/折戸すべてを拾う）
   openings.forEach(opening => {
     if (isOpeningWindow(opening)) {
+      // 窓（type=窓/サッシ/AW、または符号 AW/AWD/W-数字）は isOpeningWindow が符号でも判定する
       windowCount++;
-    } else if (opening.type || opening.symbol) {
+    } else if (opening.type) {
+      // ドア扱いは type のある開口のみ（2026-07-22 Fix5）。
+      // symbolだけの開口を安易にドア化しない: 現状 top-level openings スキーマに symbol は無く発火しないが、
+      // 将来プロンプト改定で建具符号が top-level に転記されると、type空でsymbolだけの行を幅800mm既定で
+      // ドアカウント＋巾木控除に加算してしまい二重/誤カウントになる余地があった（旧 `opening.type || opening.symbol`）。
+      // 窓符号は上の isOpeningWindow で拾い済みなので、ここを type 限定に戻しても窓は取りこぼさない。
+      // symbol でドア化したくなった場合は、既知の建具符号パターン（WD/SD 等・isWindow の逆）に限定すること。
       doorCount++;
       totalOpeningWidth += (opening.width_mm || 800) / 1000;
     }

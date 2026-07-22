@@ -156,21 +156,38 @@ test('件数タイ（2件・1件の2run出現）は先勝ち=先のrunの件数'
   assert.deepEqual(plStr(roomOf(res, '洋室(2)')), ['C04@2360', 'C04@2360']);
 });
 
-test('Fix2: 件数の分母は有効run全体（0件runも数える）→ run1=2件/run2=0件/run3=0件は1件採用', () => {
-  // 2026-07-21 Fix2で挙動変更: 旧はcl.membersだけを数えたため run1の2件しか見えず mode=2
+test('Fix2: 全runでC04が読めているが件数だけブレる[2,1,1] → run0の二重出力に引きずられず1件採用', () => {
+  // 2026-07-21 Fix2で挙動変更: 旧はcl.membersだけを数えたため run0の2件しか見えず mode=2
   // （実質1/3の二重出力が対面2枚に化けて壁PB過大）。有効run{0,1,2}全体で数えると
-  // orderedCounts=[2,0,0] → mode=0 が最頻。だが最頻0では採用ゼロになるので、次点の…ではなく
-  // 「0件run＝その壁を1本と読んだrunがある(votes=1)が過半数に届かない」ケース。
-  // ここでは C04が3runとも読めているが件数だけがブレる状況を作り、二重出力が2枚に化けないことを確認。
+  // 件数[2,1,1]→mode=1（1が最頻）。votes=3で寸法付き厳格しきい値2を満たし採用。
+  // run0の二重出力(2件)に引きずられず1件に落ち着くことの検証（3runとも記号は読めている）。
   const res = voteWallCodeRuns([
     run(it('洋室(2)', 'C04', 2360, 2), it('洋室(2)', 'C04', 2360, 2)), // run0: 2件（二重出力疑い）
     run(it('洋室(2)', 'C04', 2360, 2)),                                 // run1: 1件
     run(it('洋室(2)', 'C04', 2360, 2)),                                 // run2: 1件
   ]);
-  // 有効run{0,1,2}・件数[2,1,1]→mode=1（1が最頻）。votes=3で寸法付き厳格しきい値2を満たし採用。
-  // run0の二重出力(2件)に引きずられず1件に落ち着く
   assert.deepEqual(plStr(roomOf(res, '洋室(2)')), ['C04@2360'],
     '少数runの二重出力が対面2枚に化けない');
+});
+
+test('Fix2（真の0件run）: run0だけC04を対面2枚として二重出力・run1/run2はそのタイルを読めたが記号0件 → C04落選', () => {
+  // 上のテストは[2,1,1]で「全runが記号を読めている」ケースだった。ここが本来Fix2が守るべき回帰:
+  // run0がC04を2件（対面2枚として二重出力）、run1/run2は同じタイルは読めた（failedTiles=[]）が
+  // C04記号は0件、という入力。ロジックからの期待値の導出:
+  //  - 3runとも failedTiles=[] → クラスタのタイル{5}を全runが読めた → eligibleRuns.size=3
+  //  - C04クラスタ members は run0 のみ2件 → votes = distinct runs = {0} = 1
+  //  - 寸法付き厳格しきい値 requiredVotesStrict(3)=floor(3/2)+1=2 → votes=1<2 で寸法クラスタ不採用
+  //    （件数の多数決 orderedCounts=[2,0,0]→mode=0 の前段の votes ゲートで既に落ちる）
+  //  - codesのみ: pres.runs={0}size1、requiredVotesLoose(eligible=3)=ceil(3/2)=2 → 1<2 で落選
+  //  - placements空 → 部屋ごと出力されない（票が足りず落選）
+  // ＝run0の二重出力(2件)が「対面2枚」に化けて壁PBを過大にする事故が起きないことを明示ガード。
+  const res = voteWallCodeRuns([
+    run(it('洋室(3)', 'C04', 2360, 5), it('洋室(3)', 'C04', 2360, 5)), // run0: C04を2件（二重出力）
+    run(),                                                             // run1: タイル5は読めたが記号0件
+    run(),                                                             // run2: タイル5は読めたが記号0件
+  ]);
+  assert.equal(roomOf(res, '洋室(3)'), undefined,
+    '1runの二重出力(2件)は対面2枚に化けず、票不足で部屋ごと落選する');
 });
 
 // ---------------------------------------------------------------------------
@@ -482,18 +499,54 @@ console.log('■ runWallCodePlan: 全滅プロバイダのスキップ・null時
 const okRun = (label) => ({ results: [], failedTiles: 0, totalTiles: 6, _label: label });
 const wipedRun = (label) => ({ results: [], failedTiles: 6, totalTiles: 6, _label: label }); // 全タイル失敗
 
-await asyncTest('Fix4: あるプロバイダのrunが全滅したら同プロバイダの残りcountをスキップ・他プロバイダは実行', async () => {
+await asyncTest('Fix4（2026-07-22改）: Claude全滅は同プロバイダの残りcountをスキップ・他プロバイダは実行', async () => {
+  // 全滅スキップは高価なopus固有の話（第2スイープ・529リトライの無駄な課金/待機回避）。
+  // Claudeが1発目で全滅 → 残りClaudeはスキップ。Geminiは全run実行。
   const calls = [];
   const plan = [{ provider: 'gemini', count: 3 }, { provider: 'claude', count: 3 }];
   const { runs } = await runWallCodePlan(plan, ({ provider, k }) => {
     calls.push(`${provider}${k}`);
-    // Geminiは1発目で全滅（529想定）→ 残り2runはスキップされるべき。Claudeは正常
-    if (provider === 'gemini') return Promise.resolve(wipedRun(`${provider}${k}`));
+    if (provider === 'claude') return Promise.resolve(wipedRun(`${provider}${k}`));
     return Promise.resolve(okRun(`${provider}${k}`));
   });
-  assert.deepEqual(calls, ['gemini0', 'claude0', 'claude1', 'claude2'],
-    'Gemini全滅で残りGeminiをスキップ・Claudeは3run全実行');
-  assert.equal(runs.length, 4, '全滅run1 + Claude3 = 4run（票は保持）');
+  assert.deepEqual(calls, ['gemini0', 'gemini1', 'gemini2', 'claude0'],
+    'Gemini3run全実行・Claude全滅で残りClaudeをスキップ');
+  assert.equal(runs.length, 4, 'Gemini3 + 全滅run1 = 4run（票は保持）');
+});
+
+await asyncTest('Fix4（2026-07-22改）: Gemini全滅は残runをスキップしない（安いGeminiは回復機会を捨てない）', async () => {
+  // 旧版は provider問わず全滅スキップし、Gemini単独運用でrun1の一時障害により壁記号が空になる回帰があった。
+  // 新仕様: Gemini全滅でも gemini1/gemini2 を試みる（1回≈10円・回復機会を得た方が得）。
+  const calls = [];
+  // 実運用の Gemini単独プラン（AI_PROVIDER=gemini / WALL_CODE_READS_GEMINI=3）を模す
+  const plan = [{ provider: 'gemini', count: 3 }];
+  let attempt = 0;
+  const { runs } = await runWallCodePlan(plan, ({ provider, k }) => {
+    calls.push(`${provider}${k}`);
+    attempt++;
+    // 1発目だけ一時的Gemini障害で全滅・2発目以降は回復
+    if (attempt === 1) return Promise.resolve(wipedRun(`${provider}${k}`));
+    return Promise.resolve(okRun(`${provider}${k}`));
+  });
+  assert.deepEqual(calls, ['gemini0', 'gemini1', 'gemini2'],
+    'Gemini全滅でも残りGeminirunを試みる（スキップしない）');
+  assert.equal(runs.length, 3, '全滅run1 + 回復run2 = 3run（回復票を捨てない）');
+});
+
+await asyncTest('Fix4（2026-07-22改）: dualでGemini全滅→残Gemini継続→さらにClaudeも実行', async () => {
+  // dual運用でGeminiが全滅しても残Geminiを試み、そのあとClaudeへ進む（Geminiで全滅スキップしない確認）。
+  const calls = [];
+  const plan = [{ provider: 'gemini', count: 3 }, { provider: 'claude', count: 2 }];
+  let attempt = 0;
+  const { runs } = await runWallCodePlan(plan, ({ provider, k }) => {
+    calls.push(`${provider}${k}`);
+    attempt++;
+    if (provider === 'gemini' && attempt === 1) return Promise.resolve(wipedRun(`${provider}${k}`));
+    return Promise.resolve(okRun(`${provider}${k}`));
+  });
+  assert.deepEqual(calls, ['gemini0', 'gemini1', 'gemini2', 'claude0', 'claude1'],
+    'Gemini全滅でも残Gemini継続・その後Claudeも実行');
+  assert.equal(runs.length, 5);
 });
 
 await asyncTest('Fix4: 全滅でない部分失敗（1タイルだけ失敗）は継続する', async () => {

@@ -998,10 +998,13 @@ export function buildWallCodeReadPlan(provider = aiProvider()) {
  *
  * readOneRun({provider, k}) は1回のタイル読取結果 tiled（analyzeTilesの返り値）または null（タイル分割不可）を返す。
  * ガード（2026-07-21）:
- * - Fix4: あるrunが「全タイル失敗」（totalTiles>0 かつ failedTiles>=totalTiles＝そのプロバイダのAPI全滅=529等）なら、
- *   同プロバイダの残りcountはスキップ。無駄なopus呼び出し（第2スイープ・529リトライ）と課金・待機を避ける。
- *   他プロバイダ/他runで既に読めた票は保持。過剰に賢くせず「全滅runが出たらそのプロバイダは以降スキップ」の単純ガード
- *   （間欠失敗で1タイルだけ落ちた程度＝全滅ではないので継続）。
+ * - Fix4: あるrunが「全タイル失敗」（totalTiles>0 かつ failedTiles>=totalTiles＝そのプロバイダのAPI全滅=529等）で、
+ *   かつ provider==='claude' のときだけ、同プロバイダの残りcountをスキップする。無駄なopus呼び出し
+ *   （第2スイープ・529リトライ）と課金・待機を避けるのが動機＝高価なClaude固有の話。
+ *   Gemini（安い・1回≈10円）は全滅しても残runを試みる方が回復機会を得て得なのでスキップしない
+ *   （2026-07-22改。旧版は provider問わずスキップし、Gemini単独運用でrun1の一時障害により
+ *   壁記号が空になる回帰があった）。他プロバイダ/他runで既に読めた票は保持。
+ *   間欠失敗で1タイルだけ落ちた程度＝全滅ではないので（provider問わず）継続。
  * - Fix7: readOneRunがnull（makeTiles失敗）を返したら内側だけでなく外側プロバイダループも抜ける
  *   （次プロバイダで再度読取を試みる穴を塞ぐ。既に読めたrunがあればそれで多数決続行）。
  * @returns { runs: [tiled...], tilesUnavailable: boolean }
@@ -1019,7 +1022,12 @@ export async function runWallCodePlan(plan, readOneRun) {
       }
       runs.push(tiled);
       const wipedOut = tiled.totalTiles > 0 && tiled.failedTiles >= tiled.totalTiles;
-      if (wipedOut) break; // Fix4: このプロバイダは全滅 → 残りcountをスキップ
+      // Fix4（2026-07-22改）: 全滅スキップは provider==='claude' のときだけ発動する。
+      // 動機は「無駄なopus課金・529リトライの待機を避ける」＝高価なClaude固有の話。
+      // Gemini単独運用（WALL_CODE_READS_GEMINI=3等）では、run1の一時的Gemini障害で全滅しても
+      // 安いGeminiは残runを試みた方が回復機会を得られて得（1回≈10円）。旧版は provider問わず
+      // スキップしており、Gemini全滅で壁記号が空になる回帰があった。
+      if (wipedOut && provider === 'claude') break;
     }
   }
   return { runs, tilesUnavailable };
@@ -1164,13 +1172,17 @@ export function voteWallCodeRuns(runs) {
     }
     return set;
   };
+  // しきい値は有効run数（eligibleRuns(...).size）を引数に取る（2026-07-22 Fix3効率化:
+  // 呼び出し側で eligibleRuns を1回だけ計算して .size を渡す。旧版は関数内で tiles から
+  // eligibleRuns を再計算しており、同一クラスタで最大3回=Strict/Loose/呼び出し側 重複していた。
+  // 値は完全に同一・重複計算だけ消す）。
   // codesのみ（寸法null・面割付しない）の残留しきい値: 「読めた事実を尊重」で緩め=ceil(有効/2)。
   // 有効2runなら1票（1/2でも記号の存在記録は残す）。
-  const requiredVotesLoose = (tiles) => Math.max(1, Math.ceil(eligibleRuns(tiles).size / 2));
+  const requiredVotesLoose = (eligibleSize) => Math.max(1, Math.ceil(eligibleSize / 2));
   // 寸法付きクラスタ（面割付に使う=壁PB過大に直結）の採用しきい値: 厳格な過半数（floor/2+1）。
   // 有効run数が偶数のとき votes==eligible/2 のタイ（1/2）は採用しない（片run幻覚の面割付を防ぐ・
   // 2026-07-21 Fix3）。有効2runなら2票（両run一致のみ採用）、3runなら2票、4runなら3票。
-  const requiredVotesStrict = (tiles) => Math.max(1, Math.floor(eligibleRuns(tiles).size / 2) + 1);
+  const requiredVotesStrict = (eligibleSize) => Math.max(1, Math.floor(eligibleSize / 2) + 1);
 
   // 部屋をnormalizeRoomNameで束ねる（run間の「洋室(1)/洋室（１）」ゆれ対策）
   const roomsMap = new Map(); // key -> { names: Map(生表記->件数), byRun: Array(n)<placements|null> }
@@ -1217,7 +1229,7 @@ export function voteWallCodeRuns(runs) {
       const eligible = eligibleRuns(tiles);
       const votes = new Set(cl.members.map((m) => m.run)).size;
       // 寸法付き=面割付に使う（過大リスク直結）→ 厳格な過半数を要求（1/2タイは不採用・Fix3）
-      if (votes < requiredVotesStrict(tiles)) continue;
+      if (votes < requiredVotesStrict(eligible.size)) continue;
       // 件数の多数決（最頻値・タイは先勝ち）。分母は「有効run全体」＝0件のrunも数える（Fix2）。
       // 旧: cl.membersだけを数えたため run1=2件/run2=0件/run3=0件 で mode=2 になり、
       // 実質1/3の二重出力が対面2枚に化けて壁PB過大に振れていた。0件runを母集団へ入れて是正。
@@ -1235,7 +1247,8 @@ export function voteWallCodeRuns(runs) {
     // 面割付しない記号の存在記録なので「読めた事実を尊重」で緩め（ceil/2・Fix3で寸法付きと非対称化）
     for (const [code, pres] of codePresence) {
       if (dimAdopted.has(code)) continue;
-      if (pres.runs.size < requiredVotesLoose(pres.tiles)) continue;
+      // eligibleRuns は codesのみ側でも1回だけ計算（Fix3効率化）
+      if (pres.runs.size < requiredVotesLoose(eligibleRuns(pres.tiles).size)) continue;
       placements.push({ code, wall_length_mm: null });
     }
     if (placements.length === 0) continue; // 全記号落選 → 部屋ごと出力しない（幻覚部屋の除去）
