@@ -290,6 +290,88 @@ export function isWindow(opening) {
   return /^W\s*[-‐‑–—―ー−－]\s*[0-9０-９]/.test(String(opening.symbol || '').toUpperCase());
 }
 
+// 部屋名ベースの水回り判定（buildupCalculatorの各所で共有）。定義はモジュール上部（後述）。
+// ※ ここで先出し宣言せず、下部のWET_ROOM_NAME_RE定数を参照する（巻き上げ対象のconst定義は関数の
+//   実行時に評価されるためファイル内どこからでも参照可）。
+
+// 部屋種別ごとに物理的にありえない「大窓」の下限幅(mm)。
+// トイレ・洗面・パウダー等の水回り小部屋に幅2000mm以上の窓は物理的に付かない
+// （XLS建具表AW系の水回り窓は最大でもAW-106=850mm。AWD-102=4120mmはLDKの4枚引違窓）。
+// Gemini読取ノイズで大窓符号（AWD-102等）が小部屋の面へ帰属し、面幅超過ガードで面ごとに
+// 弾かれてはいるが、残骸が別面の判定（第2パス救済・下地控除）に混入しうるため部屋単位で除去する。
+const WET_ROOM_MAX_WINDOW_MM = 2000;
+
+/**
+ * 部屋の開口リストを面横断で健全化する（幻覚・誤配置の除去・2026-07-22）。
+ * 純関数。face.openings（raw）に一切変更を加えず、「控除対象から外す raw 開口の Set」と
+ * 発動統計を返す。呼び出し側は resolved(=resolveOpening後)を面ごとに再計算するが、
+ * ここでは同じ resolveOpening を使って解決寸法・窓判定・符号を得てから判定する。
+ *
+ * 対象とする2つのノイズ（クリーン記録=手動割付記録には発動しないよう保守的に設計）:
+ *   ① 大窓の小部屋誤配置: 窓（isWindow）かつ解決幅 >= WET_ROOM_MAX_WINDOW_MM が水回り部屋に来た場合
+ *      → その開口を部屋から除去（トイレ/パウダーに4120mm窓は物理的にありえない）。
+ *   ② 同一符号ドアの面またぎ重複: 建具符号（窓を除く）が同一部屋の複数面に現れる場合、
+ *      1枚の物理ドアは1面にしか無い → 最も収まりの良い1面だけ残し、他面の同符号ドアを除去する。
+ *      「収まりの良い面」= 開口幅が面幅を超えない面のうち面幅が最大の面（超えない面が無ければ最大面幅）。
+ *      ※ 窓・符号なしの開口は対象外（クリーン記録が窓を複数面に正当に持つ実例=LDK/洋室(3)の窓を守る）。
+ *
+ * @param faces 部屋の faces 配列
+ * @param doorLookup buildDoorLookup() の戻り値
+ * @param roomName 部屋名
+ * @returns { drop: Set<rawOpening>, stats: { wet_window_dropped, cross_face_door_dropped } }
+ */
+export function sanitizeRoomOpenings(faces, doorLookup, roomName) {
+  const drop = new Set();
+  const stats = { wet_window_dropped: 0, cross_face_door_dropped: 0 };
+  const isWet = WET_ROOM_NAME_RE.test(roomName || '');
+
+  // 各面の raw 開口を解決して (raw, resolved, faceWidth, faceRef) の一覧を作る
+  const entries = [];
+  for (const face of Array.isArray(faces) ? faces : []) {
+    const fw = face.width_mm || 0;
+    for (const raw of face.openings || []) {
+      const op = resolveOpening(raw, doorLookup, roomName);
+      entries.push({ raw, op, fw, face, win: isWindow(op), sym: normalizeDoorSymbol(op.symbol) });
+    }
+  }
+
+  // ① 大窓の水回り誤配置
+  if (isWet) {
+    for (const e of entries) {
+      if (e.win && (e.op.width_mm || 0) >= WET_ROOM_MAX_WINDOW_MM) {
+        if (!drop.has(e.raw)) { drop.add(e.raw); stats.wet_window_dropped++; }
+      }
+    }
+  }
+
+  // ② 同一符号ドアの面またぎ重複（窓・符号なしは除外）
+  const bySymbol = new Map(); // 符号 -> [entry]（drop済みは除く）
+  for (const e of entries) {
+    if (drop.has(e.raw)) continue;
+    if (e.win || !e.sym) continue;
+    if (!bySymbol.has(e.sym)) bySymbol.set(e.sym, []);
+    bySymbol.get(e.sym).push(e);
+  }
+  for (const [, group] of bySymbol) {
+    // 同符号が複数の「異なる面」に跨る場合のみ発動（同一面内の重複は既存の dup ガードの担当）。
+    const faceSet = new Set(group.map((e) => e.face));
+    if (faceSet.size <= 1) continue;
+    // 面幅で「収まりの良い」1件を残す: 開口幅<=面幅の面を優先し、その中で面幅最大。
+    // 該当が無ければ面幅最大の面。残り（面をまたいだ同符号ドア）を除去する。
+    const ow = group.reduce((mx, e) => Math.max(mx, e.op.width_mm || 0), 0);
+    let keep = null;
+    const fits = group.filter((e) => e.fw > 0 && ow <= e.fw);
+    const pool = fits.length ? fits : group;
+    for (const e of pool) { if (!keep || e.fw > keep.fw) keep = e; }
+    for (const e of group) {
+      if (e === keep) continue;
+      if (!drop.has(e.raw)) { drop.add(e.raw); stats.cross_face_door_dropped++; }
+    }
+  }
+
+  return { drop, stats };
+}
+
 /**
  * 部屋名の表記ゆれ吸収（平面図と展開図の突合用）
  * 空白（全角含む）除去・長音「ー」除去（クローゼット/クロゼット）・括弧と数字の全角→半角
@@ -419,8 +501,13 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // unresolved=解決後も寸法欠けのままの開口数（符号マッチしたが建具表行に寸法が無い場合も含む）
     opening_match: { symbol: 0, inferred: 0, unresolved: 0 },
     // 開口控除の物理ガード発動数（2026-07-19）: width_over_face=面幅超過で棄却 /
-    // dup_dropped=超過面で落とした完全同一開口 / clamped_faces=比率縮退した面数
-    opening_guard: { width_over_face: 0, dup_dropped: 0, clamped_faces: 0 },
+    // dup_dropped=超過面で落とした完全同一開口 / clamped_faces=比率縮退した面数 /
+    // wet_window_dropped=水回り小部屋に誤配置された大窓の除去 /
+    // cross_face_door_dropped=同一符号ドアが同一部屋の複数面に幻出した重複の除去（2026-07-22）
+    opening_guard: {
+      width_over_face: 0, dup_dropped: 0, clamped_faces: 0,
+      wet_window_dropped: 0, cross_face_door_dropped: 0,
+    },
     rooms: [],
   };
   // ガード発動などの要確認事項（applyElevationTakeoffがresult._warningsへ載せ替える）
@@ -652,6 +739,23 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       if (best >= 0) soundConsumed.add(best);
     }
 
+    // 部屋横断の開口健全化（大窓の水回り誤配置・同一符号ドアの面またぎ重複を除去・2026-07-22）。
+    // 面ごとの控除ループの前に「控除対象から外す raw 開口」を確定させる。
+    // これらは面幅超過ガード（面単位）だけでは残骸が別面の判定に混入しうるため部屋単位で除去する。
+    const { drop: droppedOpenings, stats: sanitizeStats } =
+      sanitizeRoomOpenings(faces, doorLookup, room.name);
+    t.opening_guard.wet_window_dropped += sanitizeStats.wet_window_dropped;
+    t.opening_guard.cross_face_door_dropped += sanitizeStats.cross_face_door_dropped;
+    if (sanitizeStats.wet_window_dropped + sanitizeStats.cross_face_door_dropped > 0) {
+      t._warnings.push({
+        field: 'opening_guard',
+        message: `${room.name}: 開口の幻覚読取を除去しました（大窓の水回り誤配置` +
+          `${sanitizeStats.wet_window_dropped}件・同一符号ドアの複数面重複` +
+          `${sanitizeStats.cross_face_door_dropped}件）。壁数量が過少になる読取ノイズの補正です`,
+        before: null, after: null,
+      });
+    }
+
     for (let faceIdx = 0; faceIdx < faces.length; faceIdx++) {
       const face = faces[faceIdx];
       const w = (face.width_mm || 0) / 1000;
@@ -665,6 +769,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       let openingAreaStud = 0; // 下地用（下地高=CH+370まで見るので面の仕上げ高でキャップしない）
       const resolvedOps = [];
       for (const raw of face.openings || []) {
+        // 部屋横断ガードで幻覚と判定された開口は控除しない（面数量の過少補正）
+        if (droppedOpenings.has(raw)) continue;
         const op = resolveOpening(raw, doorLookup, room.name);
         // マッチ結果の印を元データに付ける（このリクエスト内限りのインメモリ観測点。寸法は書き戻さない。
         // ※ /calculate の書き戻しは警告のみ最新版へマージする方式（サイクルC）のため永続化はされない）

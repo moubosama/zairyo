@@ -17,6 +17,7 @@
  */
 import {
   computeElevationTakeoff, applyElevationTakeoff, collapseDoubledPlacements,
+  sanitizeRoomOpenings, buildDoorLookup,
 } from '../src/services/buildupCalculator.js';
 import { aggregateWallCodeItems } from '../src/services/claudeApi.js';
 
@@ -650,6 +651,93 @@ console.log('--- ガード7: UB内部立面のスキップ ---');
   ]};
   const t = computeElevationTakeoff(elevations, []);
   check('UBを含むだけの部屋名はスキップしない（完全一致のみ）', t.wall_pb_sqm, 2.24);
+}
+
+// ============ 開口の幻覚読取ガード（sanitizeRoomOpenings・2026-07-22） ============
+console.log('--- 開口の幻覚読取ガード: 大窓の水回り誤配置・同一符号ドアの面またぎ重複 ---');
+{
+  // ① 大窓（AWD-102=4120mm窓）が水回り小部屋（パウダー）に誤配置 → 部屋から除去
+  const ds = [{ symbol: 'AWD-102', name: '4枚引違窓', width_mm: 4120, height_mm: 1900 }];
+  const dl = buildDoorLookup(ds);
+  const faces = [
+    { face: 'A', width_mm: 2360, openings: [
+      { symbol: 'SD-101A', type: '玄関ドア', width_mm: 800, height_mm: 2000 },
+      { symbol: 'AWD-102' }, // 幻覚: パウダーに4120mm窓
+    ] },
+  ];
+  const { drop, stats } = sanitizeRoomOpenings(faces, dl, 'パウダールーム');
+  check('パウダーの大窓AWD-102は除去（wet_window_dropped=1）',
+    [stats.wet_window_dropped, drop.has(faces[0].openings[1]), drop.has(faces[0].openings[0])],
+    [1, true, false]);
+}
+{
+  // 水回りでも小窓（AW-109=600mm）は物理的にありえるので除去しない
+  const ds = [{ symbol: 'AW-109', name: '引違窓', width_mm: 600, height_mm: 850 }];
+  const dl = buildDoorLookup(ds);
+  const faces = [{ face: 'A', width_mm: 1400, openings: [{ symbol: 'AW-109' }] }];
+  const { stats } = sanitizeRoomOpenings(faces, dl, 'トイレ');
+  check('水回りの小窓（600mm）は除去しない', stats.wet_window_dropped, 0);
+}
+{
+  // 居室に大窓が来ても水回りガードは発動しない（居室のLDK掃出し窓を守る）
+  const ds = [{ symbol: 'AWD-101', name: '4枚引違窓', width_mm: 4120, height_mm: 2000 }];
+  const dl = buildDoorLookup(ds);
+  const faces = [{ face: 'A', width_mm: 6660, openings: [{ symbol: 'AWD-101' }] }];
+  const { stats } = sanitizeRoomOpenings(faces, dl, 'リビング・ダイニング');
+  check('居室の大窓は除去しない（掃出し窓を守る）', stats.wet_window_dropped, 0);
+}
+{
+  // ② 同一符号ドア（WD-120A）が同一部屋の3面（A/B/C）に幻出 → 1面だけ残し2件除去。
+  //   面幅がドア幅以上の面のうち最大の面（B=4840）を残す
+  const ds = [{ symbol: 'WD-120A', name: '2枚折戸', width_mm: 1800, height_mm: 2000 }];
+  const dl = buildDoorLookup(ds);
+  const oA = { symbol: 'WD-120A' };
+  const oB = { symbol: 'WD-120A' };
+  const oC = { symbol: 'WD-120A' };
+  const faces = [
+    { face: 'A', width_mm: 1385, openings: [oA] },
+    { face: 'B', width_mm: 4840, openings: [oB] },
+    { face: 'C', width_mm: 965, openings: [oC] },
+  ];
+  const { drop, stats } = sanitizeRoomOpenings(faces, dl, '玄関・廊下');
+  check('同一符号ドアの面またぎ重複は最も収まる面(B)だけ残す（2件除去）',
+    [stats.cross_face_door_dropped, drop.has(oA), drop.has(oB), drop.has(oC)],
+    [2, true, false, true]);
+}
+{
+  // 同一符号でも1面だけなら除去しない（正当な単一ドア）
+  const ds = [{ symbol: 'WD-2TA', name: '片開き戸', width_mm: 800, height_mm: 2175 }];
+  const dl = buildDoorLookup(ds);
+  const faces = [{ face: 'B', width_mm: 3990, openings: [{ symbol: 'WD-2TA' }] }];
+  const { stats } = sanitizeRoomOpenings(faces, dl, '洋室(1)');
+  check('同一符号でも1面だけなら除去しない', stats.cross_face_door_dropped, 0);
+}
+{
+  // 窓は面またぎ重複ガードの対象外（クリーン記録がLDK/洋室で窓を複数面に正当保持する実例を守る）
+  const dl = buildDoorLookup([]);
+  const faces = [
+    { face: 'C', width_mm: 3540, openings: [{ type: '窓', width_mm: 1400, height_mm: 1100 }] },
+    { face: 'D', width_mm: 6660, openings: [{ type: '窓', width_mm: 1600, height_mm: 1100 }] },
+  ];
+  const { stats } = sanitizeRoomOpenings(faces, dl, 'リビング・ダイニング');
+  check('符号なしの窓の複数面はドア重複ガードで除去しない',
+    [stats.cross_face_door_dropped, stats.wet_window_dropped], [0, 0]);
+}
+{
+  // 面またぎ除去で壁PBが回復する統合ケース（面Aの過剰控除が消える）
+  const ds = [{ symbol: 'WD-120A', name: '2枚折戸', width_mm: 1800, height_mm: 2000 }];
+  const elevations = { rooms: [
+    { name: '玄関・廊下', ceiling_height_mm: 2200, faces: [
+      { face: 'A', width_mm: 1385, wall_code: 'G14', openings: [{ symbol: 'WD-120A' }] },
+      { face: 'B', width_mm: 4840, wall_code: 'G14', openings: [{ symbol: 'WD-120A' }] },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, ds);
+  // 面高=CH2200+40mm=2.24m。A面(1.385×2.24=3.102)は幻覚WD-120A除去でまるごと壁 /
+  // B面(4.84×2.24=10.842)−WD-120A(1.8×2.0=3.6)=7.242 → 合計 10.34
+  check('面またぎ幻覚ドア除去でA面の壁が回復（wall_pb 10.34）',
+    Math.round(t.wall_pb_sqm * 100) / 100, 10.34);
+  check('cross_face_door_dropped=1 が計上される', t.opening_guard.cross_face_door_dropped, 1);
 }
 
 console.log(`\n合計: ✅ ${pass} / ✗ ${fail}`);
