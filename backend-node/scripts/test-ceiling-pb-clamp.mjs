@@ -37,8 +37,8 @@ function check(name, cond, detail = '') {
 const CEILING_PB_SQM_PER_SHEET = 1.45; // 集計表X77（materialCalculatorと同値）
 
 // 天井PB行+要確認警告を取り出す
-function ceilingPb(floorPlan) {
-  const calc = calculateMaterials(floorPlan, {}, {});
+function ceilingPb(floorPlan, overrides = {}) {
+  const calc = calculateMaterials(floorPlan, {}, overrides);
   const row = calc.materials.find((m) => m.name === '天井 石膏ボード');
   const warnings = calc._warnings || [];
   return {
@@ -290,6 +290,173 @@ console.log('--- 7. S-1 過少側の情報警告 ---');
     `ceilingArea=${ceilingArea} sheets=${sheets}`);
   check('過少側で情報警告 ceiling_pb_area_small が出る', warnFields.includes('ceiling_pb_area_small'),
     `ceilingArea=${ceilingArea} warnFields=${warnFields.join(',')}`);
+}
+
+// ------------------------------------------------------------
+// 8. 天井PB加算のoverride化（物件別・overrides.ceiling_pb_extra_sheets）
+//    アルファG=既定4枚（後方互換）／別府=0（集計表の加算行が無い）
+//    発火条件（パウダー/トイレ室が存在する場合のみ加算）は据え置き。加算枚数だけ差し替える。
+// ------------------------------------------------------------
+console.log('--- 8. 天井PB加算のoverride化（別府=0で誤発火を止める） ---');
+{
+  // パウダー・トイレを持つ間取り（+加算が発動する形）。
+  // ceilingArea を単純化するため居室1室+トイレ1室のみ（UB/CL無し）。
+  const withPowderToilet = (totalSqm, toiletSqm) => ({
+    _validated: true, layout_type: '3LDK',
+    total_floor_area_sqm: totalSqm,
+    total_area_source: 'user_input',   // 信頼済み→比率サニティは declaredArea 基準（誤発火しない）
+    partition_wall_length_m: 20, ceiling_height_mm: 2400,
+    rooms: [
+      { name: 'リビング・ダイニング', area_sqm: totalSqm - toiletSqm, floor_type: 'flooring' },
+      { name: 'トイレ', area_sqm: toiletSqm },
+    ],
+    openings: [], equipment: {},
+  });
+
+  const total = 60, toilet = 2;
+  // 期待の面積換算部（加算を除いた本体）: ceil((ceilingArea − toilet)/1.45)
+  //   ceilingArea = totalFloorArea(=60) − 0（トイレは天井から抜けない=居室扱いでない水回り名だが
+  //   UB/CL分類のみ天井控除。トイレは天井PB控除対象なので powderToiletCeilingArea に入る）
+  // powderToiletCeilingArea = 2（トイレ）。ceilingArea は materialCalculator の分類に依存するため
+  // ここでは「override 4 と override 0 の差がちょうど 4枚」であることで加算の有無を検証する。
+
+  // 8-1. override未設定（アルファGの既定）＝+4枚
+  {
+    const base = ceilingPb(withPowderToilet(total, toilet));            // 未設定=既定4
+    const zero = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: '0' });
+    check('override未設定でパウダー/トイレありは加算される（既定4枚・後方互換）',
+      base.note.includes('+ 4枚'), `note=${base.note}`);
+    check('override=0で加算が止まる（別府相当・+0枚扱い）',
+      zero.note.includes('+ 0枚'), `note=${zero.note}`);
+    check('override=0の天井PBは既定より4枚少ない（加算分だけ減る）',
+      base.sheets - zero.sheets === 4, `base=${base.sheets} zero=${zero.sheets}`);
+  }
+
+  // 8-2. override=任意値（例: 7枚）も反映される
+  {
+    const seven = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: '7' });
+    const zero = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: '0' });
+    check('override=7で加算が7枚になる', seven.note.includes('+ 7枚'), `note=${seven.note}`);
+    check('override=7はoverride=0より7枚多い', seven.sheets - zero.sheets === 7,
+      `seven=${seven.sheets} zero=${zero.sheets}`);
+  }
+
+  // 8-3. 単位付き・空文字・非数の頑健性
+  {
+    const withUnit = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: '0枚' });
+    check('override="0枚"（単位付き）も0として扱う', withUnit.note.includes('+ 0枚'),
+      `note=${withUnit.note}`);
+    const empty = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: '' });
+    check('override=""（空文字）は未設定扱い＝既定4枚', empty.note.includes('+ 4枚'),
+      `note=${empty.note}`);
+    check('override=""（空文字）では不正値警告を出さない',
+      !empty.warnFields.includes('ceiling_pb_extra_sheets_invalid'),
+      `warnFields=${empty.warnFields.join(',')}`);
+    const junk = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: 'なし' });
+    check('override="なし"（非数）は既定4枚にフォールバック', junk.note.includes('+ 4枚'),
+      `note=${junk.note}`);
+  }
+
+  // 8-4. パウダー/トイレが無い間取りでは override があっても加算は発火しない（発火条件は据え置き）
+  {
+    const noPowder = ceilingPb(livingOnly(60), { ceiling_pb_extra_sheets: '7' });
+    check('パウダー/トイレ無しはoverride指定でも加算されない（発火条件不変）',
+      !noPowder.note.includes('+ '), `note=${noPowder.note}`);
+  }
+
+  // ------------------------------------------------------------
+  // 8-5. must-fix M-1: override値の数値ガード
+  //   旧実装 String(raw).replace(/[^0-9]/g,'') はマイナス記号・小数点を「除去」するため
+  //   '-3'→3（符号反転）・'2.5'→25（10倍・Gタイプで+48%）・'1,0'→10・'1e3'→13 と黙って別物になった。
+  //   下地高overrideは下流のレンジガード（STUD_HEIGHT_MIN/MAX_MM）が壊れた値を捨てるが、
+  //   天井PB加算には第2段が無いので値がそのまま出力に載る。
+  //   → 許可パターン（0〜20の整数・任意で「枚」）以外は既定4枚+警告にフォールバックする。
+  // ------------------------------------------------------------
+  console.log('--- 8-5. M-1 override値の数値ガード（負値・小数・レンジ外は既定4+警告） ---');
+  {
+    const base = ceilingPb(withPowderToilet(total, toilet)); // 既定4枚の基準
+    const INVALID = [
+      ['-3', '負値（旧: 符号反転して+3枚）'],
+      ['-1', '負値'],
+      ['2.5', '小数（旧: 10倍の+25枚＝Gタイプ+48%相当）'],
+      ['0.5', '小数'],
+      ['1,0', 'カンマ（旧: +10枚）'],
+      ['1e3', '指数表記（旧: +13枚）'],
+      ['25', 'レンジ外（UIのmax=20超）'],
+      ['999999', 'レンジ外（極端値）'],
+      ['4枚と少し', '許可パターン外の文字混じり'],
+      ['NaN', '非数リテラル'],
+      ['Infinity', '無限大'],
+    ];
+    for (const [value, why] of INVALID) {
+      const r = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: value });
+      check(`override=${JSON.stringify(value)} ${why} → 既定4枚に戻る`,
+        r.note.includes('+ 4枚') && r.sheets === base.sheets,
+        `note=${r.note} sheets=${r.sheets} base=${base.sheets}`);
+      check(`override=${JSON.stringify(value)} で不正値警告が出る`,
+        r.warnFields.includes('ceiling_pb_extra_sheets_invalid'),
+        `warnFields=${r.warnFields.join(',')}`);
+    }
+    // 警告の中身（ユーザーが何を入れて何が使われたか分かること）
+    const w = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: '2.5' })
+      .warnings.find((x) => x.field === 'ceiling_pb_extra_sheets_invalid');
+    check('不正値警告に before(入力値) / after(採用値) が入っている',
+      w && w.before === '2.5' && w.after === 4, `warning=${JSON.stringify(w)}`);
+
+    // 有効値は警告を出さずそのまま採用される（境界0/20を含む）
+    for (const [value, expected] of [['0', 0], ['0枚', 0], [0, 0], ['4', 4], [7, 7], ['20', 20], [' 20 ', 20]]) {
+      const r = ceilingPb(withPowderToilet(total, toilet), { ceiling_pb_extra_sheets: value });
+      check(`override=${JSON.stringify(value)}（有効値）は${expected}枚として採用・無警告`,
+        r.note.includes(`+ ${expected}枚`) && !r.warnFields.includes('ceiling_pb_extra_sheets_invalid'),
+        `note=${r.note} warnFields=${r.warnFields.join(',')}`);
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// 9. S-1: 抑制ブランチでは calculation（根拠欄）も抑制後の値に揃うこと
+//    Excelの根拠列に「100枚なのに + 999999枚」のような矛盾表示が載らないことの回帰。
+//    ※ override=999999 はM-1のガードで既定4に戻るようになったため、絶対上限へ到達させるには
+//      面積側で作る（部屋無し・誤読total → sanityBase無し → 絶対上限100ブランチ）。
+// ------------------------------------------------------------
+console.log('--- 9. S-1 抑制時に calculation 欄が抑制後の値に揃う ---');
+{
+  // 9-1. 絶対上限ブランチ（テスト5と同じ入力）
+  const roomless = {
+    layout_type: '3LDK',
+    total_floor_area_sqm: 200,
+    partition_wall_length_m: 20,
+    ceiling_height_mm: 2400,
+    rooms: [], openings: [], equipment: {},
+  };
+  const { sheets, note, warnFields } = ceilingPb(roomless);
+  check('絶対上限ブランチで数量=100枚', sheets === 100, `sheets=${sheets}`);
+  check('絶対上限ブランチで根拠欄に「上限100枚」の抑制が明記される',
+    note.includes('上限') && note.includes('100'), `note=${note}`);
+  check('絶対上限ブランチの根拠欄に抑制前の生の式（÷1.45の換算式）が残らない',
+    !note.includes('÷ 1.45'), `note=${note}`);
+  check('絶対上限警告が出る', warnFields.includes('ceiling_pb_absolute_cap'),
+    `warnFields=${warnFields.join(',')}`);
+
+  // 9-2. 水増しブランチ（従来から note を書き換えている側の回帰）
+  const misread = {
+    layout_type: '3LDK',
+    total_floor_area_sqm: 200,
+    total_area_source: 'outer_dimensions',
+    partition_wall_length_m: 20, ceiling_height_mm: 2400,
+    rooms: [
+      { name: 'リビング・ダイニング', area_sqm: 30, floor_type: 'flooring' },
+      { name: '洋室(1)', area_sqm: 20, floor_type: 'flooring' },
+      { name: '洋室(2)', area_sqm: 15, floor_type: 'flooring' },
+    ],
+    openings: [], equipment: {},
+  };
+  const infl = ceilingPb(misread);
+  check('水増しブランチで根拠欄が抑制後の説明になっている',
+    infl.note.includes('抑制'), `note=${infl.note}`);
+  check('水増しブランチの抑制枚数と根拠欄が矛盾しない（枚数=抑制後）',
+    infl.warnings.find((w) => w.field === 'ceiling_pb_area_inflated')?.after === infl.sheets,
+    `sheets=${infl.sheets} warn=${JSON.stringify(infl.warnings)}`);
 }
 
 console.log(`\n判定: ✅ ${ok} / ✗ ${ng}`);

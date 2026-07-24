@@ -807,7 +807,50 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   //   天井PB/戸 = (天井面積 − パウダールーム・トイレ天井面積) ÷ 1.45 + 4枚
   // Gタイプ検算: (59.087−(1.33+3.381))/1.45 + 4 = 41.5枚/戸（AD列373.749÷9戸と一致）
   const CEILING_PB_SQM_PER_SHEET = 1.45; // 集計表X77
-  const POWDER_TOILET_PB_SHEETS = 4;     // 集計表74行（ﾊﾟｳﾀﾞｰﾙｰﾑ・ﾄｲﾚ天井ボード 4枚/戸）
+  // 集計表74行「ﾊﾟｳﾀﾞｰﾙｰﾑ・ﾄｲﾚ天井ボード」= 4枚/戸。ただしこの加算行はアルファG固有で、
+  // 物件によっては存在しない（別府9タイプは集計表74行が空＝加算行が無い。scripts/beppu-9types-
+  // ground-truth.json）。にもかかわらず部屋名「パウダー/トイレ」の存在だけで無条件に+4枚すると
+  // 別府では常に+4枚の過大になる（check-engine-constants.mjs で判明した物件依存の定数）。
+  // そこで下地高（studHeight）と同じく物件別Override可能にする:
+  //   overrides.ceiling_pb_extra_sheets（itemKey='ceiling_pb_extra_sheets'・文字列）
+  //   - 未設定（undefined/空文字/非数）＝デフォルト4枚維持（アルファGの後方互換）
+  //   - '0' を明示指定＝加算しない（別府はここで0を入れて誤発火を止める）
+  // 発火条件（パウダー/トイレ室が存在する場合のみ加算）は据え置き。override値は加算枚数のみ差し替える。
+  //
+  // 【入力ガード（2026-07-24 must-fix M-1）】
+  //   旧実装は下地高overrideに倣い String(raw).replace(/[^0-9]/g,'') で数字だけ抜いていたが、
+  //   これはマイナス記号と小数点を「除去」するため値が黙って別物になる（'-3'→3で符号反転・
+  //   '2.5'→25で10倍・'1,0'→10・'1e3'→13）。下地高は下流の STUD_HEIGHT_MIN_MM/MAX_MM
+  //   （buildupCalculator.js:99-100,482）が壊れた値を捨てて既定へ戻す第2段があるので助かっていたが、
+  //   天井PB加算にはその第2段が無く +25枚（Gタイプで+48%）が無警告で出力に載る。
+  //   → 暗黙の文字除去をやめ、許可パターン（整数のみ・任意で「枚」サフィックス）で明示的に読む。
+  //      レンジはUIの input min=0 max=20（MaterialResult.vue）と一致させる。
+  //      不正値は既定へフォールバックしたうえで **必ず警告を出す**（黙って戻さない）。
+  const POWDER_TOILET_PB_SHEETS_DEFAULT = 4; // 集計表74行（ﾊﾟｳﾀﾞｰﾙｰﾑ・ﾄｲﾚ天井ボード 4枚/戸・アルファG）
+  const CEILING_PB_EXTRA_MAX_SHEETS = 20;    // UIの max="20" と一致（物件依存の加算行の現実的上限）
+  const POWDER_TOILET_PB_SHEETS = (() => {
+    const raw = overrides.ceiling_pb_extra_sheets;
+    // 未設定（null/undefined/空文字・空白のみ）＝デフォルト4枚（アルファGの後方互換）。警告も出さない
+    if (raw === null || raw === undefined) return POWDER_TOILET_PB_SHEETS_DEFAULT;
+    const s = String(raw).trim();
+    if (s === '') return POWDER_TOILET_PB_SHEETS_DEFAULT;
+    // 許可パターン: 非負整数（任意で全角/半角の「枚」を許す）。'0枚'→0 / '4'→4
+    const m = /^(\d+)\s*枚?$/.exec(s);
+    const n = m ? Number(m[1]) : Number.NaN;
+    if (Number.isInteger(n) && n >= 0 && n <= CEILING_PB_EXTRA_MAX_SHEETS) return n;
+    // ここに来る値: 負値・小数・カンマ/指数表記・レンジ外・'なし'等の非数
+    // 非数（'なし'など）は「未設定扱い」で従来どおり黙って既定に戻すと不正入力を見逃すので、
+    // 数値として解釈できるのに不採用になったケースは警告を出す。純粋な非数も同様に可視化する
+    // （ユーザーが入力した以上、無視した事実は伝える）。
+    calcWarnings.push({
+      field: 'ceiling_pb_extra_sheets_invalid',
+      message: `天井PB加算の指定値（${s}）が不正のため既定の${POWDER_TOILET_PB_SHEETS_DEFAULT}枚を使用しました`
+        + `（0〜${CEILING_PB_EXTRA_MAX_SHEETS}の整数で入力してください。加算しない場合は0）`,
+      before: s,
+      after: POWDER_TOILET_PB_SHEETS_DEFAULT,
+    });
+    return POWDER_TOILET_PB_SHEETS_DEFAULT;
+  })();
   const powderToiletCeilingArea = rooms
     .filter(r => /パウダー|トイレ|便所/.test(r.name || ''))
     .reduce((sum, r) => sum + (r.area_sqm || 0), 0);
@@ -890,6 +933,10 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       after: CEILING_PB_ABSOLUTE_MAX_SHEETS,
     });
     ceilingPb95Sheets = CEILING_PB_ABSOLUTE_MAX_SHEETS;
+    // S-1: 数量を書き換えたら根拠欄も揃える（抑制前の生の式が calculation 列＝Excelの根拠に
+    // 残ると「100枚なのに + 999999枚」のような矛盾表示になる。水増しブランチと同じ扱いに統一）
+    ceilingPbCalcNote = `天井面積${ceilingArea.toFixed(1)}㎡からの算出値が上限`
+      + `${CEILING_PB_ABSOLUTE_MAX_SHEETS}枚を超えたため上限で抑制（面積読み取り要確認）`;
   } else if (sanityBase > 0 && ceilingArea > 0 && ceilingArea < sanityBase * 0.4) {
     // S-1: 過少側は危険度が低いため抑制せず情報提供のみ（正の小面積が無警告で通るのを防ぐ）
     calcWarnings.push({

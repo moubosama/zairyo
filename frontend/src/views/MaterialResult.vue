@@ -162,6 +162,23 @@
               class="input w-full"
             />
           </div>
+          <!-- 天井PB加算（パウダー/トイレ室ぶんの追加枚数）。物件によって集計表の加算行が無いことがある
+               （別府9タイプは加算行なし＝0）。未入力なら既定値4枚（アルファG）。0を入れると加算しない -->
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">
+              天井PB加算（パウダー/トイレ・枚）
+              <span class="text-xs">現在: {{ currentCeilingPbExtra }}</span>
+            </label>
+            <input
+              v-model="adjustCeilingPbExtra"
+              type="number"
+              min="0"
+              max="20"
+              step="1"
+              placeholder="例: 4（別府は0）"
+              class="input w-full"
+            />
+          </div>
           <button
             @click="recalculate"
             :disabled="store.loading || !hasAdjustInput"
@@ -178,6 +195,10 @@
           拾いに使います。図面に記載が無いことが多いため、拾い出しXLSや現場の確定値を入力してください。
           未入力の場合はアルファステイツ新宮町の実績値（一般部2570mm／水回り2770mm）で計算します
           （物件が違うと数%ずれます）。水回りを空欄にすると一般部と同じ値で計算します。
+        </p>
+        <p class="text-xs text-gray-400 mt-1">
+          ※ 天井PB加算＝パウダー/トイレ室ぶんの天井ボード追加枚数（集計表の別枠加算行）。
+          未入力なら4枚（アルファステイツ実績）。この加算行が無い物件（別府など）は 0 を入力してください。
         </p>
       </div>
     </div>
@@ -352,6 +373,9 @@ const adjustCeilingHeight = ref('')
 // 下地高（物件別・mm）。未入力なら送らない＝サーバー側の既定値フォールバックが効く
 const adjustStudHeight = ref('')
 const adjustStudHeightWet = ref('')
+// 天井PBのパウダー/トイレ加算枚数（物件別）。未入力なら送らない＝サーバー側の既定値4枚（アルファG）。
+// 0を入れると加算しない（別府は集計表の加算行が無いため0）
+const adjustCeilingPbExtra = ref('')
 
 // 履歴から来たかどうか（referrerまたはstoreの状態で判定）
 const isFromHistory = computed(() => {
@@ -437,10 +461,20 @@ const currentStudHeightWet = computed(() => {
   return store.overrides?.stud_height ? '一般部と同値' : '既定値2770mm'
 })
 
+// 天井PB加算の「現在値」表示。保存済みoverride（'0'を含む）があればその値、無ければ既定値4枚
+const currentCeilingPbExtra = computed(() => {
+  const v = store.overrides?.ceiling_pb_extra_sheets
+  // '0' は有効値なので null/undefined/空文字だけを未設定扱いにする
+  if (v === null || v === undefined || v === '') return '既定値4枚'
+  return `${v}枚`
+})
+
 // 再計算ボタンの活性判定（入力欄が増えたので明示的にまとめる）
+// 天井PB加算は '0' も有効入力なので空文字以外を入力ありと見なす（Boolean('0')はtrueだが明示する）
 const hasAdjustInput = computed(() =>
   Boolean(adjustPartitionWall.value || adjustCeilingHeight.value
     || adjustStudHeight.value || adjustStudHeightWet.value)
+  || adjustCeilingPbExtra.value !== ''
 )
 
 const formatArea = (value) => {
@@ -503,6 +537,10 @@ const recalculate = async () => {
     }
     if (adjustStudHeightWet.value) {
       newOverrides.stud_height_wet = String(adjustStudHeightWet.value)
+    }
+    // 天井PB加算枚数。'0'（別府＝加算しない）も有効値なので空文字以外を保存する
+    if (adjustCeilingPbExtra.value !== '') {
+      newOverrides.ceiling_pb_extra_sheets = String(adjustCeilingPbExtra.value)
     }
     await store.saveOverrides(newOverrides)
     await store.calculateMaterials()

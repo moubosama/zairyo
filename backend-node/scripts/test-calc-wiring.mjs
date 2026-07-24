@@ -597,6 +597,75 @@ await testAsync('無関係なoverride（天井高）だけならstudHeightは渡
   }
 });
 
+console.log('■ POST /:id/calculate: overrides → 天井PB加算枚数（ceiling_pb_extra_sheets）');
+
+// 天井PB加算のoverride疎通（下地高と同じ Override→overridesObj→calculateMaterials 経路）。
+// パウダー/トイレ室を持つparsedDataで、override未設定=+4枚（アルファG）／override=0=加算なし（別府）を
+// ルート経由のレスポンス（data.materials の天井 石膏ボード行）から直接観測する。
+const ceilingParsed = {
+  ...structuredClone(baseParsed),
+  total_area_source: 'user_input',   // 天井PB比率サニティを declaredArea 基準にして誤発火を防ぐ
+  rooms: [
+    { name: 'リビング・ダイニング', area_sqm: 40, floor_type: 'flooring' },
+    { name: 'トイレ', area_sqm: 2 },
+  ],
+};
+const ceilingRow = (data) => data.materials.find((m) => m.name === '天井 石膏ボード');
+
+await testAsync('override未設定: パウダー/トイレありは+4枚（アルファG既定・後方互換）', async () => {
+  const initial = structuredClone(ceilingParsed);
+  const { prisma } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    const row = ceilingRow(data);
+    assert.ok(row, '天井 石膏ボード行が出力される');
+    assert.match(row.calculation, /\+ 4枚/, `既定は+4枚: ${row.calculation}`);
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('override=0（別府）: 加算が止まる＝既定より4枚少ない', async () => {
+  const initial = structuredClone(ceilingParsed);
+  // 未設定と0の両方を同じ図面で計算し、差がちょうど4枚であることを確かめる
+  const { prisma: pDefault } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { prisma: pZero } = makeCalcPrisma({
+    initialParsed: structuredClone(initial), freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'ceiling_pb_extra_sheets', value: '0' }],
+  });
+  const a = await startApp(pDefault);
+  const b = await startApp(pZero);
+  try {
+    const def = await postJson(a.port, '/api/projects/1/calculate');
+    const zero = await postJson(b.port, '/api/projects/1/calculate');
+    const defRow = ceilingRow(def.data);
+    const zeroRow = ceilingRow(zero.data);
+    assert.match(zeroRow.calculation, /\+ 0枚/, `override=0は+0枚: ${zeroRow.calculation}`);
+    assert.equal(defRow.quantity - zeroRow.quantity, 4,
+      `別府相当(override=0)は既定より4枚少ない: 既定${defRow.quantity} vs 0指定${zeroRow.quantity}`);
+  } finally {
+    a.server.close();
+    b.server.close();
+  }
+});
+
+await testAsync('無関係なoverride（天井高）だけなら加算は既定4枚のまま（回帰なし）', async () => {
+  const initial = structuredClone(ceilingParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'ceiling_height', value: '2400mm' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.match(ceilingRow(data).calculation, /\+ 4枚/, '無関係overrideで加算枚数は不変');
+  } finally {
+    server.close();
+  }
+});
+
 // 供給経路の等価性: ルート経由で流した結果が、リゾルバを直接叩いた値と一致することの裏取り
 test('parseStudHeightOverridesの出力がそのままcomputeElevationTakeoffのoptsとして機能する', () => {
   const studHeight = parseStudHeightOverrides({ stud_height: '2720', stud_height_wet: '2820' });

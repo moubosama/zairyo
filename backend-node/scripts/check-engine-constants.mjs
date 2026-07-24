@@ -140,15 +140,16 @@ const CONSTANTS = [
   //   materialCalculator.jsをgrepしても1.5の換算係数は存在しない（1.5のヒットは
   //   WINDOW_OPENING_AREA(96行)とKUTSUZURI_SLIDE_LENGTH(120行)のみで換算とは無関係）。
   //   実体は面積÷係数ではなく **67戸実績からの固定枚数ハードコード**:
-  //     materialCalculator.js:845  一部界壁 石膏ボード     = 3枚 '標準3枚（67戸実績）'
-  //     materialCalculator.js:856  一部界壁 耐水石膏ボード = 1枚 '標準1枚（67戸実績）'
-  //     materialCalculator.js:880  収納面（ｸﾛｾﾞｯﾄ内RC面）  = 5枚 '標準5枚（67戸実績340/67）'
+  //     materialCalculator.js:978   一部界壁 石膏ボード     = 3枚 '標準3枚（67戸実績）'
+  //     materialCalculator.js:989   一部界壁 耐水石膏ボード = 1枚 '標準1枚（67戸実績）'
+  //     materialCalculator.js:1013  収納面（ｸﾛｾﾞｯﾄ内RC面）  = 5枚 '標準5枚（67戸実績340/67）'
+  //   （行番号は2026-07-24に grep '標準N枚（67戸実績' で実測。実装を動かしたら取り直すこと）
   //   面積からの換算をしていない＝XLS係数と比較する対象が無いのでengineValue:null（差は「—」）。
   //   旧版はここに1.5/1.45を書いて「差+0.0%・物件不変」と出力しており、
   //   **A-4（EV廻り÷1.4 vs XLS 1.5）が解決済みだと誤認させる捏造値だった**。
-  { key: '界壁PB 換算', engineName: '（換算なし）一部界壁 石膏ボード=固定3枚 materialCalculator.js:845', engineValue: null, override: null },
-  { key: '防露壁PB 換算', engineName: '（換算なし）一部界壁 耐水石膏ボード=固定1枚 materialCalculator.js:856', engineValue: null, override: null },
-  { key: '収納面PB 換算', engineName: '（換算なし）収納面PB=固定5枚 materialCalculator.js:880', engineValue: null, override: null },
+  { key: '界壁PB 換算', engineName: '（換算なし）一部界壁 石膏ボード=固定3枚 materialCalculator.js:978', engineValue: null, override: null },
+  { key: '防露壁PB 換算', engineName: '（換算なし）一部界壁 耐水石膏ボード=固定1枚 materialCalculator.js:989', engineValue: null, override: null },
+  { key: '収納面PB 換算', engineName: '（換算なし）収納面PB=固定5枚 materialCalculator.js:1013', engineValue: null, override: null },
   // 実測置換される唯一の1.5系部位。2026-07-24にA-4是正: 専用定数 EV_WALL_PB_SQM_PER_SHEET=1.5 を新設し
   // XLS X62(=1.5・アルファ「防露壁面」/ 別府「防露ふかし壁（ＰＢ）」)と一致させた（旧: PB_SQM_PER_SHEET 1.4 流用）
   { key: 'EV廻り壁PB 換算', engineName: 'EV_WALL_PB_SQM_PER_SHEET 1.5 (buildupCalculator.js applyElevationTakeoff)', engineValue: 1.5, override: null },
@@ -163,7 +164,7 @@ const CONSTANTS = [
 
   // 木製巾木 高さは物件依存ではない（両物件H=60主体）ので判定テーブルから除外。HABAKI_HEIGHT_NOTE参照
   { key: '際根太 規格', engineName: "TIMBER_SECTIONS.kiwaneta.spec 'LVL 30×45'", engineValue: '45×30', override: null },
-  { key: '天井PB ﾊﾟｳﾀﾞｰ･ﾄｲﾚ加算', engineName: 'POWDER_TOILET_PB_SHEETS (materialCalculator)', engineValue: 4, override: null },
+  { key: '天井PB ﾊﾟｳﾀﾞｰ･ﾄｲﾚ加算', engineName: 'POWDER_TOILET_PB_SHEETS (materialCalculator)', engineValue: 4, override: 'overrides.ceiling_pb_extra_sheets（別府=0）' },
 ];
 
 // 遮音壁ルールは「定数」ではなく部屋ペア表だが、最もタイプ依存が強いので別枠で報告する
@@ -304,16 +305,16 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const truth = JSON.parse(fs.readFileSync(path.join(here, 'beppu-9types-ground-truth.json'), 'utf8'));
 const TYPES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
 
+// ※ 行番号は 2026-07-24 に `grep -n "Math.min(Math.max" src/services/materialCalculator.js` で実測。
+//   実装を動かしたら必ず取り直すこと（旧表は削除済みクランプと全滅した行番号を報告し続けていた）。
 const CLAMPS = [
-  { label: '天井PB 枚数', line: 'materialCalculator.js:817', min: 20, max: 50,
-    value: (t) => truth.types[t].parts['天井PB'].area_or_length / 1.45 },
-  { label: '壁PB 枚数', line: 'materialCalculator.js:769', min: 30, max: 90,
+  { label: '壁PB 枚数', line: 'materialCalculator.js:777', min: 30, max: 90,
     value: (t) => truth.types[t].parts['壁PB'].area_or_length / 1.4 },
-  { label: '壁耐水PB 枚数', line: 'materialCalculator.js:783', min: 2, max: 7,
+  { label: '壁耐水PB 枚数', line: 'materialCalculator.js:791', min: 2, max: 7,
     value: (t) => truth.types[t].parts['壁耐水PB'].area_or_length / 1.4 },
-  { label: '巾木 長さ(m)', line: 'materialCalculator.js:1238', min: 30, max: 60,
+  { label: '巾木 長さ(m)', line: 'materialCalculator.js:1370', min: 30, max: 60,
     value: (t) => truth.types[t].parts['巾木'].area_or_length },
-  { label: '間仕切GW(㎡)', line: 'materialCalculator.js:912', min: 5, max: 15,
+  { label: '間仕切GW(㎡)', line: 'materialCalculator.js:1044', min: 5, max: 15,
     value: (t) => truth.types[t].parts['間仕切GW'].area_or_length },
 ];
 
@@ -329,15 +330,17 @@ for (const c of CLAMPS) {
     console.log(`       ${c.line}  ハードコードのクランプで頭打ち/底上げされる`);
   }
 }
-console.log('\n  ※ クランプの効き方（2026-07-24是正・「展開図ありなら影響しない」は不正確だった）:');
-console.log('    (1) 天井PB(materialCalculator.js:817 min20/max50)は**展開図があっても必ず効く**。');
-console.log('        applyElevationTakeoffは天井PB行にset()を持たない（buildupCalculator.js:1212-1312に');
-console.log('        「天井」への置換は0件）ため、実測モードでも天井PBは従来パスの枚数＝クランプ後の値。');
-console.log('        別府H=65.3枚/I=70.9枚は展開図ありでも50枚で頭打ち（-23.4%/-29.5%）。');
-console.log('    (2) サニティNG時（projects.js:978-1000のvalidateTakeoffSanity不合格）は実測を採用せず');
+console.log('\n  ※ 天井PB 枚数クランプ[20,50]は 2026-07-24 に撤去済み（41155a2・比率型サニティへ置換）:');
+console.log('    別府H=65.3枚/I=70.9枚を上限50で頭打ちさせ-23.4%/-29.5%の過少を出していたため。');
+console.log('    現行は「天井面積 ÷ 信頼できる床面積」の比（>1.3で水増し疑い→床面積×0.88へ抑制+警告、');
+console.log('    分母不明時のみ絶対上限100枚）。別府H/Iは面積換算値そのままで通る（test-ceiling-pb-clamp.mjs）。');
+console.log('    パウダー・トイレ加算4枚は overrides.ceiling_pb_extra_sheets で物件別に変更可（別府=0）。');
+console.log('\n  ※ 残るクランプの効き方（2026-07-24是正・「展開図ありなら影響しない」は不正確だった）:');
+console.log('    (1) 上記4件は従来パス（展開図なし）で常時効く。展開図ありでも実測置換の無い部位は同様。');
+console.log('    (2) サニティNG時（projects.js:977-1001のvalidateTakeoffSanity不合格）は実測を採用せず');
 console.log('        materialCalculatorの推定値へフォールバック → その経路では壁PB/巾木/GW等の');
 console.log('        クランプも効く（アルファAタイプで発火実績あり）。');
-console.log('    → 「展開図あり＝クランプ無効」は誤り。天井PBは常時、他部位もサニティNG時に効く。');
+console.log('    → 「展開図あり＝クランプ無効」は誤り。実測置換の無い部位は常時、他部位もサニティNG時に効く。');
 
 // このスクリプトはレポートであり合否判定はしない（exit 0固定）。
 // 「物件依存が増えた/減った」を検知したい場合はCONSTANTS表を更新すること
