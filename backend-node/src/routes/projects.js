@@ -837,6 +837,51 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+/**
+ * オーバーライドの下地高（物件別入力）を buildupCalculator の opts.studHeight 形へ変換する
+ * （供給経路・2026-07-24）
+ *
+ * 下地高＝床仕上げ面〜上階スラブ下端は物件ごとに違う（アルファ2.57/2.77 ↔ 別府Ａ〜Ｇ2.72/2.82 ↔
+ * 別府Ｈ・Ｉ2.86/2.86）が、展開図に寸法として書かれないことが多くAIでは読めない。
+ * よって「人が設定する経路」が必須で、その受け口が Override テーブルの
+ *   itemKey='stud_height'（一般部mm） / 'stud_height_wet'（水回りmm）
+ * 既存の ceiling_height と同じ流儀（文字列保存・数字以外を除去してparseInt）で受ける
+ * （UIが「2570mm」と単位付きで送っても拾えるようにするため）。
+ *
+ * 【レンジ検証はしない】採否の物理レンジ判定は resolveStudHeightM 側の
+ * STUD_HEIGHT_MIN_MM/MAX_MM に一元化されている（範囲外は既定値へフォールバック＋警告）。
+ * ここで弾くと二重実装になり、片方だけ直したときに挙動が割れる。
+ * ここでは「数値として読めないものを undefined にする」だけに徹する
+ * （undefined ＝ 未設定 ＝ 既存フォールバックが効く）。
+ *
+ * 【by_room は今回スコープ外】部屋別指定はリゾルバ側が対応済みだがUIが複雑になるため
+ * 供給経路は default/wet の2つに限定する。将来 by_room を受ける場合に備え、
+ * 空文字キー（正規化後に空になる部屋名。resolveGeneralStudHeightMの{name:''}に
+ * 誤マッチして全部屋を汚染しうる）は無視する防御を入れてある（下の sanitizeStudHeightByRoom）。
+ *
+ * @param overridesObj { [itemKey]: value(string) }
+ * @returns { default_mm?, wet_mm? } | undefined（両方未設定なら undefined＝optsに載せない）
+ */
+export function parseStudHeightOverrides(overridesObj = {}) {
+  // 既存 ceiling_height と同じパース流儀（数字以外を除去 → parseInt）。
+  // 小数点も除去されるため「2.57」のような入力は 257 になり、リゾルバのレンジ外＝不採用になる
+  // （mm入力であることをUIのラベル・placeholderで明示している）
+  const toMm = (v) => {
+    if (v === null || v === undefined) return undefined;
+    const digits = String(v).replace(/[^0-9]/g, '');
+    if (!digits) return undefined;          // 空文字・単位のみ・「-2570」の符号落ちを含む非数
+    const n = parseInt(digits, 10);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const default_mm = toMm(overridesObj.stud_height);
+  const wet_mm = toMm(overridesObj.stud_height_wet);
+  if (default_mm === undefined && wet_mm === undefined) return undefined;
+  const out = {};
+  if (default_mm !== undefined) out.default_mm = default_mm;
+  if (wet_mm !== undefined) out.wet_mm = wet_mm;
+  return out;
+}
+
 // POST /api/projects/:id/overrides - 仕様変更保存
 router.post('/:id/overrides', async (req, res) => {
   try {
@@ -918,9 +963,13 @@ router.post('/:id/calculate', async (req, res) => {
     let parsedObj = null;
     try { parsedObj = JSON.parse(project.aiReadings[0].parsedData); } catch { /* 破損時は推定のまま */ }
     if (parsedObj?.elevations?.rooms?.length) {
+      // 下地高の物件別入力（Override: stud_height / stud_height_wet）。未設定なら undefined を渡し、
+      // resolveStudHeightM のフォールバック（AI読取値→アルファ実績値+要確認warning）に委ねる
+      const studHeight = parseStudHeightOverrides(overridesObj);
       const takeoff = computeElevationTakeoff(parsedObj.elevations, parsedObj.door_schedule || [],
         { planRooms: parsedObj.rooms || [],       // 収納内の間仕切下地推定に平面図の部屋一覧を渡す
-          closetInteriors: parsedObj.closet_interiors || [] }); // 収納内側の実寸（家具工事シート等・任意）
+          closetInteriors: parsedObj.closet_interiors || [], // 収納内側の実寸（家具工事シート等・任意）
+          studHeight });                          // 物件別の下地高（未設定時はundefined＝既定値）
 
       // サニティチェック: 展開図の読み取りが破綻している場合は実測値を採用しない
       // （破綻した読みを盲信して壁PB+92%の異常値を出していた事故の再発防止。

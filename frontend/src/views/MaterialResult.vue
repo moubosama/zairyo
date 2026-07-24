@@ -130,9 +130,41 @@
               class="input w-full"
             />
           </div>
+          <!-- 下地高（床仕上げ面〜上階スラブ下端）。物件ごとに違い図面に書かれないことが多いため、
+               XLS・現場の確定値を人が入れる経路。未入力なら既定値（アルファ実績2570/2770）が使われる -->
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">
+              下地高・一般部（mm）
+              <span class="text-xs">現在: {{ currentStudHeight }}</span>
+            </label>
+            <input
+              v-model="adjustStudHeight"
+              type="number"
+              min="2200"
+              max="3200"
+              step="10"
+              placeholder="例: 2570（別府は2720）"
+              class="input w-full"
+            />
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">
+              下地高・水回り（mm）
+              <span class="text-xs">現在: {{ currentStudHeightWet }}</span>
+            </label>
+            <input
+              v-model="adjustStudHeightWet"
+              type="number"
+              min="2200"
+              max="3200"
+              step="10"
+              placeholder="例: 2770（別府は2820/2860）"
+              class="input w-full"
+            />
+          </div>
           <button
             @click="recalculate"
-            :disabled="store.loading || (!adjustPartitionWall && !adjustCeilingHeight)"
+            :disabled="store.loading || !hasAdjustInput"
             class="btn-primary disabled:opacity-50"
           >
             {{ store.loading ? '計算中...' : '再計算' }}
@@ -140,6 +172,12 @@
         </div>
         <p class="text-xs text-gray-400 mt-3">
           ※ 空欄の項目は現在の値のまま計算します。再計算すると手動編集した数量はリセットされます。
+        </p>
+        <p class="text-xs text-gray-400 mt-1">
+          ※ 下地高＝床仕上げ面〜上階スラブ下端（天井高とは別物）。間仕切下地・遮音壁・グラスウールの
+          拾いに使います。図面に記載が無いことが多いため、拾い出しXLSや現場の確定値を入力してください。
+          未入力の場合はアルファステイツ新宮町の実績値（一般部2570mm／水回り2770mm）で計算します
+          （物件が違うと数%ずれます）。水回りを空欄にすると一般部と同じ値で計算します。
         </p>
       </div>
     </div>
@@ -311,6 +349,9 @@ const editedMaterials = ref([])
 const addedRows = ref([])
 const adjustPartitionWall = ref('')
 const adjustCeilingHeight = ref('')
+// 下地高（物件別・mm）。未入力なら送らない＝サーバー側の既定値フォールバックが効く
+const adjustStudHeight = ref('')
+const adjustStudHeightWet = ref('')
 
 // 履歴から来たかどうか（referrerまたはstoreの状態で判定）
 const isFromHistory = computed(() => {
@@ -329,6 +370,10 @@ const FIELD_LABELS = {
   layout_type: '間取りタイプ',
   rooms: '部屋面積',
   openings: '開口部',
+  // 下地高（計算条件の調整で入力できる項目）。stud_height_wet は完全一致が先に効くので
+  // stud_height のプレフィックス判定に食われない
+  stud_height: '下地高（一般部）',
+  stud_height_wet: '下地高（水回り）',
 }
 
 const fieldLabel = (field) => {
@@ -379,6 +424,24 @@ const totalAmount = computed(() => {
 const currentCeilingHeight = computed(() => {
   return store.aiReading?.ceiling_height_mm || 2400
 })
+
+// 下地高の「現在値」表示。保存済みoverrideがあればその値、無ければ既定値である旨を出す
+// （既定値そのものはサーバー側の定数なので、ここでは実績値を参考表示するに留める）
+const currentStudHeight = computed(() => {
+  const v = store.overrides?.stud_height
+  return v ? `${v}mm` : '既定値2570mm'
+})
+const currentStudHeightWet = computed(() => {
+  const v = store.overrides?.stud_height_wet
+  if (v) return `${v}mm`
+  return store.overrides?.stud_height ? '一般部と同値' : '既定値2770mm'
+})
+
+// 再計算ボタンの活性判定（入力欄が増えたので明示的にまとめる）
+const hasAdjustInput = computed(() =>
+  Boolean(adjustPartitionWall.value || adjustCeilingHeight.value
+    || adjustStudHeight.value || adjustStudHeightWet.value)
+)
 
 const formatArea = (value) => {
   if (value === null || value === undefined) return 0
@@ -432,6 +495,14 @@ const recalculate = async () => {
     }
     if (adjustCeilingHeight.value) {
       newOverrides.ceiling_height = `${adjustCeilingHeight.value}mm`
+    }
+    // 下地高はmm整数で保存（サーバー側は数字以外を除去してparseIntするので単位付きでも可だが、
+    // 「現在: ○○mm」表示をそのまま出せるよう素の数値で保存する）
+    if (adjustStudHeight.value) {
+      newOverrides.stud_height = String(adjustStudHeight.value)
+    }
+    if (adjustStudHeightWet.value) {
+      newOverrides.stud_height_wet = String(adjustStudHeightWet.value)
     }
     await store.saveOverrides(newOverrides)
     await store.calculateMaterials()

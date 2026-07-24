@@ -479,8 +479,15 @@ export function resolveStudHeightM(room, opts = {}, state = null) {
   //    別府の押入・物入のように部屋名の一般/水回り2分法で表せない物件はここで吸収する）
   const byRoom = sh.by_room || {};
   const key = normalizeRoomName(room?.name);
-  for (const k of Object.keys(byRoom)) {
-    if (normalizeRoomName(k) === key && valid(byRoom[k])) return byRoom[k] / 1000;
+  // 空文字キーは無視する（防御・2026-07-24）。by_room に '' や '　'（全角空白のみ）の
+  // キーが混ざると、正規化後に '' となって resolveGeneralStudHeightM の {name:''}
+  // （遮音壁ルール・収納内側など部屋に紐づかない拾い）へ誤マッチし、
+  // 「1部屋の指定のつもりが物件全体の既定を乗っ取る」事故になる。
+  // 部屋名なしの拾いは ②default_mm 以降で解決させるのが正しい
+  if (key) {
+    for (const k of Object.keys(byRoom)) {
+      if (normalizeRoomName(k) === key && valid(byRoom[k])) return byRoom[k] / 1000;
+    }
   }
   // ② 物件全体の明示入力（人手・XLS由来の確定値。AI読取値より優先）
   if (isWet && valid(sh.wet_mm)) return sh.wet_mm / 1000;
