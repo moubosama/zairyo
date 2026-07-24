@@ -1135,3 +1135,175 @@ export function applyElevationTakeoff(result, takeoff) {
   }
   return result;
 }
+
+// ============================================================
+// 展開図実測モードのサニティチェック層（2026-07-24）
+//
+// 背景: 展開図の読み取りが破綻していても実測モードが無条件に採用され、
+//   異常値がそのまま見積に出ていた（本番ログ実例: アルファAタイプ 専有71.9㎡で
+//   wall_pb_sqm=226.48㎡=162枚。積算正解118㎡=85枚に対し+92%）。
+//   その読み取りは「洋室(1)(2)(3)が全て同一寸法(A=2875,B=4840,C=2875,D=4840)」
+//   「wall_codeが全部null・記号ゼロ」というAIの幻覚読みだった。
+//
+// 方針: 実測値そのものの正しさは判定できない（正解が無いから実測している）ため、
+//   「物理的・実績的にありえない出力」と「読み取り破綻の痕跡」だけを検出して
+//   実測モードの不採用（=従来の推定値にフォールバック）へ落とす安全弁とする。
+//   誤検知（正常読みを弾く）は精度を落とすので、閾値は実績より十分広く取る。
+// ============================================================
+
+// 壁PB面積 ÷ 専有面積 の実績比率。**上限のみ**で判定する（下限は設けない）。
+//   アルファGタイプ実績: 122.06㎡ ÷ 67.3㎡ = 1.81
+//   アルファAタイプ正解: 118㎡ ÷ 71.9㎡ = 1.64
+//   本エンジンの正常出力（Gタイプ3記録replay）: 127.5〜128.2㎡ ÷ 67.3 = 1.90
+//     （エンジンは実績比 +5〜6%側に出る = 既知の壁PB+7%系の残差）
+//   上限2.4: 正常上限1.90に対して+26%の余裕。異常実例3.15はこれを大きく超える。
+//
+// 下限を設けない理由（2026-07-24・別府4丁目の実正解データ scripts/beppu-9types-ground-truth.json で検算）:
+//   壁PBの分類構造は物件ごとに違う。別府は住戸間の戸境が全て「遮音壁PB」行へ分かれており、
+//   一般壁PB行が構造的に小さい（遮音壁PB÷壁PB比: アルファG=0.11 に対し別府=0.49〜1.52）。
+//   その結果、別府A〜Iの壁PB÷専有面積は **0.68〜1.18**（専有面積は天井PB÷0.878で逆算）。
+//     A 75.50/76.0=0.99 / B 33.09/48.8=0.68 / C 74.37/63.0=1.18 / D 47.13/62.6=0.75 /
+//     E 52.61/61.0=0.86 / F 58.29/66.9=0.87 / G 73.47/82.2=0.89 / H 117.95/107.9=1.09 / I 137.79/117.1=1.18
+//   逆算に依存しない生比（壁PB÷天井PB）でも別府0.77〜1.34 vs アルファG 2.07 と桁違いで、
+//   これは逆算誤差ではなく物件間の分類構造差。下限1.2では別府9タイプ全部が誤検知で弾かれ、
+//   「正しい実測が捨てられ推定値へフォールバック＋誤警告」という実害の大きい回帰になる。
+//   また今回の事故モードは「+92%の過大」であり、過少側は見積が小さく出るだけで危険度が違う。
+//   よって上限のみを残す。
+const WALL_PB_RATIO_MAX = 2.4;
+
+// 同一の面幅構成（幅の多重集合）を持つ部屋がこの数以上あれば幻覚読みを疑う。
+//   正常な読み取りでは部屋ごとに寸法が異なる（Gタイプ3記録の実測: 同一構成の部屋は最大1室）。
+//   一方、破綻例では洋室(1)(2)(3)が完全同一の4面寸法で並んだ。
+//   2室までは実在しうる（同型の洋室が2つ並ぶ間取りは普通にある）ため3室以上を異常とする。
+//   ※ 1部屋の中でA面=C面のように対面が同寸なのは矩形室として正常 → 部屋間の比較のみ行う。
+const DUP_ROOM_SHAPE_MIN = 3;
+
+// 1部屋の周長の物理上限（専有面積に対する比率）。
+//   住戸全体の外周ですら概ね 4×√専有面積 × 1.3 程度に収まる（矩形からの逸脱を見込んだ係数）。
+//   1部屋がそれを超えるのは面幅の桁誤読・重複転記の疑い。
+//   Gタイプ実測の最大室（LDK 20.4m / 専有67.3㎡ → 4×√67.3=32.8m の 0.62倍）に対し十分広い。
+const ROOM_PERIMETER_MAX_RATIO = 1.3;
+
+// シグネチャ比較の対象にする最小の有効面数。
+//   面が1〜2しか読めていない部屋は「幅900の物入が3室」「2面だけのUB」のように
+//   同じ構成が偶然そろうことが実際にありうる（実記録 gtype-gemini-read-gemini-2.5-flash.json の
+//   UBは2面のみ）。一方、検知したい破綻例は「洋室(1)(2)(3)が4面すべて一致」だったので、
+//   3面以上に限っても検知力は落ちない。
+const DUP_SHAPE_MIN_FACES = 3;
+
+/**
+ * 面幅構成のシグネチャ。[4840,1385,4840,965] -> '1385|4840|4840|965' を昇順で
+ * （面の並び順・A〜Dのラベル差を無視して「同じ形の部屋か」を比較するため）
+ * 有効面が DUP_SHAPE_MIN_FACES 未満の部屋は null（＝比較対象外）。
+ */
+function roomShapeSignature(room) {
+  const widths = (Array.isArray(room?.faces) ? room.faces : [])
+    .map((f) => f?.width_mm)
+    .filter((w) => Number.isFinite(w) && w > 0)
+    .sort((a, b) => a - b);
+  return widths.length >= DUP_SHAPE_MIN_FACES ? widths.join('|') : null;
+}
+
+/**
+ * 展開図実測（takeoff）の妥当性チェック。純関数。
+ *
+ * @param {object} takeoff computeElevationTakeoffの戻り値
+ * @param {object} context
+ *   - totalFloorAreaSqm: 専有面積（ユーザー入力 or validator確定値）。無ければ比率チェックはスキップ
+ *   - elevations: 展開図の読み取りデータ（品質判定に使う。{rooms:[...]}）
+ * @returns {{ok: boolean, reasons: Array<{code, message, detail}>}}
+ *   ok=false のとき呼び出し側は実測モードを採用せず推定値にフォールバックする。
+ */
+export function validateTakeoffSanity(takeoff, context = {}) {
+  const reasons = [];
+  if (!takeoff) {
+    return { ok: false, reasons: [{ code: 'no_takeoff', message: '展開図の実測データがありません', detail: {} }] };
+  }
+
+  const rooms = Array.isArray(context.elevations?.rooms) ? context.elevations.rooms : [];
+  const area = Number(context.totalFloorAreaSqm);
+  const hasArea = Number.isFinite(area) && area > 0;
+  const wallPb = Number(takeoff.wall_pb_sqm);
+
+  // ① 壁PB比率の上限のみ（専有面積が無い場合は判定不能としてスキップ）
+  //    過少側は物件の分類構造差で正常に起こりうるため見ない（上のWALL_PB_RATIO_MAX注記参照）
+  if (hasArea && Number.isFinite(wallPb) && wallPb > 0) {
+    const ratio = wallPb / area;
+    if (ratio > WALL_PB_RATIO_MAX) {
+      reasons.push({
+        code: 'wall_pb_ratio',
+        message: `壁PB面積が専有面積の${ratio.toFixed(2)}倍です`
+          + `（実績1.6〜1.9倍・許容上限${WALL_PB_RATIO_MAX}倍）`,
+        detail: { ratio: Math.round(ratio * 100) / 100, wall_pb_sqm: wallPb, total_floor_area_sqm: area,
+          max: WALL_PB_RATIO_MAX },
+      });
+    }
+  }
+
+  // ② 読み取り品質: 同一寸法構成の部屋が並ぶ（幻覚読みの典型的な痕跡）
+  //    ※ 壁記号（wall_code）が全部nullでも実測モードは止めない。正常な記録でも
+  //      記号は平面図側（plan_codes/plan_placements）から供給され face.wall_code は
+  //      null のままのことがある（Gタイプ3記録とも 0/33〜0/34 = 全null で正常動作）。
+  //      記号ゼロは「記号が面に割り付かず全面PB扱い→過大」の前兆なので、
+  //      平面図側にも記号が1つも無い場合に限り情報提供の警告として積む（不採用理由にはしない）。
+  if (rooms.length > 0) {
+    const shapes = new Map();
+    for (const r of rooms) {
+      const sig = roomShapeSignature(r);
+      if (!sig) continue;
+      if (!shapes.has(sig)) shapes.set(sig, []);
+      shapes.get(sig).push(r.name || '(名称なし)');
+    }
+    for (const [sig, names] of shapes) {
+      if (names.length >= DUP_ROOM_SHAPE_MIN) {
+        reasons.push({
+          code: 'duplicate_room_shape',
+          message: `同一の面寸法(${sig})を持つ部屋が${names.length}室あります`
+            + '（展開図の読み取りが同じ部屋を繰り返した幻覚の疑い）',
+          detail: { signature: sig, rooms: names, threshold: DUP_ROOM_SHAPE_MIN },
+        });
+      }
+    }
+  }
+
+  // ③ 1部屋の周長が専有面積から見て非現実的（面幅の桁誤読・重複転記の検出）
+  if (hasArea && rooms.length > 0) {
+    const maxPerimeterM = 4 * Math.sqrt(area) * ROOM_PERIMETER_MAX_RATIO;
+    for (const r of rooms) {
+      const perim = (Array.isArray(r.faces) ? r.faces : [])
+        .reduce((s, f) => s + (Number.isFinite(f?.width_mm) && f.width_mm > 0 ? f.width_mm : 0), 0) / 1000;
+      if (perim > maxPerimeterM) {
+        reasons.push({
+          code: 'room_perimeter',
+          message: `部屋「${r.name || '(名称なし)'}」の周長${Math.round(perim * 10) / 10}mが`
+            + `専有面積${area}㎡に対して非現実的です（上限${Math.round(maxPerimeterM * 10) / 10}m）`,
+          detail: { room: r.name || null, perimeter_m: Math.round(perim * 10) / 10,
+            max_perimeter_m: Math.round(maxPerimeterM * 10) / 10 },
+        });
+      }
+    }
+  }
+
+  return { ok: reasons.length === 0, reasons };
+}
+
+/**
+ * 壁仕上記号が1つも読めていないか（面のwall_code・平面図のplan_codes/plan_placementsすべて空）。
+ * 記号ゼロは「全面をデフォルトPB扱い＝過大計上」の前兆なので、実測モードは止めないが
+ * 要確認の警告として利用者に見せる（validateTakeoffSanityとは独立の情報提供）。
+ */
+export function hasNoWallCodes(elevations) {
+  const rooms = Array.isArray(elevations?.rooms) ? elevations.rooms : [];
+  for (const r of rooms) {
+    for (const f of (Array.isArray(r.faces) ? r.faces : [])) {
+      if (parseWallCode(f?.wall_code)) return false;
+    }
+    for (const c of (Array.isArray(r.plan_codes) ? r.plan_codes : [])) {
+      if (parseWallCode(c)) return false;
+    }
+    for (const pl of (Array.isArray(r.plan_placements) ? r.plan_placements : [])) {
+      if (parseWallCode(pl?.code)) return false;
+    }
+  }
+  return rooms.length > 0;
+}

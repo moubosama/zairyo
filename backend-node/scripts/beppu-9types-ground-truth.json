@@ -1,0 +1,720 @@
+{
+  "_meta": {
+    "source_xls": "C:/Users/81804/Pictures/zairyoの資料/20260723084638/(仮称)別府4丁目プロジェクト（木及び_建材）R7,03,08.XLS",
+    "project": "(仮称)別府4丁目プロジェクト 新築工事",
+    "generated": "別府4丁目 A〜Iタイプ正解（アルファステイツ新宮町Gタイプ 122.06㎡ とは別物件）",
+    "note": "値=集計表シートの戸当セル(.v)。換算係数=集計表X列。数量枚数=面積÷係数（係数ある部位のみ）。",
+    "households": {
+      "A": 4,
+      "B": 5,
+      "C": 5,
+      "D": 5,
+      "E": 5,
+      "F": 5,
+      "G": 5,
+      "H": 1,
+      "I": 1
+    },
+    "factors_read_from_X_column": {
+      "際根太": null,
+      "フローリング": null,
+      "巾木": null,
+      "遮音壁PB": 1.4,
+      "壁PB": 1.4,
+      "壁耐水PB": 1.4,
+      "遮音壁耐水PB": 1.4,
+      "間仕切GW": null,
+      "天井下り": 1.45,
+      "天井PB": 1.45
+    },
+    "aggregation_rows": {
+      "際根太": 9,
+      "フローリング": 12,
+      "巾木": 46,
+      "遮音壁PB": 54,
+      "壁PB": 56,
+      "壁耐水PB": 58,
+      "遮音壁耐水PB": 60,
+      "間仕切GW": 71,
+      "天井下り": 75,
+      "天井PB": 77
+    }
+  },
+  "types": {
+    "A": {
+      "households": 4,
+      "parts": {
+        "際根太": {
+          "area_or_length": 80.9,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 64.147,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 73.41,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 40.465,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 28.904,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 75.497,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 53.927,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 4.89,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.493,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 35.169,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 25.121,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 50.482,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 16.33,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 11.262,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 66.76,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 46.041,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    },
+    "B": {
+      "households": 5,
+      "parts": {
+        "際根太": {
+          "area_or_length": 47.2,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 41.075,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 43.83,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 26.704,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 19.075,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 33.093,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 23.638,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 5.27,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.764,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 23.692,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 16.923,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 35,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 10.835,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 7.472,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 42.818,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 29.53,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    },
+    "C": {
+      "households": 5,
+      "parts": {
+        "際根太": {
+          "area_or_length": 67,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 52.548,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 63.77,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 25.919,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 18.513,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 74.372,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 53.123,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 6.73,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 4.807,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 28.824,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 20.589,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 36.164,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 12.147,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 8.377,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 55.305,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 38.142,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    },
+    "D": {
+      "households": 5,
+      "parts": {
+        "際根太": {
+          "area_or_length": 67.9,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 53.386,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 54.7,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 33.839,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 24.171,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 47.134,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 33.667,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 4.965,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.546,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 30.037,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 21.455,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 43.855,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 13.35,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 9.207,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 54.966,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 37.908,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    },
+    "E": {
+      "households": 5,
+      "parts": {
+        "際根太": {
+          "area_or_length": 72.7,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 52.18,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 60.08,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 46.046,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 32.89,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 52.613,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 37.58,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 4.965,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.546,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 30.375,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 21.697,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 47.154,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 13.332,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 9.194,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 53.547,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 36.929,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    },
+    "F": {
+      "households": 5,
+      "parts": {
+        "際根太": {
+          "area_or_length": 74.2,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 54.811,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 62.86,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 37.396,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 26.711,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 58.286,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 41.633,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 4.965,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.546,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 30.657,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 21.898,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 43.911,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 11.722,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 8.084,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 58.713,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 40.492,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    },
+    "G": {
+      "households": 5,
+      "parts": {
+        "際根太": {
+          "area_or_length": 96.4,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 69.651,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 88.48,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 42.839,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 30.599,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 73.474,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 52.482,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 13.232,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 9.452,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 32.945,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 23.532,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 53.592,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 21.313,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 14.699,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 72.145,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 49.755,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    },
+    "H": {
+      "households": 1,
+      "parts": {
+        "際根太": {
+          "area_or_length": 136.9,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 90.695,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 106.85,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 35.045,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 25.032,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 117.945,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 84.246,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 3.48,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 2.486,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 32.783,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 23.417,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 45.367,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 33.034,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 22.782,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 94.71,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 65.317,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    },
+    "I": {
+      "households": 1,
+      "parts": {
+        "際根太": {
+          "area_or_length": 134.18,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 99.364,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 102.14,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "木製巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 36.075,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 25.768,
+          "zairyo_item": "遮音壁PB張り"
+        },
+        "壁PB": {
+          "area_or_length": 137.79,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 98.422,
+          "zairyo_item": "壁 石膏ボード"
+        },
+        "壁耐水PB": {
+          "area_or_length": 5.51,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.936,
+          "zairyo_item": "壁 耐水石膏ボード"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 31.216,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 22.297,
+          "zairyo_item": null
+        },
+        "間仕切GW": {
+          "area_or_length": 48.005,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切 グラスウール充填"
+        },
+        "天井下り": {
+          "area_or_length": 36.115,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 24.907,
+          "zairyo_item": "下り天井 石膏ボード"
+        },
+        "天井PB": {
+          "area_or_length": 102.786,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 70.887,
+          "zairyo_item": "天井 石膏ボード"
+        }
+      }
+    }
+  }
+}

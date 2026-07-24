@@ -10,6 +10,7 @@ import { analyzeDrawing, analyzeAuxDrawing, analyzeWallCodesTiled, analyzeOpenin
 import { calculateMaterials } from '../services/materialCalculator.js';
 import {
   computeElevationTakeoff, applyElevationTakeoff, filterKenzaiScope,
+  validateTakeoffSanity, hasNoWallCodes,
   normalizeDoorSymbol, normalizeRoomName,
 } from '../services/buildupCalculator.js';
 import { deleteProjectDeep } from '../services/projectCleanup.js';
@@ -920,13 +921,46 @@ router.post('/:id/calculate', async (req, res) => {
       const takeoff = computeElevationTakeoff(parsedObj.elevations, parsedObj.door_schedule || [],
         { planRooms: parsedObj.rooms || [],       // 収納内の間仕切下地推定に平面図の部屋一覧を渡す
           closetInteriors: parsedObj.closet_interiors || [] }); // 収納内側の実寸（家具工事シート等・任意）
-      applyElevationTakeoff(result, takeoff);
-      console.log('展開図実測モード適用:', JSON.stringify({
-        wall_pb_sqm: takeoff.wall_pb_sqm,
-        wall_pb_sheets: Math.ceil(takeoff.wall_pb_sqm / 1.4),
-        cloth: takeoff.cloth_sqm,
-        skirting: takeoff.skirting_m,
-      }));
+
+      // サニティチェック: 展開図の読み取りが破綻している場合は実測値を採用しない
+      // （破綻した読みを盲信して壁PB+92%の異常値を出していた事故の再発防止。
+      //  不採用時は materialCalculator の推定値がそのまま残る＝従来動作にフォールバック）
+      const sanity = validateTakeoffSanity(takeoff, {
+        totalFloorAreaSqm: parsedObj.total_floor_area_sqm,
+        elevations: parsedObj.elevations,
+      });
+      if (sanity.ok) {
+        applyElevationTakeoff(result, takeoff);
+        console.log('展開図実測モード適用:', JSON.stringify({
+          wall_pb_sqm: takeoff.wall_pb_sqm,
+          wall_pb_sheets: Math.ceil(takeoff.wall_pb_sqm / 1.4),
+          cloth: takeoff.cloth_sqm,
+          skirting: takeoff.skirting_m,
+        }));
+      } else {
+        console.warn('展開図実測モード: サニティNG → 推定値を使用:',
+          JSON.stringify({ wall_pb_sqm: takeoff.wall_pb_sqm, reasons: sanity.reasons.map((r) => r.code) }));
+        // 警告の形は既存（opening_guard等）と揃える: field/message/before/after の4キー。
+        // 検出理由の詳細（reasons）はmessageへ畳み込む（フロントの警告パネルは固定フィールドで
+        // レンダリングするため、独自キーを増やさない）。生のreasonsはサーバーログ側に出している。
+        result._warnings = [...(result._warnings || []), {
+          field: 'elevation_takeoff_rejected',
+          message: '展開図の読み取りに問題があるため実測値を採用せず推定値を表示しています'
+            + `（${sanity.reasons.map((r) => r.message).join('／')}）。`
+            + '展開図を再アップロードすると改善する場合があります',
+          before: null, after: null,
+        }];
+      }
+      // 記号が1つも読めていない場合の情報提供（実測モード自体は止めない。
+      // 記号ゼロ=全面デフォルトPB扱いで過大側に出やすいことを利用者に知らせる）
+      if (sanity.ok && hasNoWallCodes(parsedObj.elevations)) {
+        result._warnings = [...(result._warnings || []), {
+          field: 'wall_codes_empty',
+          message: '壁仕上記号が1つも読み取れていません。記号の無い壁面は石膏ボード張りとして計上するため、'
+            + '打放し・GL工法の壁がある場合は数量が過大になっている可能性があります',
+          before: null, after: null,
+        }];
+      }
     }
 
     // 計算由来の警告（applyElevationTakeoffが result._warnings に積む。例: 木胴縁の部分実測疑い）を
