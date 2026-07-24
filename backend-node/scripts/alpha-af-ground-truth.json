@@ -1,0 +1,834 @@
+{
+  "_meta": {
+    "source_xls": "C:/Users/81804/Pictures/zairyoの資料/01_アルファステイツ新宮町/積算XLS/①(仮称)アルファステイツ新宮町（木及び_建材）A~F.XLS",
+    "project": "①（仮称）アルファステイツ新宮町 新築工事",
+    "generated": "アルファステイツ新宮町 A〜F（+派生A1/B1/C1/D1）正解。①はA〜Fの58戸分、Gタイプ9戸は②G.XLSにある（合計67戸）",
+    "households": {
+      "A": 9,
+      "A1": 1,
+      "B": 9,
+      "B1": 1,
+      "C": 9,
+      "C1": 1,
+      "D": 9,
+      "D1": 1,
+      "E": 9,
+      "F": 9
+    },
+    "households_total": 58,
+    "column_to_type": {
+      "C": "A",
+      "E": "A1",
+      "G": "B",
+      "I": "B1",
+      "K": "C",
+      "M": "C1",
+      "O": "D",
+      "Q": "D1",
+      "S": "E",
+      "U": "F"
+    },
+    "sheet_to_type_note": "シート名と実タイプは1つずつズレる（現場名等がA/A1/B/B1/…の派生タイプ順のため）: 'Ａタイプ'=A / 'Ｂタイプ'=A1 / 'Ｃタイプ'=B / 'Ｄタイプ'=B1 / 'Ｅタイプ'=C / 'Ｆタイプ'=C1 / 'Ｇタイプ'=D / 'Ｈタイプ'=D1 / 'Ｉタイプ'=E / 'Ｊタイプ'=F。各シートのB2セル={現場名等!A*} で確認できる。②G.XLSの「Ａタイプ」シート中身がGだった罠（CLAUDE.md）とは別種のズレなので混同しないこと。",
+    "aggregation_rows_note": "aggregation_rows は【①アルファA~F専用】。ラベルで解決した実測行。別府XLSとは行が違う部位がある（遮音壁耐水PB: アルファ81行／別府60行。アルファの60行は「ﾊﾟｳﾀﾞｰﾙｰﾑ内壁」で別部位）。突合は必ずラベルで行うこと。",
+    "aggregation_rows": {
+      "際根太": 9,
+      "フローリング": 12,
+      "巾木": 46,
+      "遮音壁PB": 54,
+      "壁PB": 56,
+      "壁耐水PB": 58,
+      "遮音壁耐水PB": 81,
+      "間仕切GW": 71,
+      "天井下り": 75,
+      "天井PB": 77
+    },
+    "known_data_caveats": [
+      "Eタイプ(集計表S列)の間仕切GW=5.397㎡は遮音壁PB 14.521㎡に対して少ない（GW/(PB÷2)=0.743。他9タイプは0.99〜1.02）。GW欄の数式は全タイプ共通で「タイプ別シートP84の1セル参照」だが、Eタイプは遮音壁がP8/P116/P170/P224/P278の5行に分かれて入力されており、P84には最大の1枚(5.397)しか入っていない＝XLS側のGW拾い漏れの疑い。正解データとしてはXLSの値をそのまま採用する。",
+      "遮音壁耐水PBは全タイプ0（集計表81行。参照先の\"Ａタイプ\"!P368+P422 も両方0）。②G.XLSでも0で、この物件には遮音壁の耐水PB拾いが存在しない。"
+    ],
+    "factors_read_from_X_column": {
+      "際根太": null,
+      "フローリング": null,
+      "巾木": null,
+      "遮音壁PB": 1.4,
+      "壁PB": 1.4,
+      "壁耐水PB": 1.4,
+      "遮音壁耐水PB": 1.4,
+      "間仕切GW": null,
+      "天井下り": 1.45,
+      "天井PB": 1.45
+    }
+  },
+  "types": {
+    "A": {
+      "households": 9,
+      "aggregation_column": "C",
+      "quantity_column": "D",
+      "parts": {
+        "際根太": {
+          "area_or_length": 19.5,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 53.117900000000006,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 56.93000000000001,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 13.878,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 9.912857142857144,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 118.02040000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 84.30028571428572,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 7.1229,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 5.087785714285714,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 6.939,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 5.639,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 3.8889655172413797,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 61.0072,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 42.07393103448276,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "A1": {
+      "households": 1,
+      "aggregation_column": "E",
+      "quantity_column": "F",
+      "parts": {
+        "際根太": {
+          "area_or_length": 19.5,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 53.117900000000006,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 56.93000000000001,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 14.903999999999998,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 10.645714285714286,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 123.10430000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 87.93164285714288,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 7.614800000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 5.439142857142858,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 7.451999999999999,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 5.889,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 4.061379310344828,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 61.0072,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 42.07393103448276,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "B": {
+      "households": 9,
+      "aggregation_column": "G",
+      "quantity_column": "H",
+      "parts": {
+        "際根太": {
+          "area_or_length": 11,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 51.3587,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 57.28,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 16.3966,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 11.711857142857143,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 111.91220000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 79.93728571428572,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 6.437000000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 4.597857142857144,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 8.3525,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 7.107000000000001,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 4.901379310344828,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 60.1224,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 41.46372413793104,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "B1": {
+      "households": 1,
+      "aggregation_column": "I",
+      "quantity_column": "J",
+      "parts": {
+        "際根太": {
+          "area_or_length": 11,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 51.3587,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 57.28,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 17.6088,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 12.577714285714286,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 116.48669999999998,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 83.2047857142857,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 6.890000000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 4.921428571428572,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 8.969999999999999,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 7.107000000000001,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 4.901379310344828,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 60.1224,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 41.46372413793104,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "C": {
+      "households": 9,
+      "aggregation_column": "K",
+      "quantity_column": "L",
+      "parts": {
+        "際根太": {
+          "area_or_length": 17.4,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 47.939800000000005,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 55.59,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 19.069399999999998,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 13.620999999999999,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 114.21010000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 81.57864285714287,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 4.836000000000002,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.454285714285716,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 9.6375,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 5.265,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 3.6310344827586207,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 59.9039,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 41.313034482758624,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "C1": {
+      "households": 1,
+      "aggregation_column": "M",
+      "quantity_column": "N",
+      "parts": {
+        "際根太": {
+          "area_or_length": 17.4,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 47.939800000000005,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 55.59,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 20.4792,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 14.628,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 118.7171,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 84.79792857142859,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 5.209999999999999,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.721428571428571,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 10.349999999999998,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 5.265,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 3.6310344827586207,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 59.9039,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 41.313034482758624,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "D": {
+      "households": 9,
+      "aggregation_column": "O",
+      "quantity_column": "P",
+      "parts": {
+        "際根太": {
+          "area_or_length": 14.100000000000001,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 50.0885,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 54.57000000000001,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 13.363999999999999,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 9.545714285714286,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 115.92990000000003,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 82.80707142857146,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 4.836000000000002,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.454285714285716,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 6.6819999999999995,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 5.232,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 3.608275862068966,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 60.2925,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 41.58103448275862,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "D1": {
+      "households": 1,
+      "aggregation_column": "Q",
+      "quantity_column": "R",
+      "parts": {
+        "際根太": {
+          "area_or_length": 14.100000000000001,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 50.0885,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 54.57000000000001,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 14.351999999999999,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 10.251428571428571,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 120.98930000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 86.42092857142859,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 5.203999999999999,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.7171428571428566,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 7.175999999999999,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 5.232,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 3.608275862068966,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 60.2925,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 41.58103448275862,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "E": {
+      "households": 9,
+      "aggregation_column": "S",
+      "quantity_column": "T",
+      "parts": {
+        "際根太": {
+          "area_or_length": 16.5,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 49.0517,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 53.52,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 14.5205,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 10.371785714285716,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 121.5128,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 86.79485714285715,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 4.836000000000002,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.454285714285716,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 5.397,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 5.484999999999999,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 3.782758620689655,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 60.03960000000001,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 41.40662068965518,
+          "zairyo_item": "天井PB"
+        }
+      }
+    },
+    "F": {
+      "households": 9,
+      "aggregation_column": "U",
+      "quantity_column": "V",
+      "parts": {
+        "際根太": {
+          "area_or_length": 16.299999999999997,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "際根太"
+        },
+        "フローリング": {
+          "area_or_length": 35.897400000000005,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "フローリング"
+        },
+        "巾木": {
+          "area_or_length": 42.38,
+          "unit": "m",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "巾木"
+        },
+        "遮音壁PB": {
+          "area_or_length": 5.654,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 4.038571428571429,
+          "zairyo_item": "遮音壁PB"
+        },
+        "壁PB": {
+          "area_or_length": 73.99130000000001,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 52.85092857142858,
+          "zairyo_item": "壁PB"
+        },
+        "壁耐水PB": {
+          "area_or_length": 4.291,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 3.0650000000000004,
+          "zairyo_item": "壁耐水PB"
+        },
+        "遮音壁耐水PB": {
+          "area_or_length": 0,
+          "unit": "m2",
+          "factor": 1.4,
+          "sheets_converted": 0,
+          "zairyo_item": "遮音壁耐水PB"
+        },
+        "間仕切GW": {
+          "area_or_length": 2.827,
+          "unit": "m2",
+          "factor": null,
+          "sheets_converted": null,
+          "zairyo_item": "間仕切GW"
+        },
+        "天井下り": {
+          "area_or_length": 5.004,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 3.4510344827586206,
+          "zairyo_item": "天井下り"
+        },
+        "天井PB": {
+          "area_or_length": 40.62890000000001,
+          "unit": "m2",
+          "factor": 1.45,
+          "sheets_converted": 28.019931034482767,
+          "zairyo_item": "天井PB"
+        }
+      }
+    }
+  }
+}

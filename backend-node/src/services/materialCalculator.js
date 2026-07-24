@@ -112,7 +112,12 @@ const PARTITION_WALL_MIN_RATIO = 0.25;    // 間仕切壁延長の最小係数
 const LOSS_RATE_5 = 1.05;                 // +5% ロス（PB等）
 const LOSS_RATE_10 = 1.1;                 // +10% ロス（フローリング等）
 const LOSS_RATE_20 = 1.2;                 // +20% ロス（耐水PB等）
-const WALL_PB_REDUCTION = 0.6;            // 壁PBの両面係数削減（リノベ=片面のみ）
+// 壁PBの枚数換算係数（XLS集計表X列の実運用係数。ロス・切り無駄込みで 3'×6'実面積1.6562より小さい）。
+//   出典: 打ち合わせ議事メモ 2026-07-14「壁PB÷1.4=87〜88枚が正解。1.6562はロスなし理論値」
+const PB_CONVERSION_WALL = 1.4;
+// 旧 WALL_PB_REDUCTION=0.6（「リノベ=片面のみ」）は削除。新築実績係数1.37の上に掛かっていて
+//   新築でもリノベでもない値になっていた。建物種別ごとの式は resolveBuildingTypeProfile を参照
+//   （リノベ側の実効値 1.37×0.6 は WALL_PB_COEFF_RENOVATION / WALL_PB_RENOVATION_REDUCTION として保存）。
 // グラスウール充填率は**物件依存**（アルファ=遮音壁のみ0.135 / 別府=全間仕切0.4〜0.8）のため
 // 定数ではなく GLASSWOOL_COVERAGE_ALPHA + overrides.glasswool_coverage で扱う（M-3・下記GWブロック参照）。
 // 旧 GLASSWOOL_COVERAGE=0.5 は「間仕切壁の半分」という根拠不明の値で、両物件のどちらとも一致しなかった。
@@ -654,6 +659,182 @@ export function resolveKiwanetaProfile(overrides = {}) {
   return { ratio, min_m, spec, volume, source, invalid };
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 【壁PB推定パス（展開図なし）の建物種別プロファイル（2026-07-24）】
+//
+//  ■ 旧実装の何が壊れていたか（調査結果・推測ではない）
+//    `wallPbCoeff=1.37` は **アルファステイツ新宮町（新築67戸）Gタイプ実績**が出典:
+//      壁PB 6,010枚 ÷ 67戸 ÷ 65.8㎡ = 1.363 枚/㎡（コメントの「90枚/65.8㎡」と一致）
+//    その新築係数の上に `WALL_PB_REDUCTION=0.6`（「リノベ=片面のみ」）を掛けていたため、
+//    出力 0.822枚/㎡ は**新築でもリノベでもない中間値**だった。
+//    0.6 の出自は git de42b9b（2026-07-05「67戸意匠図データ完全反映」）で、
+//    同じコミットで `GLASSWOOL_COVERAGE=0.5`（後にM-3で「根拠不明・両物件どちらとも不一致」と
+//    判定され撤去済み）が入った**根拠なし定数の一括投入**。0.6を裏づける実績値は
+//    リポジトリにもXLSにも存在しない。当時同時に入った旧クランプ [30,90]枚の帯へ
+//    値を収めるための調整値だったとみられる（1.37をそのまま使うと67㎡級で90枚＝帯の上端に張り付く）。
+//
+//  ■ リノベ実績から見た 0.6 の位置（けいとさん資料5現場・CLAUDE.md実績表のPB12.5=壁用）
+//    床面積が明記されているのは「3LDK 70㎡=35枚」の1件のみ。他は間取り帯で幅を持つ:
+//      3LDK 70㎡    35枚 / 70㎡          = 0.500 枚/㎡（唯一の確定値）
+//      朝日パリオ305 40枚 / 2LDK 50〜65㎡ = 0.615〜0.800
+//      別物件ミドル   50枚 / 2LDK 50〜65㎡ = 0.769〜1.000
+//      目白テラス3A  40枚 / 床面積不明     = 算出不可
+//      大型物件      60枚 / 床面積不明     = 算出不可
+//    → 実効 0.822枚/㎡（=1.37×0.6）は**この帯（0.50〜1.00）の内側**に収まる。
+//      つまり 0.6 は導出の筋は通っていないが、**リノベの出力としては実績帯の中**にある。
+//      よってリノベ側は既定を一切変えない（＝精度は現状維持。数値で示す=test-building-type.mjs）。
+//
+//  ■ 新築側の構造（床面積比では物件を跨げないことの実証）
+//    壁PB系の実測（XLS集計表・戸当）を床面積比で見ると:
+//      アルファG        1.326 枚/㎡（87.2枚 / 65.76㎡）
+//      別府4丁目9タイプ 0.486〜0.845 枚/㎡（mean 0.676）
+//    ＝ 同じ「新築マンション住戸」でも **2.7倍**開く。1つの床面積係数では両立不可能で、
+//    これは際根太(0.277 vs 0.97〜1.27)・GW(0.095 vs 0.411〜0.775)と同じ**物件依存**パターン。
+//    一方、**周長×階高**を分母に取ると分布が締まる（PB系合計＝壁+遮音+耐水+遮音耐水）:
+//      別府9タイプ 0.434〜0.547（mean 0.501）／ アルファG 0.614
+//      ＝ 2物件・10住戸タイプで 0.434〜0.614（全幅1.41倍。床面積比の2.7倍から大幅改善）
+//    壁は「床の広さ」ではなく「壁の長さ×高さ」で発生するので、構造としてこちらが正しい。
+//    ※ 別府の周長は正解JSONに無いため巾木から復元した（巾木/周長=0.588。
+//      アルファGの実測 巾木56.44m ÷ 展開図実測周長95.97m。巾木は開口と水回りで欠ける分だけ短い）。
+//      この復元は近似なので、係数は帯の中央付近に置き、幅は override で吸収させる。
+//
+//  ■ なぜ「壁 石膏ボード」単独ではなく PB系合計で係数を持つか
+//    遮音壁の比率が物件で全く違う（遮音/(壁+遮音)）:
+//      アルファG 10% ／ 別府 21〜47%
+//    ＝ 同じ壁量でも「一般壁」と「遮音壁」のどちらの行に載るかは**物件の壁種別区分**次第で、
+//    床面積からも周長からも一意に決まらない。安定するのは合計側なので、
+//    合計を周長から出し、一般壁の取り分（＝1−遮音等の比率）を wall_pb_general_ratio で持つ。
+//    既定はアルファ基準（後方互換）。
+//
+//  ■ 既定を 'renovation' にする理由（後方互換とリスク）
+//    既存の保存済みプロジェクトには building_type override が無い。既定を新築にすると
+//    **過去の全リノベ案件の壁PBが黙って跳ね上がる**（67㎡級で57→90枚台）。
+//    現行の出力はリノベ実績帯（0.50〜1.00枚/㎡）の中にあり実害が出ていないため、
+//    既定は据え置き＝'renovation' とし、新築は明示指定で入る（＝オプトイン）。
+const WALL_PB_COEFF_RENOVATION = 1.37;   // 枚/㎡（床面積比）。既存値そのまま＝リノベ側の出力を変えない
+const WALL_PB_RENOVATION_REDUCTION = 0.6; // 同上（実効 0.822枚/㎡ ＝ リノベ実績帯0.50〜1.00の中）
+// 新築: PB系合計 ㎡ = 周長m × 階高m × この係数
+const WALL_PB_PERIMETER_COEFF_NEW = 0.55; // 別府0.434〜0.547 / アルファG 0.614 の帯の中央寄り
+const WALL_PB_PERIMETER_COEFF_MAX = 2.0;  // 入力ガード（両面全面でも階高比2.0は超えない）
+// PB系合計のうち「壁 石膏ボード」行が取る比率。残りは遮音・耐水など他の行が持つ。
+//   アルファG実測: 122.061 ÷ (122.061+12.979+6.45) = 0.863
+//   別府9タイプ実測: 0.373〜0.654（mean 0.486）＝ 遮音壁の比率が物件で全く違うため
+//     （遮音/(壁+遮音): アルファ10% vs 別府21〜47%）。
+//   ★この比率は**壁量ではなく物件の壁種別区分**なので図面の面積からは決まらない。
+//     周長×階高で出す「PB系合計」の方は2物件で -15%〜+6%（mean -3.6%）に収まるのに対し、
+//     一般壁の取り分だけが 0.373〜0.863 と2.3倍開く。よって既定はアルファ基準に置き、
+//     他物件は wall_pb_general_ratio で指定する（別府なら '0.486'）。
+const WALL_PB_GENERAL_RATIO_ALPHA = 0.863;
+// 巾木から周長を復元する比（アルファG実測 56.44m ÷ 95.97m）。
+//   周長が直接読めない入力（従来パスは展開図なし＝面幅が無い）でのフォールバック用。
+const HABAKI_TO_PERIMETER_RATIO = 0.588;
+// 周長/床面積 の下限（実測帯からのフロア）。
+//   実測（周長÷床）: アルファA 1.417 / アルファG 1.459（いずれも展開図の面幅実測）、
+//   別府9タイプ 1.487〜1.835（巾木÷0.588で復元）。＝ 11住戸タイプで **1.42〜1.84**。
+//   一方「間仕切×2+躯体」の再構成はGで 76.1m（=1.157）と帯の下限を大きく割る。
+//   間仕切壁延長がAI読み取りで小さめに出る（収納内部・小部屋の壁が落ちる）ためで、
+//   これをそのまま新築式に入れると壁PBが構造的に過少になる。
+//   → 再構成値が実測帯の下限を割ったら下限で底上げする。**上限側は触らない**
+//     （大きい側は間仕切に躯体を含めた読みの可能性があり、既存の層1/層3ガードが受け持つ）。
+//   下限は実測min 1.417 をそのまま採る（安全側＝底上げしすぎない）。
+//
+// 【SF-2: Gタイプ新築 -12.8% の原因は係数 0.55 ではなく「周長の再構成」である】
+//   誤解しやすいので明記する。Gの新築評価が -12.8% になるのは、
+//     再構成周長 19.8×2+36.5 = 76.1m（＝周長/床 1.157）が実測帯の下限を割り、
+//     この下限で 65.76×1.417 = 93.18m へ**底上げされた結果**であって、
+//     93.18m は実測周長 95.97m に対して **-2.9%** しかズレていない。
+//   つまり残差の主因は「間仕切壁延長のAI読み取りが小さい」＝**入力側**であり、
+//   WALL_PB_PERIMETER_COEFF_NEW=0.55 を動かして埋めるべき誤差ではない
+//   （比較: Aタイプは間仕切24m指定で再構成 97.8m となり実測97.77mとほぼ一致＝底上げ不発火）。
+//   係数を触ると、周長が正しく取れているAタイプ側を巻き添えで狂わせる。
+//   なお下限が実測minそのものである以上、**底上げは常に安全側（過少）へ倒れる**
+//   （実測帯 1.42〜1.84 の最小値なので、底上げ後の周長が実測を上回ることはない）。
+const PERIMETER_PER_FLOOR_MIN = 1.417;
+
+/**
+ * 建物種別プロファイルの解決（2026-07-24）
+ *
+ * **物件種別の推定はしない**（図面から新築/リノベを当てるのは不確実で、外すと壁PBが
+ * 1.6倍ずれる）。必ず外から指定させる。未指定は後方互換の 'renovation'。
+ *
+ * 受け口（overrides = Overrideテーブルの itemKey→value・すべて文字列）:
+ *   building_type              'new'|'新築' / 'renovation'|'リノベ'|'リノベーション'|'改修'
+ *   wall_pb_perimeter_coeff    新築の周長係数（既定 0.55。別府実測0.434〜0.547・アルファG 0.614）
+ *   wall_pb_general_ratio      PB系合計のうち一般壁行の取り分（既定 0.863＝アルファG実測）
+ *
+ * @param overrides { [itemKey]: string }
+ * @returns { type, perimeter_coeff, general_ratio, source, invalid }
+ */
+export function resolveBuildingTypeProfile(overrides = {}) {
+  const source = { type: 'default', perimeter_coeff: 'default', general_ratio: 'default' };
+  const invalid = {};
+
+  // 0より大きい数値のみ許可。resolveKiwanetaProfile と同じ方針で暗黙の文字除去はしない
+  //   （'0.55'→55 の100倍化や '-0.5'→0.5 の符号反転を起こさないため）
+  const num = (raw, max) => {
+    if (raw === null || raw === undefined) return undefined;
+    const s = String(raw).trim();
+    if (s === '') return undefined;
+    const n = /^\d*\.?\d+$/.test(s) ? Number(s) : Number.NaN;
+    if (Number.isFinite(n) && n > 0 && n <= max) return n;
+    return { bad: s };
+  };
+
+  let type = 'renovation'; // 既定＝後方互換（既存プロジェクトの出力を変えない）
+  const rawT = overrides.building_type;
+  if (rawT !== null && rawT !== undefined && String(rawT).trim() !== '') {
+    const s = String(rawT).trim();
+    if (/^(new|新築|新築工事)$/i.test(s)) { type = 'new'; source.type = 'override'; }
+    else if (/^(renovation|reno|リノベ|リノベーション|改修|リフォーム)$/i.test(s)) {
+      type = 'renovation'; source.type = 'override';
+    } else invalid.type = s;
+  }
+
+  let perimeter_coeff = WALL_PB_PERIMETER_COEFF_NEW;
+  const pc = num(overrides.wall_pb_perimeter_coeff, WALL_PB_PERIMETER_COEFF_MAX);
+  if (typeof pc === 'number') { perimeter_coeff = pc; source.perimeter_coeff = 'override'; }
+  else if (pc) invalid.perimeter_coeff = pc.bad;
+
+  let general_ratio = WALL_PB_GENERAL_RATIO_ALPHA;
+  const gr = num(overrides.wall_pb_general_ratio, 1.0);
+  if (typeof gr === 'number') { general_ratio = gr; source.general_ratio = 'override'; }
+  else if (gr) invalid.general_ratio = gr.bad;
+
+  return { type, perimeter_coeff, general_ratio, source, invalid };
+}
+
+/**
+ * 壁の総延長（周長）m を解決する。
+ *   優先順位: ①展開図の面幅合計（最も確か・実測）> ②間仕切×2+躯体（従来パスの壁面積の分解）
+ *   ③巾木推定からの復元（最後の手段）
+ * 新築の壁PB推定は「周長×階高」なので、周長をどこから採るかで精度が決まる。
+ * @returns {{ perimeter_m:number, source:string }}
+ */
+export function resolveWallPerimeterM({
+  elevationPerimeterM, partitionWallLengthM, structuralWallLengthM, habakiM, floorAreaSqm,
+}) {
+  const pos = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  const ev = pos(elevationPerimeterM);
+  // 展開図の面幅合計は実測なので、下限の底上げは掛けない（実測を推定で書き換えない）
+  if (ev > 0) return { perimeter_m: ev, source: 'elevation', floored: false };
+
+  // 展開図なし: 部屋を1周する線の長さ＝間仕切は両側の部屋から2回数えられ、躯体は1回。
+  //   従来パスの wallArea = 間仕切×CH×2 + 躯体×CH×1 と同じ分解（＝既存の壁面積と整合する）。
+  const part = pos(partitionWallLengthM), st = pos(structuralWallLengthM);
+  const hb = pos(habakiM);
+  let raw = 0, source = 'none';
+  if (part > 0 || st > 0) { raw = part * 2 + st; source = 'partition_structural'; }
+  else if (hb > 0) { raw = hb / HABAKI_TO_PERIMETER_RATIO; source = 'habaki'; }
+
+  // 再構成値が実測帯の下限を割ったら底上げ（PERIMETER_PER_FLOOR_MIN のコメント参照）
+  const floor = pos(floorAreaSqm);
+  const minPerim = floor * PERIMETER_PER_FLOOR_MIN;
+  if (minPerim > 0 && raw < minPerim) {
+    return { perimeter_m: minPerim, source: raw > 0 ? `${source}_floored` : 'floor_area_min', floored: true };
+  }
+  return { perimeter_m: raw, source, floored: false };
+}
+
 export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // aiReadingがnull/undefined/空の場合のガード
   if (!aiReading) {
@@ -744,13 +925,17 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   //   部屋合計の方が大きい場合はvalidatorの按分補正済みなので触らない。
   const declaredArea = data.total_floor_area_sqm || 0;
   const netTarget = declaredArea > 0 ? declaredArea * 0.96 : 0;
+  // 拾い落ち補填で足した面積（＝部屋ラベルの無い区画）。天井PBの控除に使うため退避する。
+  let unlabeledFillArea = 0;
   if (netTarget > totalFloorArea && totalFloorArea > 0) {
     const shortfall = netTarget - totalFloorArea;
     flooringArea += shortfall; // 拾い落ちは廊下・居室など内装対象が大半
+    unlabeledFillArea = shortfall;
     totalFloorArea = netTarget;
   } else if (totalFloorArea === 0 && netTarget > 0) {
     // 部屋を1つも拾えなかった場合は専有面積ベースで最低限の内装面積を確保
     flooringArea = netTarget;
+    unlabeledFillArea = netTarget;
     totalFloorArea = netTarget;
   }
 
@@ -869,6 +1054,12 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     flooringArea = Math.max(0, flooringArea - Math.max(0, netTarget - roomsSumArea)) * inflationScale;
     cfArea *= inflationScale;
     tileArea *= inflationScale;
+    // 補填分も同じ理由で取り消す（＝天井PBの「ラベル無し区画」控除も無効化する）。
+    //   これを残すと、水増し是正で totalFloorArea が部屋実測(sanityBase)まで縮んだ後も
+    //   「誤読した総面積 − 部屋実測」ぶんの控除が効き続け、天井面積が大幅な過少になる
+    //   （実測: total誤読200㎡・部屋実測65㎡で ceilingArea 65→11.7㎡・天井PB 45→9枚）。
+    //   縮小後の totalFloorArea は部屋実測そのもので、ラベル無し区画は含まれていない。
+    unlabeledFillArea = 0;
     totalFloorArea = sanityBase;
     calcWarnings.push({
       field: 'floor_area_inflated',
@@ -889,7 +1080,118 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   //    （縮小後の totalFloorArea から生値の ubArea を引くと控除が過大になるため）
   const ubArea = rooms.filter(r => r.name?.includes('UB') || r.name?.includes('浴室')).reduce((sum, r) => sum + (r.area_sqm || 0), 0) * inflationScale;
   const closetArea = rooms.filter(r => r.name?.includes('クローゼット') || r.name?.includes('クロゼット') || r.name?.includes('CL') || r.name?.includes('収納') || r.name?.includes('物入')).reduce((sum, r) => sum + (r.area_sqm || 0), 0) * inflationScale;
-  let ceilingArea = totalFloorArea - ubArea - closetArea;
+  // 建物種別プロファイル（壁PBの式の選択と、直下の天井PB控除の適用条件に使う）。
+  //   種別は**推定せず** overrides.building_type で外から与える。既定は後方互換の 'renovation'。
+  //   設計根拠は resolveBuildingTypeProfile のブロックコメント。
+  //   ※ 警告の push は壁PBのブロック（下方）で行う（重複して積まないため）。
+  const buildingProfile = resolveBuildingTypeProfile(overrides);
+
+  // ── 拾い落ち補填分（部屋ラベルの無い区画）の天井PB対象外control ────────────────
+  // 【問題】上の ubArea/closetArea 控除は「AIがUB・収納を部屋として拾えた場合」しか効かない。
+  //   実際の平面詳細図では UB・押入・PS・MB に㎡ラベルが無いことが多く、AIは居室しか返さない。
+  //   その場合 netTarget(専有×0.96) との差が丸ごと unlabeledFillArea として床に足され、
+  //   控除ゼロのまま天井面積になる＝UB・収納・PSの天井までPBを張ることになり過大。
+  //
+  // 【XLSの拾い構造（①A~F.XLS / ②G.XLS の集計表77行を、参照先のタイプ別シートまで辿って確認）】
+  //   集計表C77 = 'Ａタイプ'!P45+P154+P208+P260+P309+P364+P418
+  //     = 玄関・廊下4.833 + 洋室(1)+CL 11.150 + 洋室(2)+CL 9.034 + 洋室(3)+CL 8.477
+  //       + LDK 22.950 + 便所1.330 + 洗面所3.233 = 61.007㎡
+  //   ＝ 居室・廊下・便所・洗面の天井は拾うが、**UB・押入・PSの天井は拾わない**
+  //     （押入ブロックには専用行「押入天井」(Ａタイプ!P464)が別に在り、値0＝C77の参照に含まれない）。
+  //   これは「UBは天井ユニット同梱・押入とPSはPBを張らない」という実務仕様に対応する。
+  //
+  // 【控除量の出所（答え合わせではなく面積表からの導出）】
+  //   意匠図page_12の面積表（内法）と各タイプの天井PB実測（XLS集計表77行）から、
+  //   「内法面積 − 天井PB面積」＝ UB・押入・PS等の**天井対象外面積の実測**を求めると:
+  //     Aタイプ 68.00−61.007=6.993 ／ Gタイプ 64.80−59.087=5.713
+  //     Bタイプ 64.80−60.122=4.678 ／ Cタイプ 64.80−59.904=4.896
+  //     Dタイプ 64.80−60.292=4.508 ／ Eタイプ 64.80−60.040=4.760
+  //   ＝ 6タイプで **4.51〜6.99㎡（平均5.258㎡）** の狭い帯に収まる。
+  //
+  // 【なぜ「比率」ではなく「絶対量」で持つのか（2026-07-25 MF-1 で設計変更）】
+  //   旧実装は「補填分 × 0.42」という**比率**で控除していたが、これは2つの理由で破綻していた:
+  //
+  //   (a) 対象外面積は UB・押入・PS という**実在する区画の実寸**であって、
+  //       「AIが何㎡拾い落としたか」には比例しない。補填分が大きいほど UB が広くなる
+  //       わけではない。実際 rooms:[]（部屋を1つも拾えない）だと補填分＝床面積全体になり、
+  //       控除が 62.40×0.42＝26.2㎡ まで膨張して天井PBが 45→25枚（-43%）に退行していた。
+  //   (b) 上の実測帯は**内法全体**から引いた値なので、UB も押入も**すでに含んでいる**。
+  //       そこへ ubArea/closetArea の明示控除を重ねると同じ区画を二重に引く。
+  //       （導出に使ったA・Gの両ケースはたまたま ubArea=closetArea=0 だったため、
+  //         導出時には二重控除が表面化せず、実運用でUB・CLがラベル付きで拾えたときだけ
+  //         発火する潜伏バグになっていた。実測: 補填分19.1㎡で8.03㎡の重複控除＝-16%）
+  //
+  //   → 控除は「対象外面積の実測平均 5.258㎡ から、**すでに ubArea/closetArea で引いた分を差し引いた残り**」
+  //     とする。UB・収納をAIが拾えていれば控除は自動的に小さくなり（二重控除の解消）、
+  //     1つも拾えていなければ 5.258㎡ 全量を引く（従来の狙いどおり）。
+  //   → さらに上限を「補填分」に置く。ラベルのある居室の天井はXLS実測どおり㎡ラベルと
+  //     ほぼ一致する（Aタイプ: ラベル5室51.94㎡ vs XLS同5室天井51.61㎡＝比0.9937）ので、
+  //     **拾えている部屋の天井を削ってはいけない**。
+  //
+  // 【検算（導出に使った2タイプで再現すること・数式はそのまま計算して合う）】
+  //   Aタイプ: netTarget 71.90×0.96=69.024 ／ ラベル5室合計 51.940（atype_ground_truth.json）
+  //     → 補填分 69.024−51.940=17.084、控除 min(5.258−0−0, 17.084)=5.258
+  //     → 天井 69.024−5.258=63.766 ㎡（XLS実測 61.007 に対し +4.5%）
+  //   Gタイプ: netTarget 66.70×0.96=64.032 ／ ラベル8室合計 50.970（gtype_parsedData.json）
+  //     → 補填分 64.032−50.970=13.062、控除 min(5.258−0−0, 13.062)=5.258
+  //     → 天井 64.032−5.258=58.774 ㎡（XLS実測 59.087 に対し −0.5%）
+  //   ※ 旧コメントは A を「(69.02−61.007)/16.39=0.4267」と書いていたが、実際に計算すると
+  //     0.4889 であり、分母16.39も netTarget−ラベル合計＝17.084 と一致しない（＝再現不能な記述だった）。
+  //     絶対量モデルは上記のとおり原典セル（内法面積表・XLS天井実測）から直接導出でき、
+  //     両タイプとも実際に計算して合う。
+  //
+  // 【物件依存であること】この帯はアルファステイツ新宮町の実測。他物件（別府等）で外れる場合に備え
+  //   overrides.unlabeled_non_ceiling_sqm で差し替え可能。**'0' を指定すると控除を完全に無効化**できる
+  //   （UB・PSまで天井PBを張る物件・すでに全区画がラベル付きで拾えている場合の逃げ道）。
+  const UNLABELED_NON_CEILING_SQM_DEFAULT = 5.258; // A〜Gタイプ6件の実測平均（4.51〜6.99の帯）
+  const UNLABELED_NON_CEILING_SQM_MAX = 30;        // 入力ガード（住戸1戸のUB+押入+PSが30㎡を超えることはない）
+  const unlabeledNonCeilingSqm = (() => {
+    const raw = overrides.unlabeled_non_ceiling_sqm;
+    if (raw === null || raw === undefined || String(raw).trim() === '') return UNLABELED_NON_CEILING_SQM_DEFAULT;
+    const s = String(raw).trim();
+    // 暗黙の文字除去はしない（'-5'→5 の符号反転や '5m'→5 の桁化を防ぐ。他のoverrideと同じ方針）
+    const n = /^\d*\.?\d+$/.test(s) ? Number(s) : Number.NaN;
+    if (Number.isFinite(n) && n >= 0 && n <= UNLABELED_NON_CEILING_SQM_MAX) return n;
+    calcWarnings.push({
+      field: 'unlabeled_non_ceiling_sqm_invalid',
+      message: `ラベル無し区画の天井対象外面積の指定値（${s}）が不正のため既定の`
+        + `${UNLABELED_NON_CEILING_SQM_DEFAULT}㎡を使用しました`
+        + `（0以上${UNLABELED_NON_CEILING_SQM_MAX}以下の㎡で入力してください。0で控除を無効化できます）`,
+      before: s,
+      after: UNLABELED_NON_CEILING_SQM_DEFAULT,
+    });
+    return UNLABELED_NON_CEILING_SQM_DEFAULT;
+  })();
+  // 【控除を適用する条件（3つすべてを満たすときのみ）】
+  //
+  //  ① building_type === 'new'（新築指定）であること。
+  //     この控除の根拠（内法面積表・XLS天井実測・「UBは天井ユニット同梱／押入・PSはPBを張らない」）は
+  //     **すべてアルファステイツ新宮町＝新築の拾い構造**から来ている。リノベの実績側には
+  //     「UB・押入の天井を拾わない」ことを示すデータが1件も無い（けいとさん資料の天井CLは
+  //     52〜75㎡で内訳不明）。根拠の無い既定パスに控除を効かせると、既存の保存済みプロジェクト
+  //     （building_type override を持たない＝全件リノベ既定）の天井PBが黙って4枚前後下がる。
+  //     壁PB側と同じ方針＝**新築はオプトイン、リノベ既定は1枚も変えない**に揃える。
+  //     ※ 検証: 旧実装との総当たり差分で天井PB系の退行0件（scripts/test-ceiling-unlabeled.mjs）。
+  //
+  //  ② 補填分が実在する（unlabeledFillArea > 0）こと。補填が無い＝全区画がラベル付きで
+  //     拾えているので、引くべき「ラベルの無い区画」は存在しない。
+  //
+  //  ③ **部屋を1つ以上拾えている**こと（roomsSumArea > 0）。
+  //     rooms:[] は「この住戸にUB・PSがある」という根拠が図面側に1つも無い状態であり、
+  //     そこで対象外面積を差し引くのは推定の上に推定を重ねることになる
+  //     （旧比率モデルではここが最悪の退行点だった: 控除26.2㎡・天井PB 45→25枚＝-43%）。
+  //     部屋が1つも無い時点で既に精度は保証外なので **安全側＝控除せず** に倒し、
+  //     既存の ceiling_pb_area_small 等の警告に判断を委ねる。
+  const hasRoomEvidence = roomsSumArea > 0;
+  // すでに ubArea/closetArea で引いた分を相殺し（二重控除の防止）、残りを補填分の範囲内で引く。
+  //   ※ ubArea/closetArea には inflationScale が適用済みなので、控除量も同じ土俵で比較する。
+  const unlabeledNonCeilingArea = (buildingProfile.type === 'new' && hasRoomEvidence && unlabeledFillArea > 0)
+    ? Math.max(0, Math.min(
+      unlabeledNonCeilingSqm - ubArea - closetArea, // 未控除の残りだけを引く
+      unlabeledFillArea * inflationScale,           // ラベルのある居室の天井は削らない
+    ))
+    : 0;
+  let ceilingArea = totalFloorArea - ubArea - closetArea - unlabeledNonCeilingArea;
   // 天井面積が0以下の場合、床面積の90%として推定（最低50㎡）
   if (ceilingArea <= 0) {
     ceilingArea = totalFloorArea > 0 ? totalFloorArea * CEILING_AREA_RATIO : 50;
@@ -1212,12 +1514,70 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // === 石膏ボード ===
 
   // 壁PB t-9.5 (3'×6') - メイン壁用
-  // アルファステイツ実績: 6,010枚/67戸 = 約90枚/戸
-  // 床面積係数: 90枚 / 65.8㎡ ≒ 1.37枚/㎡
-  const wallPbCoeff = 1.37;
-  let wallPb95Sheets = Math.ceil(totalFloorArea * wallPbCoeff);
-  // リノベの場合は少なめに調整（新築の60%程度）
-  wallPb95Sheets = Math.ceil(wallPb95Sheets * WALL_PB_REDUCTION);
+  //
+  // 【建物種別で構造ごと切り替える（2026-07-24）】設計の根拠は resolveBuildingTypeProfile の
+  //   ブロックコメント（旧0.6の出自調査・床面積比が物件を跨げない実証・周長ベースの実測分布）。
+  //   種別は**推定せず**必ず overrides.building_type で外から与える。既定は後方互換の 'renovation'。
+  //
+  //   リノベ: 床面積 × 1.37 × 0.6（＝実効0.822枚/㎡）… 既存式そのまま＝出力を1枚も変えない
+  //   新築  : 周長 × 階高 × 0.55 → PB系合計㎡ → × 0.863（一般壁の取り分）→ ÷1.4（XLS換算係数）
+  //           ※ ÷1.6562（3'×6'の実面積）ではなく **÷1.4** を使う。1.4はXLS集計表X列の
+  //             実運用換算係数（ロス・切り無駄込み）で、正解データ（枚数）はこの係数で作られている。
+  // buildingProfile は天井面積の算出（上方）でも使うため、この関数の前半で解決済み。
+  if (buildingProfile.invalid.type) {
+    calcWarnings.push({
+      field: 'building_type_invalid',
+      message: `建物種別の指定値（${buildingProfile.invalid.type}）を解釈できないため既定の「リノベーション」で計算しました`
+        + '（new/新築 または renovation/リノベ を指定してください）',
+      before: buildingProfile.invalid.type,
+      after: 'renovation',
+    });
+  }
+  for (const [k, label, def] of [
+    ['perimeter_coeff', '新築の壁PB周長係数', WALL_PB_PERIMETER_COEFF_NEW],
+    ['general_ratio', '壁PB一般壁比率', WALL_PB_GENERAL_RATIO_ALPHA],
+  ]) {
+    if (buildingProfile.invalid[k]) {
+      calcWarnings.push({
+        field: `${k}_invalid`,
+        message: `${label}の指定値（${buildingProfile.invalid[k]}）が不正のため既定の${def}を使用しました`,
+        before: buildingProfile.invalid[k], after: def,
+      });
+    }
+  }
+
+  let wallPb95Sheets;
+  let wallPbCalcNote;
+  if (buildingProfile.type === 'new') {
+    // 新築: 壁は「床の広さ」ではなく「壁の長さ×高さ」で発生する
+    const perim = resolveWallPerimeterM({
+      partitionWallLengthM: partitionWallLength,
+      structuralWallLengthM: structuralWallLength,
+      floorAreaSqm: totalFloorArea,
+    });
+    const pbFamilySqm = perim.perimeter_m * ceilingHeight * buildingProfile.perimeter_coeff;
+    const generalSqm = pbFamilySqm * buildingProfile.general_ratio;
+    wallPb95Sheets = Math.ceil(generalSqm / PB_CONVERSION_WALL);
+    wallPbCalcNote = `新築: 周長 ${perim.perimeter_m.toFixed(1)}m × 天井高 ${ceilingHeight.toFixed(2)}m`
+      + ` × ${buildingProfile.perimeter_coeff}（PB系係数） × ${buildingProfile.general_ratio}（一般壁比率）`
+      + ` ÷ ${PB_CONVERSION_WALL}㎡/枚`;
+    if (perim.perimeter_m <= 0) {
+      // 周長がまったく取れない＝間仕切も躯体も0。新築式が0枚を出すのを避け、リノベ式へ退避して警告
+      wallPb95Sheets = Math.ceil(Math.ceil(totalFloorArea * WALL_PB_COEFF_RENOVATION) * WALL_PB_RENOVATION_REDUCTION);
+      wallPbCalcNote = `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${WALL_PB_COEFF_RENOVATION}枚/㎡ × ${WALL_PB_RENOVATION_REDUCTION}（周長不明のため従来式）`;
+      calcWarnings.push({
+        field: 'wall_pb_perimeter_missing',
+        message: '新築指定ですが壁の延長（間仕切・躯体）を読み取れなかったため、'
+          + '床面積ベースの従来式で仮計算しました。壁PBが過少になる可能性があります（要確認）',
+        before: 0, after: wallPb95Sheets,
+      });
+    }
+  } else {
+    // リノベ: 既存式を1文字も変えない（けいとさん実績帯0.50〜1.00枚/㎡の内側）
+    wallPb95Sheets = Math.ceil(totalFloorArea * WALL_PB_COEFF_RENOVATION);
+    wallPb95Sheets = Math.ceil(wallPb95Sheets * WALL_PB_RENOVATION_REDUCTION);
+    wallPbCalcNote = `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${WALL_PB_COEFF_RENOVATION}枚/㎡ × ${WALL_PB_RENOVATION_REDUCTION}（リノベ係数）`;
+  }
   // 旧: Math.min(Math.max(wallPb95Sheets, 30), 90) → 別府I=98.4枚を90で頭打ち・B=23.6枚を30へ底上げ
   //
   // 【床面積比の部位capは置かない（2026-07-24 M-2）】この式の出力は床面積の固定倍
@@ -1228,7 +1588,6 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   //   「declared≤150 かつ roomsSum≤declared×1.25」の帯では発火せず、床面積の警告が
   //   1件も出ないまま最大187㎡ベースの計算が通る（decl=150/rooms=187 で155枚）。
   //   絶対上限は床面積比と違い床面積が伸びれば必ず到達する＝この帯の最終防波堤になる。
-  let wallPbCalcNote = `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${wallPbCoeff}枚/㎡ × 0.6（リノベ係数）`;
   const wallPbCapped = applyAbsoluteCap({
     value: wallPb95Sheets, absoluteMax: WALL_PB_ABSOLUTE_MAX_SHEETS,
     field: 'wall_pb_absolute_cap', label: '壁石膏ボード', unit: '枚',
@@ -3244,7 +3603,10 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       waterproof_pb_sheets: wallPbWaterSheets,
       ev_wall_pb_sqm: evWallPb95Area,
       ev_wall_pb_sheets: evWallPb95Sheets,
-      sound_wall_pb_sqm: soundWallPbSqm
+      sound_wall_pb_sqm: soundWallPbSqm,
+      // 壁PB推定パスがどちらの式で計算されたか（'new'|'renovation'）。
+      // 展開図ありの本番経路では applyElevationTakeoff が実測で置換するため表に出ない
+      building_type: buildingProfile.type,
     },
     estimate: {
       category_totals: categoryTotals,
