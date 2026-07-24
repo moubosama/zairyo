@@ -136,10 +136,146 @@ const VALID_BASE_CODES = 'ZCDGHILSOW';
 
 export function parseWallCode(code) {
   if (typeof code !== 'string') return null;
-  const m = code.trim().toUpperCase().match(/^([A-Z])([0-9])([0-9])$/);
-  if (!m) return null;
+  const s = code.trim().toUpperCase();
+  const m = s.match(/^([A-Z])([0-9])([0-9])$/);
+  if (!m) return parseBeppuWallCode(s); // 3桁でなければ別府方式（1文字記号）を試す
   if (!VALID_BASE_CODES.includes(m[1])) return null;
   return { base: m[1], mid: parseInt(m[2], 10), surf: parseInt(m[3], 10) };
+}
+
+// ============================================================
+// 別府4丁目方式（1文字の壁仕上記号）→ 内部表現（base/mid/surf）への正規化
+// ============================================================
+// 【背景】壁に記号が付く方式そのものはアルファステイツ新宮町（3桁 G14/C04）と同じだが、
+// 別府4丁目プロジェクトの図面（意匠図 page_036 Ａタイプ平面詳細図の凡例・2026-07-24実測）は
+// **丸囲み/枠囲みの1文字**で仕上げ構成を指定する:
+//
+//   Ａ  ビニルクロス貼、ＰＢt9.5                         → PBあり（一般間仕切）
+//   Ｂ  ビニルクロス貼、ＰＢt9.5（ＧＬ工法）              → PBあり（GL工法=RC面のふかし）
+//   Ｃ  ビニルクロス貼、コンクリート打放し補修            → PBなし
+//   Ｄ  吹付けタイル、コンクリート打放し補修              → PBなし
+//   Ｅ  アクリル系リシン吹付け、コンクリート打放し補修     → PBなし
+//   Ｆ  アクリル系リシン吹付け、ＬＧＳ下地＋ケイカル板t6.0 → PBでない（ケイカル板）
+//   Ｇ  コンクリート打放し補修のまま                     → PBなし
+//   遮  戸境二重遮音壁: 胴縁+ＰＢt9.5(ＧＷ24Ｋ充填)+遮音シート+ＰＢt9.5
+//   Ｇ(枠囲み) 戸境二重壁: 胴縁＋ＰＢt9.5（ＧＷ24Ｋ充填）
+//
+// 【設計方針】アルファの3桁パスには一切触れず、1文字記号を既存の内部表現へ「翻訳」する。
+// 下流（面割付・部位振り分け・遮音ルール・材積換算）は base/mid/surf しか見ていないため、
+// 翻訳さえ正しければロジックの再実装が要らない＝アルファ側の回帰リスクがゼロになる。
+//
+// 【Ｇの二義性の扱い（最重要）】凡例のＧは2つある:
+//   (a) 丸囲みＧ = コンクリート打放し補修のまま（PBなし）
+//   (b) 枠囲みＧ = 戸境二重壁（胴縁+PB+GW。PBあり・GWあり）
+// 図面上は「丸囲み/枠囲み」で区別されるが、**AIの転記でこの囲み形状が来る保証は無い**
+// （現状のプロンプトは記号の文字しか要求していない）。そこで:
+//   ・既定（囲み情報なし・裸の 'G'）は **(a) PBなし＝打放し** に倒す。
+//     根拠: ①凡例のＡ〜Ｇは連続した仕上げ表であり丸囲みＧがその末項＝出現頻度が高い
+//           ②誤って(b)にすると PB+GW を戸境全面に積む＝壁PB暴発（+245%側）に戻る。
+//           (a)に倒した場合の誤りは「戸境二重壁を打放し扱いで拾い落とす」＝過少側で、
+//           サニティ（比の上限）にも掛からず静かに止まるため安全側と判断した。
+//   ・区別情報が来た場合はそれを優先する。優先順位:
+//       ① 明示の別表記（'G枠' / 'G(枠)' / '戸境' 等 → BEPPU_WALL_CODE_MAP のキー）
+//       ② item.shape / enclosure が 'box'|'枠'|'四角' → 戸境二重壁(b)、'circle'|'丸' → 打放し(a)
+//       ③ 情報なし → 既定(a)
+//     ②はプロンプト側が囲み形状を返せるようになった場合の受け口（parseWallCode の第2引数）。
+//
+// 【アルファ側との衝突が無いことの確認】アルファの記号は必ず「英字1+数字2」の3桁で、
+// 1文字記号は3桁の正規表現にマッチしない。逆に別府の1文字は3桁パスを通らない。
+// よって同じ文字（例 'G'）でも文字列長で完全に分岐し、相互汚染しない。
+// ※ただし 'C'（別府=打放し）と 'C04'（アルファ=打放し）は意味も一致しており、
+//   仮に取り違えても部位振り分けは同じになる。
+//
+// 【マッピングの根拠】右列が翻訳先の3桁コード。mid: 0=ナシ/1=PB9.5/2=耐水PB/4=PB9.5 GL工法、
+// surf: 0=ナシ/4=クロス貼。base: G=間仕切木下地/C=打放/D=RC面木(GL・ふかし)/W=遮音系。
+const BEPPU_WALL_CODE_MAP = {
+  // Ａ: 間仕切下地+PB9.5+ビニルクロス = アルファのG14と同一構成
+  'A': { base: 'G', mid: 1, surf: 4, beppu: 'A' },
+  // Ｂ: GL工法のPB9.5+クロス。GL工法はRC面のふかし=アルファのD14（中間4=PB9.5GL工法）に対応。
+  //    D下地×中間4はエンジンで ev_wall_pb_sqm（防露/EV廻り壁の別部位）へ入る。
+  //    別府XLSにも「防露ふかし壁（ＰＢ）」行（X62=1.5）が実在し、壁PB本体と別部位で拾う運用が一致する
+  'B': { base: 'D', mid: 4, surf: 4, beppu: 'B' },
+  // Ｃ/Ｄ/Ｅ: 打放し補修（下地なし・PBなし）。仕上げがクロス/吹付タイル/リシン吹付で違うが
+  //    ボード類はいずれもゼロ。クロス（surf=4）はＣのみ、Ｄ/Ｅは吹付=クロスでないためsurf=0
+  'C': { base: 'C', mid: 0, surf: 4, beppu: 'C' },
+  'D': { base: 'C', mid: 0, surf: 0, beppu: 'D' },
+  'E': { base: 'C', mid: 0, surf: 0, beppu: 'E' },
+  // Ｆ: LGS下地+ケイカル板t6.0。**PBではない**ためPB系の中間コードを与えない（mid=0）。
+  //    ケイカル板の拾いは現状のtakeoffに部位が無く、別府XLS集計表にも該当行を確認していない
+  //    （正解JSONの10部位に無い）ため、面積は計上せず「PBに混ぜない」ことだけを保証する。
+  //    ※将来ケイカル板部位を作る場合はここに mid を新設して振り分ける
+  'F': { base: 'G', mid: 0, surf: 0, beppu: 'F' },
+  // Ｇ（丸囲み・既定）: 打放し補修のまま。仕上げもなし
+  'G': { base: 'C', mid: 0, surf: 0, beppu: 'G' },
+  // 遮: 戸境二重遮音壁（胴縁+PB+GW24K+遮音シート+PB）。
+  //    アルファのL14（遮音壁PB+GW）に遮音シートが加わった構成のため、
+  //    base='W'（遮音系・GWあり）に sound_sheet=true を添えて表現する（下の注記参照）
+  '遮': { base: 'W', mid: 1, surf: 4, beppu: '遮', sound_sheet: true },
+  // Ｇ（枠囲み）: 戸境二重壁（胴縁+PB+GW24K・遮音シートなし）= アルファのW系と同一構成
+  'G枠': { base: 'W', mid: 1, surf: 4, beppu: 'G枠' },
+};
+
+// 別府記号の表記ゆれ → 正規キー。全角英字・丸囲み文字（Ⓐ等）・囲み表記の明示形を吸収する。
+// 「戸境」「遮音」等の日本語表記もAIが返しうるため受ける（読取プロンプトは記号1文字を要求するが、
+// 説明語で返す実例がアルファのタイル読取でも観測されている）
+const BEPPU_ALIASES = {
+  'Ⓐ': 'A', 'Ⓑ': 'B', 'Ⓒ': 'C', 'Ⓓ': 'D', 'Ⓔ': 'E', 'Ⓕ': 'F', 'Ⓖ': 'G',
+  '遮音': '遮', '遮音壁': '遮', '戸境二重遮音壁': '遮',
+  'G枠': 'G枠', 'G(枠)': 'G枠', 'G（枠）': 'G枠', '枠G': 'G枠',
+  '戸境': 'G枠', '戸境二重壁': 'G枠',
+};
+
+/**
+ * 別府方式の1文字壁仕上記号をパースする（純関数・scripts/test-beppu-wallcode.mjsで検証）
+ *
+ * @param {string} raw 記号（'A' / 'Ａ' / '遮' / 'G枠' 等。呼び出し元でtrim+大文字化済みを想定）
+ * @param {object} [hint] 囲み形状のヒント { shape: 'circle'|'box'|'丸'|'枠'|'四角' }。
+ *   Ｇの二義性の解決にのみ使う（他の記号は形状に依らず一意）
+ * @returns {{base, mid, surf, beppu, sound_sheet?}|null}
+ */
+export function parseBeppuWallCode(raw, hint = null) {
+  if (typeof raw !== 'string') return null;
+  // 全角英字→半角、空白除去（'Ａ' → 'A'）。長音・ハイフンは別府記号に出ないため触らない
+  let s = raw
+    .replace(/[ａ-ｚＡ-Ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/[\s　]/g, '')
+    .toUpperCase();
+  if (!s) return null;
+  if (BEPPU_ALIASES[s]) s = BEPPU_ALIASES[s];
+  // Ｇの二義性: 囲み形状のヒントがあれば既定より優先する（BEPPU_WALL_CODE_MAPのコメント参照）
+  if (s === 'G' && hint) {
+    const shape = String(hint.shape || hint.enclosure || '');
+    if (/box|枠|四角|角/i.test(shape)) s = 'G枠';
+    // circle/丸 は既定(a)と同じ=打放しのため変換不要
+  }
+  const hit = BEPPU_WALL_CODE_MAP[s];
+  return hit ? { ...hit } : null;
+}
+
+/**
+ * 読取アイテムの (code, shape) を「保存する記号文字列」へ正規化する（純関数）
+ *
+ * 保存データ（wall_finish_codes[].placements[].code / faces[].wall_code）は文字列1つしか
+ * 持たないため、別府方式のＧの二義性（丸囲み=打放し / 四角囲み=戸境二重壁）を
+ * **読み取った時点で文字列に畳み込む**。四角囲みのＧだけ 'G枠' に確定させ、
+ * 丸囲み・形状不明は 'G'（=打放し・既定の安全側）のまま通す。
+ * これによりスキーマを増やさずに済み、リプレイ・再計算でも同じ意味へ解決される。
+ *
+ * アルファの3桁記号は shape の有無に関わらず素通し（大文字化+trimのみ＝従来と同一）。
+ *
+ * @param {string} rawCode 読み取った記号
+ * @param {string|null} shape 囲み形状 'circle'|'box'|'丸'|'枠'|'四角' 等（無ければnull）
+ * @returns {string|null} 保存用の記号文字列。無効ならnull
+ */
+export function canonicalizeWallCode(rawCode, shape = null) {
+  if (rawCode == null) return null;
+  const s = String(rawCode).toUpperCase().trim();
+  if (!s) return null;
+  // 3桁（アルファ方式）はそのまま（shapeは無視）
+  if (/^[A-Z][0-9][0-9]$/.test(s)) return s;
+  // 別府方式: 形状ヒント込みで解釈し、正規キー（BEPPU_WALL_CODE_MAPのキー）へ寄せる
+  const parsed = parseBeppuWallCode(s, shape ? { shape } : null);
+  return parsed ? parsed.beppu : null;
 }
 
 // ============================================================
@@ -646,6 +782,11 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   };
   // ガード発動などの要確認事項（applyElevationTakeoffがresult._warningsへ載せ替える）
   t._warnings = [];
+  // 別府方式Ｇの囲み形状が不明のまま既定（丸囲み=打放し・PBなし）で処理した件数（2026-07-24）。
+  // 図面実測ではＧは四角囲み（丸囲みは遮のみ）だったため既定が外れる公算があり、
+  // 外れた場合は戸境二重壁のPB+GWが**静かに過少**になる（サニティは上限側しか見ない）。
+  // 面/plan_codes/plan_placementsの3経路すべてで数え、下で_warningsに集約する
+  t.beppu_g_shape_unknown = 0;
 
   // 高さ誤転記の疑い寸法（2026-07-19 Gemini読取ノイズ対策）: 平面図タイルの壁寸法(wall_length_mm)に
   // 天井高（2,400/2,200等の図面内の高さ表記）が混入する実例があるため、いずれかの部屋のCHと
@@ -671,6 +812,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // D6*実測が、展開図に無い別の収納の推定分から差し引かれてゼロ化する（2026-07-18レビュー確定バグ）
   const d6ByElevRoom = new Map(); // 正規化部屋名 -> D6*面幅合計(m)
 
+  // 別府方式Ｇ（囲み形状不明）の検出（④・2026-07-24）。
+  // canonicalizeWallCodeが四角囲みを 'G枠' へ畳み込むため、保存データに素の 'G' が残っている
+  // ＝「丸囲みだった」か「形状が判別できなかった」のどちらか。読取側は形状不明時に shape:null を
+  // 返す（推測禁止）ので、素の 'G' の大半は後者とみなして数える。
+  // アルファの3桁記号（G14等）は長さで分岐するためここに掛からない（=通常運用で非発火）。
+  const isBeppuBareG = (raw) => typeof raw === 'string'
+    && String(raw).trim().toUpperCase() === 'G';
+
   for (const room of rooms) {
     // UB内部の立面は拾わない（UB_ROOM_NAME_RE参照。読取ノイズで幻出した室のスキップ）
     if (UB_ROOM_NAME_RE.test(normalizeRoomName(room.name))) continue;
@@ -688,6 +837,16 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // ただし「PBを張らない/特殊な構成」（C=打放, D6*=コンパネ, Z=ナシ等）を全面に
     // 適用するのは危険（記号の部屋帰属はタイル境界で誤りうる。トイレ全面コンパネ等の
     // 誤分類を実測で確認済み）ため、全面適用は標準的なPB構成のみに限定する。
+    // 囲み形状不明のＧの計数（④・上のisBeppuBareG参照）。読取の3経路すべてを見る。
+    // plan_codesはSet化前の生配列で数える（同じ部屋に複数面あれば複数件として警告に出す）
+    for (const f of faces) if (isBeppuBareG(f?.wall_code)) t.beppu_g_shape_unknown++;
+    for (const c of (Array.isArray(room.plan_codes) ? room.plan_codes : [])) {
+      if (isBeppuBareG(c)) t.beppu_g_shape_unknown++;
+    }
+    for (const pl of (Array.isArray(room.plan_placements) ? room.plan_placements : [])) {
+      if (isBeppuBareG(pl?.code)) t.beppu_g_shape_unknown++;
+    }
+
     const planCodes = Array.isArray(room.plan_codes)
       ? [...new Set(room.plan_codes.map((c) => String(c).toUpperCase()).filter((c) => parseWallCode(c)))]
       : [];
@@ -697,7 +856,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       // 全面適用は「通常PB（中間1/4）」のみ。耐水（2/5）はUB隣接の特定面にしか
       // 張らないため全面適用しない（トイレ全面耐水などの過大計上を防ぐ。面単位の
       // 割付はplan_placementsの寸法マッチで行う）
-      const isStandardPb = c && ['G', 'I', 'H', 'L', 'O', 'W', 'S'].includes(c.base) && [1, 4].includes(c.mid);
+      // 別府方式の遮音系（遮 / G枠 → base W）も全面適用しない: 戸境壁は住戸の外周側1〜2面に
+      // しか無いのに、その部屋で読めた記号が遮だけだと四方全面が遮音壁PB（下地高×両面+GW）に
+      // 化け、遮音壁PBが4倍規模で暴発する。別府の遮/G枠は必ず面単位（plan_placementsの
+      // 寸法マッチ or 面のwall_code）で割り付ける（2026-07-24 別府対応で追加した安全弁）。
+      // ※アルファ側は 'L14 のみ' の部屋が実データに無く、この除外で挙動が変わらないことを
+      //   eval/replay全記録で確認済み（アルファ不変）
+      const isStandardPb = c && ['G', 'I', 'H', 'L', 'O', 'W', 'S'].includes(c.base)
+        && [1, 4].includes(c.mid) && !(c.beppu && ['遮', 'G枠'].includes(c.beppu));
       if (isStandardPb) roomDefaultCode = c;
     }
 
@@ -1029,7 +1195,11 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         t.sound_wall_pb_sqm += netSlab;
         t.partition_face_length_m += w;
         if (code.base !== 'O') t.gw_sqm += netSlab;
-        if (code.base === 'O') t.sound_sheet_sqm += netSlab;
+        // 遮音シート: アルファの下地Ｏ（間仕切木+遮音シート・GWなし）に加え、
+        // 別府の「遮」（胴縁+PB+GW24K+遮音シート+PB）も対象。別府の遮はGWと遮音シートが
+        // **同居する**（アルファのL/O=排他とは構成が違う）ため、GW側のifとは独立に加算する。
+        // sound_sheetフラグは parseBeppuWallCode が付与する（3桁コードには付かない＝アルファ不変）
+        if (code.base === 'O' || code.sound_sheet === true) t.sound_sheet_sqm += netSlab;
       } else {
         if (code.base === 'G') t.partition_face_length_m += w;
         if (code.base === 'S') t.gw_sqm += net;
@@ -1180,6 +1350,58 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     });
   }
 
+  // 別府方式Ｇの囲み形状が判別できなかった場合の明示（should-fix④・2026-07-24）。
+  // 既定は「丸囲み＝打放し（PBなし）」＝過少側だが、図面実測ではＧは四角囲み（丸囲みは遮のみ）
+  // だったため、既定が外れて戸境二重壁のPB・GWが丸ごと落ちる公算がある。
+  // サニティは壁PBの**上限**しか見ないため、この過少は静かに通ってしまう → 明示的に警告する。
+  // アルファは記号が3桁（G14等）でここに掛からない＝通常運用では出ない
+  if (t.beppu_g_shape_unknown > 0) {
+    t._warnings.push({
+      field: 'wall_code_g_shape',
+      message: `Ｇ記号${t.beppu_g_shape_unknown}件の囲み形状（丸/四角）が判別できませんでした。`
+        + '打放し（ボードなし）として扱っています。'
+        + '四角囲みのＧ＝戸境二重壁（胴縁＋PBt9.5＋グラスウール24K）の場合、'
+        + 'その壁の壁PB・グラスウールが計上されず数量が過少になります（要確認）',
+      before: null, after: null,
+    });
+  }
+
+  // デフォルト遮音壁ルールの発火の明示（should-fix⑤・2026-07-24）。
+  // DEFAULT_SOUND_WALL_PAIRSはアルファステイツ新宮町Gタイプ専用の実測定数（LDK↔洋室(1)1450 /
+  // LDK↔洋室(3)1050）。部屋名と幅帯さえ合えば他物件でも発火するため（別府にもLDK・洋室1・洋室3が
+  // 実在する）、既定ルールを使って計上したことをユーザーに見せる。
+  // opts.soundWallRuleで明示的に指定された場合（別物件のルール・pairs:[]での無効化）は出さない
+  if (!Array.isArray(opts.soundWallRule?.pairs) && soundPairs.length > 0) {
+    t._warnings.push({
+      field: 'sound_wall_rule_default',
+      message: `住戸内遮音壁を既定ルール（アルファステイツ新宮町Gタイプ実測: `
+        + soundPairs.map((p) => `${p.roomA}↔${p.roomB} ${p.width_mm}mm`).join(' / ')
+        + `）で${soundPairs.length}枚計上しました。`
+        + '部屋名と壁幅が一致すれば別物件でも適用されるため、'
+        + '別物件の場合は遮音壁PB・グラスウールが実際と異なる可能性があります（要確認）',
+      before: null, after: null,
+    });
+  }
+
+  // 遮音シートが出力の資材行に存在しないことの明示（must-fix①・2026-07-24）。
+  // 別府の凡例では 遮＝「胴縁+PBt9.5(GW24K)+**遮音シート**+PBt9.5」で遮音シートは実在の部材だが、
+  // 発注用の独立行がXLSに無い（実測: 別府 集計表 54行「遮音壁ＰＢ張り」の規格は "t9.5+GW" で
+  // シートを含まず、シートは30行「EV面遮音壁（界壁）PBt9.5+9.5GW+ｼｰﾄ+木胴縁」・34行の
+  // **複合行の規格文字列の中にしか出てこない**＝単独の数量・単価を持たない。
+  // アルファの見積明細（名称/摘要の正）にも遮音シート行は存在しない）。
+  // 名称・摘要・単価の正が無い行を勝手に作らない方針のため資材行は新設せず、
+  // 「拾えているが出力に出ない」ことを警告で可視化する（黙って落とさない）
+  if (t.sound_sheet_sqm > 0) {
+    t._warnings.push({
+      field: 'sound_sheet',
+      message: `遮音シート${Math.round(t.sound_sheet_sqm * 10) / 10}㎡を拾いましたが、`
+        + '資材リストには遮音シートの行がありません（発注用の独立行が拾い出しXLS・見積明細の'
+        + 'どちらにも無く、遮音壁の複合仕様の一部として扱われているため）。'
+        + '遮音シートを別途手配する運用の場合は、この面積を手動で追加してください（未実装項目）',
+      before: null, after: null,
+    });
+  }
+
   // 丸め
   for (const k of Object.keys(t)) {
     if (typeof t[k] === 'number') t[k] = Math.round(t[k] * 100) / 100;
@@ -1241,6 +1463,29 @@ export function applyElevationTakeoff(result, takeoff) {
   // EV廻り・防露壁PBはXLS X62=1.5で換算（壁PBの1.4ではない。A-4是正）
   set((m) => m.name === 'EV廻り壁 石膏ボード',
     Math.ceil(evPbSqm / EV_WALL_PB_SQM_PER_SHEET), `EV面実測 ${evPbSqm}㎡ ÷ ${EV_WALL_PB_SQM_PER_SHEET}㎡/枚`);
+  // 実測が実績スケールを大きく超えた場合の警告（should-fix③・2026-07-24）。
+  // この部位（防露ふかし壁/EV廻り壁）はXLS実測で**1戸あたり1〜2㎡台**の小さな行:
+  //   別府 集計表62行「防露ふかし壁（ＰＢ）」戸当 = A 1.36 / B 1.904 / C 0.816 / D 1.904 / G 2.176㎡
+  //   アルファ（同62行）も見積明細67戸平均 2.2枚/戸 相当
+  // 一方エンジンは「D下地×中間1/4の面」をこの部位に丸ごと入れるため、別府方式Ｂ（GL工法）が
+  // 面単位で数面読まれると壁PBから抜けた面積がそのままここへ積み上がり、実体1.36㎡の行が
+  // 10㎡超（=7〜12倍）に膨らみうる（レビュー実測: Ｂ1面で10.03㎡・2面で16.38㎡）。
+  // 記号→部位の振り分け方向は正しい（XLSも防露壁を壁PBと別行で拾う）が、
+  // 「Ｂが指すのはRC面の一部だけで壁1面全部ではない」という粒度差が未解決のため、
+  // 桁が合わない事実を隠さず出す。閾値は実績上限2.2㎡の約2倍=5㎡（1面ぶん未満で発火しない値）
+  const EV_WALL_PB_PLAUSIBLE_MAX_SQM = 5;
+  if (evPbSqm > EV_WALL_PB_PLAUSIBLE_MAX_SQM) {
+    result._warnings = result._warnings || [];
+    result._warnings.push({
+      field: 'ev_wall_pb',
+      message: `EV廻り・防露ふかし壁の実測が${evPbSqm}㎡と大きすぎます`
+        + `（拾い出しXLSの実績は1戸あたり0.8〜2.2㎡）。`
+        + 'GL工法・防露壁の記号（別府方式Ｂ / アルファD14）が付いた壁を1面まるごと'
+        + 'この部位として拾っているためで、実際にはその壁の一部だけがふかし壁の可能性があります。'
+        + 'この面積は壁 石膏ボードから抜けているため、両方の数量を確認してください（要確認）',
+      before: null, after: evPbSqm,
+    });
+  }
   set((m) => m.name.includes('遮音壁PB'),
     takeoff.sound_wall_pb_sqm, `遮音壁面 Σ幅×高さ−開口`);
   // キッチンパネル: カウンター上帯の実測㎡（表面6）→ 3'×8'板（2.2022㎡/枚）で枚数化
