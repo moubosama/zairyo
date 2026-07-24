@@ -580,6 +580,9 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   }
 
   const materials = [];
+  // 計算由来の要確認警告（天井PBの面積水増しガード等）。返却オブジェクトの _warnings に載せ、
+  // routes/projects.js が source:'calculate' として AiReading.parsedData._warnings へマージ・永続化する。
+  const calcWarnings = [];
 
   // 天井高 (デフォルト2400mm)
   // フロントエンドから "2400mm" 形式で送られるため、数値部分を抽出
@@ -619,6 +622,11 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       flooringArea += area; // デフォルトはフローリング
     }
   });
+
+  // 部屋面積合計の生値（専有面積による補填で totalFloorArea を書き換える前に退避）。
+  // 天井PBのサニティ（後述）で「信頼できる分母」として使う: AIが外形寸法を誤読して
+  // total_floor_area_sqm を過大に返しても、個々の部屋面積の合計は物理的な実測に近い。
+  const roomsSumArea = totalFloorArea;
 
   // 専有面積（validatorが確定した値・ユーザー入力優先）を数量計算の基礎に反映する
   // ※ AIが部屋を拾い落として部屋合計が専有面積より小さい場合、居室・天井が過小になる。
@@ -814,7 +822,84 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     ceilingPb95Sheets = Math.ceil(ceilingArea / CEILING_PB_SQM_PER_SHEET);
     ceilingPbCalcNote = `天井面積 ${ceilingArea.toFixed(1)}㎡ ÷ ${CEILING_PB_SQM_PER_SHEET}㎡/枚（XLS集計表X77係数）`;
   }
-  ceilingPb95Sheets = Math.min(Math.max(ceilingPb95Sheets, 20), 50);
+  // ── 天井PBの比率型サニティ（2026-07-24: 旧[20,50]レンジクランプの置換）──
+  // 旧クランプ Math.min(Math.max(x,20),50) は「別府4丁目の新築大型住戸（H天井94.71㎡=66枚・
+  //   I天井102.786㎡=71枚。scripts/beppu-9types-ground-truth.json）」を上限50枚で頭打ちさせ
+  //   -23〜30%の過少を出していた（=撤去の動機は正当）。一方で下限を含む絶対レンジは、
+  //   従来パス（展開図なし）で外形寸法を誤読して total_floor_area_sqm=200㎡ 等になった際に
+  //   天井PBが138枚まで暴走するのを止める唯一の安全弁でもあった（applyElevationTakeoffは
+  //   天井PB行を書き換えず・validateTakeoffSanityは壁PB比率のみ検査で天井は対象外・かつ
+  //   展開図なしパスでは未呼び出し。旧クランプが実質唯一のガードだった）。
+  //
+  // そこで実績レンジではなく「天井面積 ÷ 信頼できる床面積 の比」で暴走だけを捕捉する。
+  // この比は物件をまたいで≈0.88に収束する（H 94.71/107.9・I 102.786/117.1・アルファG 59/67
+  //   いずれも天井面積/専有面積≈0.88）。物理的にも天井面積は床面積を超えない（UB・CLを引いた残り）。
+  //
+  // 信頼できる分母(sanityBase)の選び方が肝（誤発火の防止が最重要）:
+  //   - total_area_source が検証済み（ユーザー入力/ラベル×部屋合計整合/寸法整合）→ declaredArea を分母に。
+  //     部屋の拾い落ち補填で ceilingArea が room合計を上回るのは正常なので、信頼済み時に roomsSumArea を
+  //     分母にすると誤発火する（validator確定値はそのまま信頼する）。
+  //   - 未検証・外形寸法誤読・sourceなしの従来パスでは declaredArea が誤読で水増しされうる。ただし
+  //     ここで無条件に roomsSumArea を分母にすると、AIが一部の部屋しか拾えていない正常な拾い落ち
+  //     （例: total=65.76㎡が正しいのに rooms合計30㎡）で誤発火してしまう。
+  //     そこで「declaredArea が住戸として物理的に妥当な大きさ(≤PLAUSIBLE_MAX_FLOOR_SQM)なら
+  //     declaredArea を信頼し、非現実的に大きい場合だけ誤読とみなして roomsSumArea へ切り替える」。
+  //     住戸1戸の内法床は既知最大でも別府I≈117㎡どまり → 150㎡超は外形寸法誤読と判断できる。
+  //     これで「rooms65㎡なのに total=200㎡」の水増しは roomsSumArea基準の比≈3で捕まり、
+  //     一方 total=65.76㎡の正常な拾い落ちは declaredArea基準の比≈0.96で誤発火しない。
+  const TRUSTED_AREA_SOURCES = ['user_input', 'ai_label_roomsum_verified', 'ai_estimate_verified'];
+  const areaSourceTrusted = TRUSTED_AREA_SOURCES.includes(data.total_area_source);
+  const PLAUSIBLE_MAX_FLOOR_SQM = 150; // 住戸1戸の内法床の物理上限目安（既知最大 別府I≈117㎡の1.3倍弱）
+  let sanityBase;
+  if (areaSourceTrusted) {
+    sanityBase = declaredArea > 0 ? declaredArea : roomsSumArea;
+  } else if (declaredArea > 0 && declaredArea <= PLAUSIBLE_MAX_FLOOR_SQM) {
+    sanityBase = declaredArea; // 妥当な大きさの専有面積は未検証でも分母として信頼する（誤発火防止）
+  } else {
+    sanityBase = roomsSumArea > 0 ? roomsSumArea : declaredArea; // 非現実的なdeclared=誤読 → 部屋実測へ
+  }
+  const CEILING_AREA_MAX_RATIO = 1.3;   // 天井/床≈0.88に対し余裕を持たせた上限（超過=面積水増し疑い）
+  const CEILING_AREA_NOMINAL_RATIO = 0.88; // 収束比（水増し検出時のフォールバック天井面積の推定に使う）
+  // 絶対上限: 分母が全く無い（部屋も専有も拾えず declaredのみ・それも誤読）最終防波堤。
+  //   別府I=71枚を弾かないよう十分高く取る（100枚=天井145㎡相当。既知最大住戸の1.4倍の余裕）。
+  const CEILING_PB_ABSOLUTE_MAX_SHEETS = 100;
+
+  if (ceilingPb95Sheets < 0) ceilingPb95Sheets = 0;
+  if (sanityBase > 0 && ceilingArea > sanityBase * CEILING_AREA_MAX_RATIO) {
+    // 面積水増しを検出 → 天井面積を信頼できる床面積×収束比へ丸めて枚数を再計算し、要確認警告を出す
+    const cappedCeilingArea = sanityBase * CEILING_AREA_NOMINAL_RATIO;
+    const cappedSheets = Math.ceil(cappedCeilingArea / CEILING_PB_SQM_PER_SHEET);
+    calcWarnings.push({
+      field: 'ceiling_pb_area_inflated',
+      message: `天井面積(${ceilingArea.toFixed(1)}㎡)が床面積(${sanityBase.toFixed(1)}㎡)に対し過大です`
+        + `（外形寸法の誤読等で専有面積が水増しされた可能性）。天井PBを${cappedSheets}枚に抑制しました。`
+        + '専有面積を正しく入力すると改善します',
+      before: ceilingPb95Sheets,
+      after: cappedSheets,
+    });
+    ceilingPb95Sheets = cappedSheets;
+    ceilingPbCalcNote = `天井面積${ceilingArea.toFixed(1)}㎡が床面積${sanityBase.toFixed(1)}㎡に対し過大のため`
+      + `${cappedCeilingArea.toFixed(1)}㎡（床面積×${CEILING_AREA_NOMINAL_RATIO}）÷${CEILING_PB_SQM_PER_SHEET}㎡/枚に抑制`;
+  } else if (ceilingPb95Sheets > CEILING_PB_ABSOLUTE_MAX_SHEETS) {
+    // 分母が無く比率で捕捉できないケースの最終ガード（従来パス・部屋も専有も不明で誤読totalのみ）
+    calcWarnings.push({
+      field: 'ceiling_pb_absolute_cap',
+      message: `天井PB算出値(${ceilingPb95Sheets}枚)が上限${CEILING_PB_ABSOLUTE_MAX_SHEETS}枚を超えました`
+        + '（図面の面積読み取りに問題がある可能性）。上限で抑制しました。専有面積を入力してください',
+      before: ceilingPb95Sheets,
+      after: CEILING_PB_ABSOLUTE_MAX_SHEETS,
+    });
+    ceilingPb95Sheets = CEILING_PB_ABSOLUTE_MAX_SHEETS;
+  } else if (sanityBase > 0 && ceilingArea > 0 && ceilingArea < sanityBase * 0.4) {
+    // S-1: 過少側は危険度が低いため抑制せず情報提供のみ（正の小面積が無警告で通るのを防ぐ）
+    calcWarnings.push({
+      field: 'ceiling_pb_area_small',
+      message: `天井面積(${ceilingArea.toFixed(1)}㎡)が床面積(${sanityBase.toFixed(1)}㎡)に対し小さいため`
+        + '天井PBが過少の可能性があります（部屋・面積の読み落とし疑い）。専有面積の入力をご確認ください',
+      before: null,
+      after: ceilingPb95Sheets,
+    });
+  }
   materials.push({
     category: '下地材',
     name: '天井 石膏ボード',
@@ -2510,6 +2595,8 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       category_totals: categoryTotals,
       grand_total: grandTotal,
       note: '仮単価による概算見積もり（税抜）'
-    }
+    },
+    // 計算由来の要確認警告（applyElevationTakeoffが後段でさらに push する場合もある）
+    _warnings: calcWarnings.length > 0 ? calcWarnings : undefined,
   };
 }

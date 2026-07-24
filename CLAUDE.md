@@ -36,6 +36,29 @@ AI（Gemini + Claude API）による図面解析で、資材リスト作成を�
   ＝アルファのリノベ実績帯が別府の新築規模に合わない。⑤buildupCalculator.js:66「業界標準で物件不変」コメントの過信表現
 - **依然未検証**: 別府の**図面読み取り精度**（parsedData無し＝実AI課金が必要）。資料に `別府_タイプ別アップロード用` フォルダ有り＝ブラウザ実測の素材はある
 
+**天井PBクランプ→比率サニティ化（2026-07-24・coder/reviewer分離・差し戻し1往復・承認済み・未コミット）**:
+別府での実害バグ修正サイクル1件目。天井PBクランプ `Math.min(Math.max(x,20),50)`（アルファのリノベ実績帯[20,50]）が
+**実測モードでも常時効き、別府H=65.3/I=70.9枚を50枚で頭打ち（-23〜30%）**にしていた（applyElevationTakeoffに天井へのset()が0件＝
+天井PBは実測置換されず推定値がクランプされる）。
+- **是正の経緯（緑≠正しいの実例）**: coder第1版はクランプ撤去し「過大側はvalidateTakeoffSanityが担保」とコメント→**虚偽根拠で差し戻し**。
+  reviewerがコードで実証: ①applyElevationTakeoffは天井を上書きしない ②validateTakeoffSanityは壁PB比率しか見ず天井PB非対象・
+  かつprojects.js:965の展開図ブロック内でしか呼ばれず**従来パスでは未呼び出し** ③**従来パス+専有未入力+外形寸法誤読200㎡→天井138枚に暴走を再現**
+  （既知バグ「外形寸法誤読による専有面積の上書き」と同経路・旧クランプが唯一の上限ガードだった）
+- **採用した実装（materialCalculator.js:825-908付近）**: 専有面積との**比率型サニティ3段**。分母sanityBase=
+  検証済みsource(user_input/ai_label_roomsum_verified/ai_estimate_verified)→declaredArea、未検証はdeclared≤150㎡(PLAUSIBLE_MAX_FLOOR_SQM)なら信頼・
+  超なら誤読とみなしroomsSumAreaへ切替（正常な拾い落ち補填=total65.76と誤読total200を分ける鍵。roomsSumを常用すると誤発火）。
+  ①ceilingArea>sanityBase×1.3→天井面積をsanityBase×0.88(収束比・別府/アルファ共0.88)へ丸めて再計算+警告ceiling_pb_area_inflated
+  ②分母全滅時は絶対上限100枚(=天井145㎡・別府I=71枚を弾かない)+警告ceiling_pb_absolute_cap ③過少<×0.4は情報警告のみ(S-1)。
+  calcWarnings→_warnings→projects.js:1024で従来パスでも永続化（前回の穴を塞いだ）
+- **reviewerの実証（before/after）**: 誤読200㎡→131枚(暴走)が**40枚**に、分母汚染時138→**100枚**に抑制。別府H=66/I=71枚は無警告通過・
+  Gタイプ42枚不変。ガード無効化でtest 7件✗＝空振りでない。**eval 19✅⏳1✗0 / eval-beppu 453✅ / replay3記録✅10✗0 /
+  test-ceiling-pb-clamp 29✅ / ユニット全緑**
+- **should-fix繰越（非ブロッキング・通常運用=専有入力なら非発生）**: SF-1 中間帯の誤読(total130㎡・真値65)が無警告で87枚まで通る
+  （declared≤150で無条件信頼のため。roomsSumとdeclaredの乖離検知>1.5で改善可） / SF-2 ai_estimate_verifiedは「外形寸法と整合」止まりで
+  外形寸法自体の誤読は防げない（物理上限200でクリップされ暴走はしない・絶対上限100止まり）。
+  coder報告の`__DISABLE_CEILING_GUARD=1`フックは実在しない（reviewerは手動パッチで代替検証・結果は有効）
+- **残る実害バグ（次サイクル）**: EV廻り÷1.4→X62=1.5(A-4・-6.7%)、木胴縁の係数+拾い面積セット修正(⏳-46%・片方だけだと+84.5%反転)
+
 **Gタイプ突合検証（2026-07-10・page_45拡大読み+page_56展開図で実施）**:
 
 **実装済み（第1段）**: buildupCalculator.js（部屋×A〜D面×部位のボトムアップ集計+壁仕上記号の振り分け）、
