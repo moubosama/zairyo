@@ -460,6 +460,42 @@ console.log('--- 修正4: 木製巾木出隅役物への誤マッチ防止 ---')
   check('出隅役物（ヶ所）は上書きされない', [desumi.quantity, 'takeoff' in desumi], [10, false]);
 }
 
+// ============ A-4: EV廻り壁PBの換算係数（XLS X62=1.5・壁PBの1.4流用ではない） ============
+console.log('--- A-4: EV廻り壁PB 換算係数 1.5（防露ふかし壁PB/EV面） ---');
+{
+  // EV廻り壁PBは XLS集計表X62=1.5 で換算する（壁PB/耐水/遮音の1.4とは別係数）。
+  // 実測7.2㎡なら ceil(7.2/1.5)=5枚（1.4流用だと ceil(7.2/1.4)=6枚=XLS超過）で係数差が枚数に現れる。
+  const result = { materials: [{ name: 'EV廻り壁 石膏ボード', quantity: 3, unit: '枚' }], summary: {} };
+  const takeoff = {
+    wall_pb_sqm: 0, waterproof_pb_sqm: 0, ev_wall_pb_sqm: 7.2, sound_wall_pb_sqm: 0,
+    gw_sqm: 0, cloth_sqm: 0, kitchen_panel_sqm: 0, majikiri_shitaji_m: 0, rc_furring_sqm: 0,
+    skirting_m: { 木製: 0, ソフト: 0, 樹脂: 0 },
+  };
+  applyElevationTakeoff(result, takeoff);
+  const ev = result.materials.find((m) => m.name === 'EV廻り壁 石膏ボード');
+  check('EV廻り壁PBは÷1.5で換算（7.2㎡→5枚・1.4流用の6枚ではない）',
+    [ev.quantity, ev.takeoff], [5, true]);
+  check('summary.ev_wall_pb_sheetsも÷1.5で一致', result.summary.ev_wall_pb_sheets, 5);
+  check('計算根拠に÷1.5が記録される', ev.calculation.includes('÷ 1.5㎡/枚'), true);
+}
+{
+  // 壁PB・耐水PBは従来どおり1.4のまま（EV換算の変更が波及していないこと）
+  const result = { materials: [
+    { name: '壁 石膏ボード', quantity: 0, unit: '枚' },
+    { name: '壁 耐水石膏ボード', quantity: 0, unit: '枚' },
+  ], summary: {} };
+  const takeoff = {
+    wall_pb_sqm: 7.2, waterproof_pb_sqm: 7.2, ev_wall_pb_sqm: 0, sound_wall_pb_sqm: 0,
+    gw_sqm: 0, cloth_sqm: 0, kitchen_panel_sqm: 0, majikiri_shitaji_m: 0, rc_furring_sqm: 0,
+    skirting_m: { 木製: 0, ソフト: 0, 樹脂: 0 },
+  };
+  applyElevationTakeoff(result, takeoff);
+  const wall = result.materials.find((m) => m.name === '壁 石膏ボード');
+  const water = result.materials.find((m) => m.name === '壁 耐水石膏ボード');
+  check('壁PBは1.4のまま（7.2㎡→ceil(5.14)=6枚）', wall.quantity, 6);
+  check('耐水PBは1.4のまま（7.2㎡→6枚）', water.quantity, 6);
+}
+
 // ============ 読取ノイズ防御ガード（2026-07-19 Gemini実読みE2Eの暴発対策） ============
 console.log('--- ガード1: 二重転記ペアの縮退（collapseDoubledPlacements） ---');
 {

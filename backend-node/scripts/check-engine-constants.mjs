@@ -149,9 +149,9 @@ const CONSTANTS = [
   { key: '界壁PB 換算', engineName: '（換算なし）一部界壁 石膏ボード=固定3枚 materialCalculator.js:845', engineValue: null, override: null },
   { key: '防露壁PB 換算', engineName: '（換算なし）一部界壁 耐水石膏ボード=固定1枚 materialCalculator.js:856', engineValue: null, override: null },
   { key: '収納面PB 換算', engineName: '（換算なし）収納面PB=固定5枚 materialCalculator.js:880', engineValue: null, override: null },
-  // 実測置換される唯一の1.5系部位。buildupCalculator.js:1236 が PB_SQM_PER_SHEET(=1.4) で割っており
-  // XLS X62(=1.5・アルファ「防露壁面」/ 別府「防露ふかし壁（ＰＢ）」)と食い違う ＝ 既知A-4の実体
-  { key: 'EV廻り壁PB 換算', engineName: 'PB_SQM_PER_SHEET 1.4 を流用 (buildupCalculator.js:1236)', engineValue: 1.4, override: null },
+  // 実測置換される唯一の1.5系部位。2026-07-24にA-4是正: 専用定数 EV_WALL_PB_SQM_PER_SHEET=1.5 を新設し
+  // XLS X62(=1.5・アルファ「防露壁面」/ 別府「防露ふかし壁（ＰＢ）」)と一致させた（旧: PB_SQM_PER_SHEET 1.4 流用）
+  { key: 'EV廻り壁PB 換算', engineName: 'EV_WALL_PB_SQM_PER_SHEET 1.5 (buildupCalculator.js applyElevationTakeoff)', engineValue: 1.5, override: null },
 
   { key: '間仕切下地 材積係数', engineName: 'MAJIKIRI_TIMBER_M_PER_SQM×断面 (timberVolume)', engineValue: engineMajikiriM3PerSqm, override: null },
   { key: '天井下地 材積係数', engineName: 'CEILING_FRAME_M_PER_SQM×断面 (timberVolume)', engineValue: engineCeilingM3PerSqm, override: null },
@@ -345,8 +345,10 @@ console.log('    → 「展開図あり＝クランプ無効」は誤り。天�
 // 【次サイクル申し送り（src変更を要する・今回はレポートのみ）】
 //  - S2: buildupCalculator.js:66 のコメント「業界標準で物件不変のため」も同じ過信。
 //    n=2かつ同一テンプレート由来なので「2物件のXLSで一致（テンプレート既定値）」へ表現を弱めるべき。
-//  - M2/A-4: buildupCalculator.js:1236 のEV/防露壁面PBを PB_SQM_PER_SHEET(1.4) ではなく
-//    XLS X62=1.5 で割る（EV_WALL_PB_SQM_PER_SHEET=1.5 の新設）。別府では部分界壁X85=1.5も実在。
+//  - M2/A-4: 【2026-07-24 是正済み】EV/防露壁面PBの換算に EV_WALL_PB_SQM_PER_SHEET=1.5 を新設し
+//    XLS X62=1.5 に一致させた（旧: PB_SQM_PER_SHEET 1.4 流用）。
+//    【残・別府固有の申し送り】別府では部分界壁X85=1.5が実在するのに未反映（一部界壁が9タイプ一律固定3枚）。
+//    今回のスコープ外（アルファのEV廻り換算のみ是正）。別府の界壁の面積換算化は別サイクル。
 //  - M1: 木製巾木の摘要 'H=40'（materialCalculator）が集計表ブロック実態のH=60主体と食い違う。
 //    正しい高さ表記の確定（要けいとさん確認）→ 摘要修正。
 //  - S1: 天井PBのクランプ[20,50]が別府H/Iで頭打ち。物件横断で使うなら上限の見直し or override化。

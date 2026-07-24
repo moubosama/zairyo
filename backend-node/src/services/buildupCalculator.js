@@ -17,7 +17,13 @@ import {
   TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, dobuchiLengthM,
 } from './timberVolume.js';
 
-const PB_SQM_PER_SHEET = 1.4; // XLS集計表の換算係数（3×6板・ロス込み）
+const PB_SQM_PER_SHEET = 1.4; // XLS集計表の換算係数（3×6板・ロス込み。壁X56/耐水X58/遮音X54=1.4）
+
+// EV廻り・防露ふかし壁PBの換算係数。壁PB(1.4)ではなくXLS集計表X62=1.5が正（A-4是正）
+// 出典: 集計表X62「防露壁面」(アルファ・ボード共スラブ下まで) / 別府X62「防露ふかし壁（ＰＢ）」=1.5。
+// 面積÷1.5（1.4流用は係数-6.7%のズレ。ceil丸めのためG実測2.16㎡では枚数は2で不変だが、
+// 大面積タイプでは枚数がXLS準拠に是正される）。壁/耐水/遮音のPB_SQM_PER_SHEET(1.4)は変えない
+const EV_WALL_PB_SQM_PER_SHEET = 1.5;
 
 // キッチンパネルの板面積: 3'×8'（910×2420mm）= 0.91×2.42 = 2.2022㎡/枚
 // XLS集計表のKP行は枚数2.5/戸を手入力しており換算係数（X列）の行が無い → 実板寸で㎡→枚に換算する
@@ -1232,8 +1238,9 @@ export function applyElevationTakeoff(result, takeoff) {
   // EV廻り・防露壁面（D下地×中間1/4）。実測0（EV面が展開図に写らないタイプ）は
   // set()のquantity>0ガードにより既存の実績推定（標準3枚）を維持する
   const evPbSqm = takeoff.ev_wall_pb_sqm || 0;
+  // EV廻り・防露壁PBはXLS X62=1.5で換算（壁PBの1.4ではない。A-4是正）
   set((m) => m.name === 'EV廻り壁 石膏ボード',
-    Math.ceil(evPbSqm / PB_SQM_PER_SHEET), `EV面実測 ${evPbSqm}㎡ ÷ ${PB_SQM_PER_SHEET}㎡/枚`);
+    Math.ceil(evPbSqm / EV_WALL_PB_SQM_PER_SHEET), `EV面実測 ${evPbSqm}㎡ ÷ ${EV_WALL_PB_SQM_PER_SHEET}㎡/枚`);
   set((m) => m.name.includes('遮音壁PB'),
     takeoff.sound_wall_pb_sqm, `遮音壁面 Σ幅×高さ−開口`);
   // キッチンパネル: カウンター上帯の実測㎡（表面6）→ 3'×8'板（2.2022㎡/枚）で枚数化
@@ -1249,7 +1256,7 @@ export function applyElevationTakeoff(result, takeoff) {
     result.summary.waterproof_pb_sqm = takeoff.waterproof_pb_sqm;
     result.summary.waterproof_pb_sheets = waterPbSheets;
     result.summary.ev_wall_pb_sqm = evPbSqm;
-    result.summary.ev_wall_pb_sheets = Math.ceil(evPbSqm / PB_SQM_PER_SHEET);
+    result.summary.ev_wall_pb_sheets = Math.ceil(evPbSqm / EV_WALL_PB_SQM_PER_SHEET);
     result.summary.sound_wall_pb_sqm = takeoff.sound_wall_pb_sqm;
     result.summary.kitchen_panel_sqm = kpSqm;
     result.summary.kp_sheets = kpSheets;
