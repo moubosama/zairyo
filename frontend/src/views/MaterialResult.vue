@@ -179,6 +179,24 @@
               class="input w-full"
             />
           </div>
+          <!-- グラスウール充填率（間仕切壁のうちGWを入れる割合）。物件仕様で7〜8倍違う
+               （アルファ=住戸内遮音壁のみ0.135／別府=ほぼ全間仕切0.4〜0.8）ため人が指定する。
+               未入力なら既定値0.135（アルファ実績）＝別府系の物件では大幅な過少になる -->
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">
+              GW充填率（間仕切壁比）
+              <span class="text-xs">現在: {{ currentGlasswoolCoverage }}</span>
+            </label>
+            <input
+              v-model="adjustGlasswoolCoverage"
+              type="number"
+              min="0.01"
+              max="1"
+              step="0.005"
+              placeholder="例: 0.135（別府は0.5）"
+              class="input w-full"
+            />
+          </div>
           <button
             @click="recalculate"
             :disabled="store.loading || !hasAdjustInput"
@@ -199,6 +217,12 @@
         <p class="text-xs text-gray-400 mt-1">
           ※ 天井PB加算＝パウダー/トイレ室ぶんの天井ボード追加枚数（集計表の別枠加算行）。
           未入力なら4枚（アルファステイツ実績）。この加算行が無い物件（別府など）は 0 を入力してください。
+        </p>
+        <p class="text-xs text-gray-400 mt-1">
+          ※ GW充填率＝間仕切壁のうちグラスウールを充填する割合。物件仕様で大きく変わります
+          （住戸内の遮音壁だけに入れる物件は 0.135 前後、ほぼ全ての間仕切に入れる物件は 0.4〜0.8）。
+          未入力ならアルファステイツ実績の 0.135 で計算するため、全間仕切に充填する物件では
+          数量が大幅に少なく出ます。拾い出しXLSや仕様書で確認して入力してください。
         </p>
       </div>
     </div>
@@ -376,6 +400,9 @@ const adjustStudHeightWet = ref('')
 // 天井PBのパウダー/トイレ加算枚数（物件別）。未入力なら送らない＝サーバー側の既定値4枚（アルファG）。
 // 0を入れると加算しない（別府は集計表の加算行が無いため0）
 const adjustCeilingPbExtra = ref('')
+// グラスウール充填率（物件別）。未入力なら送らない＝サーバー側の既定値0.135（アルファ＝遮音壁のみ）。
+// 全間仕切に充填する物件（別府）は0.4〜0.8を指定する。0は充填なしではなく不正値扱い（サーバーが警告）
+const adjustGlasswoolCoverage = ref('')
 
 // 履歴から来たかどうか（referrerまたはstoreの状態で判定）
 const isFromHistory = computed(() => {
@@ -469,11 +496,20 @@ const currentCeilingPbExtra = computed(() => {
   return `${v}枚`
 })
 
+// GW充填率の「現在値」表示。保存済みoverrideがあればその値、無ければ既定値0.135（アルファG）
+const currentGlasswoolCoverage = computed(() => {
+  const v = store.overrides?.glasswool_coverage
+  if (v === null || v === undefined || v === '') return '既定値0.135'
+  return String(v)
+})
+
 // 再計算ボタンの活性判定（入力欄が増えたので明示的にまとめる）
 // 天井PB加算は '0' も有効入力なので空文字以外を入力ありと見なす（Boolean('0')はtrueだが明示する）
+// GW充填率は 0 が不正値（サーバーが既定へフォールバックし警告）なので Boolean 判定でよい
 const hasAdjustInput = computed(() =>
   Boolean(adjustPartitionWall.value || adjustCeilingHeight.value
-    || adjustStudHeight.value || adjustStudHeightWet.value)
+    || adjustStudHeight.value || adjustStudHeightWet.value
+    || adjustGlasswoolCoverage.value)
   || adjustCeilingPbExtra.value !== ''
 )
 
@@ -541,6 +577,10 @@ const recalculate = async () => {
     // 天井PB加算枚数。'0'（別府＝加算しない）も有効値なので空文字以外を保存する
     if (adjustCeilingPbExtra.value !== '') {
       newOverrides.ceiling_pb_extra_sheets = String(adjustCeilingPbExtra.value)
+    }
+    // GW充填率。0より大きく1.0以下の小数（サーバー側で検証・不正なら既定へ戻して警告）
+    if (adjustGlasswoolCoverage.value) {
+      newOverrides.glasswool_coverage = String(adjustGlasswoolCoverage.value)
     }
     await store.saveOverrides(newOverrides)
     await store.calculateMaterials()

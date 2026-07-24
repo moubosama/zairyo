@@ -29,8 +29,10 @@ delete process.env.GOOGLE_GEMINI_API_KEY;
 delete process.env.AI_PROVIDER;
 delete process.env.UPLOAD_GUARD_TOKEN;
 
-const { default: projectsRouter, auxAiErrorResponse, mergeAuxIntoFresh, parseStudHeightOverrides } =
-  await import('../src/routes/projects.js');
+const {
+  default: projectsRouter, auxAiErrorResponse, mergeAuxIntoFresh,
+  parseStudHeightOverrides, parseKaibeWallOverrides,
+} = await import('../src/routes/projects.js');
 const { computeElevationTakeoff, resolveStudHeightM } =
   await import('../src/services/buildupCalculator.js');
 
@@ -260,6 +262,12 @@ const postJson = async (port, path, body = {}) => {
 console.log('■ POST /:id/calculate: 警告の再読取マージ+レスポンス同梱');
 
 // 最小のparsedData（展開図なし=計算警告ゼロ経路。calculateMaterialsは欠落に頑健）
+// ※ 2026-07-24: 水回りの部屋（UB）を追加。耐水PBの下限2枚クランプを撤去した際に
+//   「水回りを1つも読めていない＝cfArea=0」を読み落としとして警告する挙動を入れたため
+//   （waterproof_pb_no_wet_room）、水回りの無いこの最小fixtureが計算警告を1件出すようになり、
+//   **警告マージの配線を検証する**このテスト群の前提（計算警告ゼロ）が崩れていた。
+//   ここで見たいのは配線であって耐水PBの数量ではないので、fixture側に水回りを足して
+//   本来の「計算警告ゼロ経路」に戻す（耐水PBのガード自体は test-clamp-ratio-sanity.mjs で検証）。
 const baseParsed = {
   document_type: 'floor_plan',
   layout_type: '3LDK',
@@ -269,6 +277,7 @@ const baseParsed = {
   rooms: [
     { name: 'LDK', area_sqm: 20, floor_type: 'flooring' },
     { name: '洋室(1)', area_sqm: 10, floor_type: 'flooring' },
+    { name: 'UB', area_sqm: 3 },
   ],
   openings: [],
 };
@@ -661,6 +670,320 @@ await testAsync('無関係なoverride（天井高）だけなら加算は既定4
   try {
     const { data } = await postJson(port, '/api/projects/1/calculate');
     assert.match(ceilingRow(data).calculation, /\+ 4枚/, '無関係overrideで加算枚数は不変');
+  } finally {
+    server.close();
+  }
+});
+
+console.log('■ POST /:id/calculate: overrides → GW充填率（glasswool_coverage）');
+
+// 【SF-4】GW充填率のoverride疎通。stud_height / ceiling_pb_extra_sheets と同じ
+//   Override → overridesObj → calculateMaterials(overrides) 経路だが、
+//   実ルーターを通したテストが無く新規キーだけ無防備だった（grep glasswool が空）。
+//   充填率は物件依存が最も激しい係数（アルファ=遮音壁のみ0.135 / 別府=全間仕切0.41〜0.78＝7〜8倍差）で、
+//   check-engine-constants.mjs も「別府は overrides.glasswool_coverage=0.5 を指定すること」と案内している。
+//   ＝この経路が黙って切れると別府で-70%級の過少が出る。
+//
+// 観測点: materials の「間仕切 グラスウール充填」行（数量と calculation の充填率表記）。
+//   ※ 展開図ありのparsedDataだと applyElevationTakeoff が実測で置換して推定が表に出ないため、
+//     ここでは展開図なしの baseParsed（間仕切20m・天井高2400）を使う。
+//     期待値は観測値の写しではなく式から算出: ceil(間仕切壁延長 × 天井高 × 充填率)
+const gwParsed = {
+  ...structuredClone(baseParsed),
+  total_area_source: 'user_input', // 床面積比サニティの誤発火を避ける（他のoverrideテストと同じ）
+};
+const gwRow = (data) => data.materials.find((m) => m.name === '間仕切 グラスウール充填');
+const gwExpected = (coverage) => Math.ceil(20 * 2.4 * coverage); // 間仕切20m × 天井高2.4m × 充填率
+
+await testAsync('override未設定: アルファ既定0.135で計算（後方互換）', async () => {
+  const initial = structuredClone(gwParsed);
+  const { prisma } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    const row = gwRow(data);
+    assert.ok(row, '間仕切 グラスウール充填行が出力される');
+    assert.equal(row.quantity, gwExpected(0.135), `既定0.135: ${row.calculation}`);
+    assert.match(row.calculation, /0\.135（充填率）/, `根拠欄に既定充填率: ${row.calculation}`);
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('override=0.5（別府）: ルート経由で充填率が実際に効く', async () => {
+  const initial = structuredClone(gwParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'glasswool_coverage', value: '0.5' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    const row = gwRow(data);
+    assert.equal(row.quantity, gwExpected(0.5), `0.5指定: ${row.calculation}`);
+    assert.match(row.calculation, /0\.5（充填率）/, `根拠欄も0.5: ${row.calculation}`);
+    // 既定との差が「文字列のまま素通りしても数値として効く」ことの裏取り（0.5が5倍化していない等）
+    assert.ok(row.quantity > gwExpected(0.135), '既定より増える（充填率が上がる方向）');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('不正値のoverride: 既定へフォールバックし glasswool_coverage_invalid 警告が出る', async () => {
+  const initial = structuredClone(gwParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'glasswool_coverage', value: '50%' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.ok(findWarn(data, 'glasswool_coverage_invalid'),
+      `不正値は採用せず警告（warnings=${JSON.stringify(data.warnings)}）`);
+    assert.equal(gwRow(data).quantity, gwExpected(0.135), '既定0.135へフォールバック');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('無関係なoverride（天井高）だけなら充填率は既定のまま（回帰なし）', async () => {
+  const initial = structuredClone(gwParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'ceiling_height', value: '2400mm' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(gwRow(data).quantity, gwExpected(0.135), '無関係overrideで充填率は不変');
+    assert.equal(findWarn(data, 'glasswool_coverage_invalid'), undefined, '不正値警告も出ない');
+  } finally {
+    server.close();
+  }
+});
+
+console.log('■ POST /:id/calculate: overrides → 界壁面（opts.kaibeWall 高さ/面積）');
+
+// 【S-3】opts.kaibeWall が projects.js から computeElevationTakeoff に渡っていなかった
+//   （planRooms/closetInteriors/studHeight のみ）＝高さoverrideも本番経路から到達不能なデッドコード。
+//   ここで「Override → parseKaibeWallOverrides → opts.kaibeWall → 拾い値」の疎通を実ルーターで固定する。
+//
+// 観測点の事情: 木胴縁（界壁面）行は filterKenzaiScope（建材14項目）で response.materials から
+//   落ちるため、data.materials では観測できない。代わりに applyElevationTakeoff が必ず出す
+//   field='木胴縁（界壁面）' の警告（面積指定値と採用後の数量 after を含む）を観測する。
+//   after は materials 行と同じ値なので、数量が実際に変わったことまで確認できる。
+const kaibeWarn = (data) => (data.warnings || []).find((w) => w.field === '木胴縁（界壁面）');
+const DOBUCHI_COEF = 0.0098; // XLS集計表X86（timberVolume.js DOBUCHI_M3_PER_SQM）
+const kaibeM3 = (sqm) => Math.round(sqm * DOBUCHI_COEF * 10000) / 10000;
+
+await testAsync('override未設定: アルファ既定5.047㎡/戸のまま（後方互換）', async () => {
+  const initial = structuredClone(elevParsed);
+  const { prisma } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    const w = kaibeWarn(data);
+    assert.ok(w, `木胴縁の警告が出る（warnings=${JSON.stringify(data.warnings).slice(0, 300)}）`);
+    assert.match(w.message, /実績ベースの推定値/, '既定は実績推定である旨');
+    assert.equal(w.after, kaibeM3(5.047), `既定5.047㎡ → ${kaibeM3(5.047)}m³`);
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('kaibe_wall_sqm=2.266（別府Ａ相当）: ルート経由で面積が実際に効く', async () => {
+  const initial = structuredClone(elevParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'kaibe_wall_sqm', value: '2.266' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    const w = kaibeWarn(data);
+    assert.equal(w.after, kaibeM3(2.266), `別府Ａ 2.266㎡ → ${kaibeM3(2.266)}m³`);
+    assert.match(w.message, /物件別に指定された界壁面積2\.266㎡/, `指定値を明示: ${w.message}`);
+    assert.ok(w.after < kaibeM3(5.047), '既定より小さくなる（+123%の過大が解消する方向）');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('kaibe_wall_sqm=0（別府Ｂ/Ｊ＝界壁が実在しない）: 0m³で計上しない', async () => {
+  const initial = structuredClone(elevParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'kaibe_wall_sqm', value: '0' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    // 0は「未設定」ではなく正当な指定として採用される（ここが潰れると実在しない材を出し続ける）
+    assert.equal(kaibeWarn(data).after, 0, '0指定で0m³');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('kaibe_wall_sqm=17.332（別府Ｈ相当）: 大きい側にも効く', async () => {
+  const initial = structuredClone(elevParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'kaibe_wall_sqm', value: '17.332' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(kaibeWarn(data).after, kaibeM3(17.332), '既定の-71%過少が解消する方向');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('不正値のoverride: 既定へフォールバックし kaibe_wall_sqm_invalid 警告が出る', async () => {
+  const initial = structuredClone(elevParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'kaibe_wall_sqm', value: '-3' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.ok(findWarn(data, 'kaibe_wall_sqm_invalid'),
+      `不正値は採用せず警告（warnings=${JSON.stringify(data.warnings).slice(0, 300)}）`);
+    assert.equal(kaibeWarn(data).after, kaibeM3(5.047), '既定へフォールバック');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('kaibe_wall_height=2720（別府）: 界壁の実測がある面の拾い高さがルート経由で変わる', async () => {
+  // 高さoverrideは「界壁の実測がある面」にしか効かない（面幅からの推測はしないため）。
+  // 洋室(1)Ａ面に界壁幅1000mmを明示した図面で 2.45→2.72 の差を観測する。
+  // 観測点: 実測値が実績推定の50%未満のときに出る警告の after（＝採用された材積）。
+  //   1.0m×2.45=2.45㎡→0.024m³ / ×2.72=2.72㎡→0.0267m³ で、推定0.0495の50%(0.0247)を
+  //   既定はまたがない・別府はまたぐため、既定だけ警告が出る。どちらの経路でも after は
+  //   採用値そのものなので、警告の有無に依存しない形で数量を確かめられるよう両方を見る。
+  const initial = structuredClone(elevParsed);
+  initial.elevations.rooms[0].faces[0].kaibe_width_mm = 1000;
+  const mk = (overrides) => makeCalcPrisma({
+    initialParsed: structuredClone(initial), freshParsed: structuredClone(initial), overrides,
+  }).prisma;
+  const a = await startApp(mk([]));
+  const b = await startApp(mk([{ itemKey: 'kaibe_wall_height', value: '2720' }]));
+  try {
+    const def = await postJson(a.port, '/api/projects/1/calculate');
+    const bep = await postJson(b.port, '/api/projects/1/calculate');
+    assert.equal(def.status, 200, JSON.stringify(def.data).slice(0, 200));
+    assert.equal(bep.status, 200, JSON.stringify(bep.data).slice(0, 200));
+    // 既定2.45: 実測0.024m³ が推定0.0495の50%未満 → 部分実測疑いの警告が出る（after=採用値）
+    const wDef = kaibeWarn(def.data);
+    assert.ok(wDef, `既定は部分実測疑いの警告が出る: ${JSON.stringify(def.data.warnings).slice(0, 300)}`);
+    assert.equal(wDef.after, kaibeM3(2.45), `既定2.45m: ${kaibeM3(2.45)}m³`);
+    // 別府2.72: 同じ図面で材積が増える＝高さoverrideが本番経路に届いている
+    const wBep = kaibeWarn(bep.data);
+    assert.equal(wBep, undefined, '2.72では50%未満に当たらないので警告は出ない');
+    // 警告が出ない側は数量を直接見る必要があるが、木胴縁行はfilterKenzaiScopeで落ちるため
+    // 「既定側だけ警告が出る」ことをもって高さの差が数量に反映されたと判定する
+    // （2.45→警告あり / 2.72→警告なし の境界がちょうど50%ライン上にある）
+  } finally {
+    a.server.close();
+    b.server.close();
+  }
+});
+
+// 供給経路の等価性: ルーターが使うパーサの出力が、そのまま拾いエンジンのoptsとして機能する
+test('parseKaibeWallOverrides: 高さmm→m・面積は文字列のまま（0を潰さない）', () => {
+  assert.equal(parseKaibeWallOverrides({}), undefined, '未設定はoptsに載せない');
+  assert.deepEqual(parseKaibeWallOverrides({ kaibe_wall_height: '2720' }), { height_m: 2.72 });
+  assert.deepEqual(parseKaibeWallOverrides({ kaibe_wall_height: '2860mm' }), { height_m: 2.86 });
+  assert.deepEqual(parseKaibeWallOverrides({ kaibe_wall_sqm: '0' }), { area_sqm: '0' },
+    '0は未設定に丸めない（界壁なしの明示）');
+  assert.deepEqual(parseKaibeWallOverrides({ kaibe_wall_sqm: '  2.266 ' }), { area_sqm: '2.266' });
+  assert.deepEqual(parseKaibeWallOverrides({ kaibe_wall_sqm: '' }), undefined, '空文字は未設定');
+  // 値の妥当性判定はエンジン側に一元化（ここでは載せるだけ）
+  assert.deepEqual(parseKaibeWallOverrides({ kaibe_wall_sqm: '-3' }), { area_sqm: '-3' });
+  assert.deepEqual(parseKaibeWallOverrides({ kaibe_wall_height: 'あとで' }), undefined,
+    '数値として読めない高さは載せない');
+  assert.deepEqual(
+    parseKaibeWallOverrides({ kaibe_wall_height: '2720', kaibe_wall_sqm: '2.266' }),
+    { height_m: 2.72, area_sqm: '2.266' });
+});
+
+test('parseKaibeWallOverridesの出力がそのままcomputeElevationTakeoffのoptsとして機能する', () => {
+  const elev = { rooms: [
+    { name: '洋室(3)', ceiling_height_mm: 2400, faces: [
+      { face: 'C', width_mm: 2360, kaibe_width_mm: 1000, openings: [] },
+    ] },
+  ] };
+  // 高さ: 既定2.45 → 別府2.72
+  const def = computeElevationTakeoff(elev, [], { kaibeWall: parseKaibeWallOverrides({}) });
+  assert.ok(Math.abs(def.kaibe_furring_sqm - 2.45) < 0.01, `既定2.45: ${def.kaibe_furring_sqm}`);
+  const bep = computeElevationTakeoff(elev, [],
+    { kaibeWall: parseKaibeWallOverrides({ kaibe_wall_height: '2720' }) });
+  assert.ok(Math.abs(bep.kaibe_furring_sqm - 2.72) < 0.01, `別府2.72: ${bep.kaibe_furring_sqm}`);
+  // 面積: 実測が無いケースの推定値がtakeoffへ載る（0も載る）
+  const noFace = { rooms: [{ name: '洋室(3)', ceiling_height_mm: 2400, faces: [
+    { face: 'C', width_mm: 2360, wall_code: 'C04', openings: [] },
+  ] }] };
+  const t0 = computeElevationTakeoff(noFace, [],
+    { kaibeWall: parseKaibeWallOverrides({ kaibe_wall_sqm: '0' }) });
+  assert.equal(t0.kaibe_estimate_sqm, 0);
+  assert.equal(t0.kaibe_estimate_source, 'override');
+  const tDef = computeElevationTakeoff(noFace, [], { kaibeWall: parseKaibeWallOverrides({}) });
+  assert.equal(tDef.kaibe_estimate_sqm, 5.047, '未設定はアルファ既定（丸められていない）');
+  assert.equal(tDef.kaibe_estimate_source, 'default');
+});
+
+console.log('■ POST /:id/calculate: overrides → 際根太（係数・下限・規格・材積換算の有無）');
+
+// 【2026-07-24】際根太は「規格」だけ差し替えても数量が-60〜76%のままになる（別府は床面積比が
+//   アルファの3.5〜4.6倍）ため、ratio / min_m / spec / volume を1プロファイルでoverrideする。
+//   配線は Override → overridesObj → calculateMaterials(overrides) → resolveKiwanetaProfile。
+//
+// 観測点の事情: 際根太行（m・m³とも）は filterKenzaiScope（建材14項目）で response.materials から
+//   落ちるため data.materials では観測できない（木胴縁と同じ事情）。よって
+//   (a) ルート経由では「不正値の警告が warnings に出るか」＝overridesObj が届いている証拠 を見て、
+//   (b) 数量そのものは同一の overridesObj で calculateMaterials を直接叩いて確認する（下の別ブロック）。
+await testAsync('不正なkiwaneta_ratio: ルート経由で kiwaneta_ratio_invalid 警告が出る（overridesが届いている証拠）', async () => {
+  const initial = structuredClone(baseParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'kiwaneta_ratio', value: '1.07m/㎡' }], // 単位付き＝数値として読めない
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    assert.ok(findWarn(data, 'kiwaneta_ratio_invalid'),
+      `不正値は採用せず警告（warnings=${JSON.stringify(data.warnings)}）`);
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('正常なkiwaneta_* override: 不正値警告は出ない（採用されている）', async () => {
+  const initial = structuredClone(baseParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [
+      { itemKey: 'kiwaneta_ratio', value: '1.07' },
+      { itemKey: 'kiwaneta_min_m', value: '0' },
+      { itemKey: 'kiwaneta_spec', value: 'H110' },
+      { itemKey: 'kiwaneta_volume', value: 'なし' },
+    ],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    for (const f of ['kiwaneta_ratio_invalid', 'kiwaneta_min_m_invalid', 'kiwaneta_volume_invalid']) {
+      assert.equal(findWarn(data, f), undefined, `${f} が出ない（正常値は採用される）`);
+    }
   } finally {
     server.close();
   }

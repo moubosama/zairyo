@@ -882,6 +882,40 @@ export function parseStudHeightOverrides(overridesObj = {}) {
   return out;
 }
 
+/**
+ * オーバーライドの界壁面（一部界壁）指定を buildupCalculator の opts.kaibeWall 形へ変換する
+ * （供給経路・2026-07-24 S-3）
+ *
+ * 界壁面は**高さも面積も物件依存**（アルファ 2.45m×5.047㎡/戸 ↔ 別府は下地高2.72〜2.86m・
+ * 戸当0.000〜17.332㎡でタイプ差が大きく、界壁が存在しないタイプもある）。
+ * それにもかかわらず opts.kaibeWall は本番経路（/calculate）から渡されておらず、
+ * 高さoverrideも到達不能なデッドコードだった → ここで配線する。
+ *   itemKey='kaibe_wall_height'（mm。UIの他項目と単位を揃える） / 'kaibe_wall_sqm'（㎡/戸）
+ *
+ * 【値の検証はしない】採否の判定は buildupCalculator 側に一元化する
+ *   （高さ: computeElevationTakeoff の 0<h<=5 / 面積: resolveKaibeWallSqm）。
+ *   ここで弾くと二重実装になり片方だけ直したときに挙動が割れる（parseStudHeightOverrides と同じ方針）。
+ *   面積は文字列のまま渡す（'0' を「未設定」と区別して 0㎡＝界壁なし として採用させるため）。
+ *
+ * @param overridesObj { [itemKey]: value(string) }
+ * @returns { height_m?, area_sqm? } | undefined（両方未設定なら undefined＝optsに載せない）
+ */
+export function parseKaibeWallOverrides(overridesObj = {}) {
+  const out = {};
+  // 高さはmm入力（'2720' / '2720mm'）→ m へ。数値として読めないものは載せない（＝既定へ）
+  const rawH = overridesObj.kaibe_wall_height;
+  if (rawH !== null && rawH !== undefined) {
+    const m = /^\s*(\d+(?:\.\d+)?)\s*(?:mm|ｍｍ)?\s*$/.exec(String(rawH));
+    if (m) out.height_m = Number(m[1]) / 1000;
+  }
+  // 面積は㎡/戸。'0'（界壁なし）を潰さないため空文字だけを未設定として扱い、他は文字列のまま渡す
+  const rawA = overridesObj.kaibe_wall_sqm;
+  if (rawA !== null && rawA !== undefined && String(rawA).trim() !== '') {
+    out.area_sqm = String(rawA).trim();
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // POST /api/projects/:id/overrides - 仕様変更保存
 router.post('/:id/overrides', async (req, res) => {
   try {
@@ -966,10 +1000,13 @@ router.post('/:id/calculate', async (req, res) => {
       // 下地高の物件別入力（Override: stud_height / stud_height_wet）。未設定なら undefined を渡し、
       // resolveStudHeightM のフォールバック（AI読取値→アルファ実績値+要確認warning）に委ねる
       const studHeight = parseStudHeightOverrides(overridesObj);
+      // 界壁面（木胴縁の拾い対象）の物件別入力。高さ・面積とも物件依存（S-2/S-3）
+      const kaibeWall = parseKaibeWallOverrides(overridesObj);
       const takeoff = computeElevationTakeoff(parsedObj.elevations, parsedObj.door_schedule || [],
         { planRooms: parsedObj.rooms || [],       // 収納内の間仕切下地推定に平面図の部屋一覧を渡す
           closetInteriors: parsedObj.closet_interiors || [], // 収納内側の実寸（家具工事シート等・任意）
-          studHeight });                          // 物件別の下地高（未設定時はundefined＝既定値）
+          studHeight,                             // 物件別の下地高（未設定時はundefined＝既定値）
+          kaibeWall });                           // 物件別の界壁面 高さ/面積（同上）
 
       // サニティチェック: 展開図の読み取りが破綻している場合は実測値を採用しない
       // （破綻した読みを盲信して壁PB+92%の異常値を出していた事故の再発防止。

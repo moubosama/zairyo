@@ -81,11 +81,17 @@
  */
 
 import {
-  TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, ceilingFrameLengthM, dobuchiLengthM,
+  TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, ceilingFrameLengthM,
+  dobuchiVolumeM3, DOBUCHI_M3_PER_SQM,
 } from './timberVolume.js';
 // 窓判定は buildupCalculator.js の isWindow に一本化（2026-07-21共通化）。
 // 従来ここに別実装 isOpeningWindow があり type.includes('aw') で誤爆＋判定基準がbuildup側とズレていた。
-import { isWindow as isOpeningWindow } from './buildupCalculator.js';
+import {
+  isWindow as isOpeningWindow,
+  // 界壁面（木胴縁の拾い対象）の既定面積と解決ロジック。高さ側 KAIBE_FACE_HEIGHT_M と同じ場所に置き、
+  // 推定パス（ここ）と実測パス（applyElevationTakeoff）で同じ解釈になるようにする（S-2）
+  resolveKaibeWallSqm, KAIBE_WALL_SQM_ALPHA,
+} from './buildupCalculator.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 【計算用定数】
@@ -107,7 +113,9 @@ const LOSS_RATE_5 = 1.05;                 // +5% ロス（PB等）
 const LOSS_RATE_10 = 1.1;                 // +10% ロス（フローリング等）
 const LOSS_RATE_20 = 1.2;                 // +20% ロス（耐水PB等）
 const WALL_PB_REDUCTION = 0.6;            // 壁PBの両面係数削減（リノベ=片面のみ）
-const GLASSWOOL_COVERAGE = 0.5;           // グラスウール充填率（間仕切壁の半分）
+// グラスウール充填率は**物件依存**（アルファ=遮音壁のみ0.135 / 別府=全間仕切0.4〜0.8）のため
+// 定数ではなく GLASSWOOL_COVERAGE_ALPHA + overrides.glasswool_coverage で扱う（M-3・下記GWブロック参照）。
+// 旧 GLASSWOOL_COVERAGE=0.5 は「間仕切壁の半分」という根拠不明の値で、両物件のどちらとも一致しなかった。
 
 // 建具関連係数
 const DOOR_WIDTH_DEFAULT = 0.8;           // ドア幅デフォルト (m)
@@ -121,7 +129,37 @@ const KUTSUZURI_SLIDE_LENGTH = 1.5;       // 引き戸沓摺長さ係数
 const KUTSUZURI_CLOSET_LENGTH = 0.8;      // 折戸沓摺長さ係数
 
 // 下地関連係数
-const KIWANETA_RATIO = 0.28;              // 際根太 = 床面積 × 0.28 (m)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 【際根太は「係数・規格・材積換算の有無」の3点セットで物件依存（2026-07-24）】
+//   際根太＝床の段差部・壁際に入れる根太。**どの範囲に入れるかが物件の設計思想そのもの**で、
+//   床面積からの一定係数では物件を跨げない（下記の実測差3.5〜4.6倍が証拠）。
+//
+//   ① 長さ係数（床面積㎡ → 際根太m）
+//      アルファ: 集計表9行「際根太(木) ４５ｘ３0」戸当 18.2m ÷ 床65.76㎡ = 0.277 m/㎡
+//                内訳は玄関5.7＋便所4.0＋洗面8.5＝**水回り＋玄関の段差部だけ**に入れる仕様
+//      別府    : 集計表9行「際根太 H110」戸当 Ａ80.9 / Ｂ47.2 / Ｃ67.0 / Ｄ67.9 / Ｅ72.7 /
+//                Ｆ74.2 / Ｇ96.4 / Ｈ136.9 / Ｉ134.18 m。床面積比 **0.97〜1.27 m/㎡**
+//                （床面積は正解JSONに専有が無いため天井PB面積÷0.88で逆算。CEILING_TO_FLOORと同じ）
+//                ＝巾木長さとほぼ同オーダー（kiwa/habaki 1.05〜1.31）で、**住戸のほぼ全周**に入る仕様
+//      → 既定0.277をそのまま別府に当てると 18〜33m しか出ず実測47〜137mに対し **-60〜76%**。
+//        1つの係数で両立できないので override で人が指定する（0.28→アルファ実績値を明示化）
+//   ② 規格（名称の摘要）: アルファ「45×30 米栂1等」/ 別府「H110」。断面が違う＝別の材
+//   ③ 材積換算の有無: アルファは集計表X9=0.00135 m³/m で材積(m³)行を出す。
+//      **別府はX9=0＝材積換算しない**（mのまま発注する運用）。0を掛けて0m³の行を出すのではなく
+//      **行そのものを出さない**のが正（存在しない材の発注行を作らないため）
+//
+//   ※ 別府にはアルファに存在しない「スラブ下り際根太 H=210」（別府タイプ別シートr10・戸当23.3m）
+//     という別部位行がある。これは際根太本体とは別の材で、今回のoverrideの対象外
+//     （check-engine-constants.mjs に未対応として別項目で明示。黙って無視しない）
+// 既定は従来どおり 0.28（アルファ実績の丸め値）。**0.277（=18.2÷65.76 の生値）へ精密化しない**:
+//   evalのGタイプ入力（部屋合計64.7㎡）で ceil(64.7×0.28)=19 / ceil(64.7×0.277)=18 と
+//   ceil境界をまたぎ、既存の際根太+4.4%・際根太材積+4.5%が変わってしまうため
+//   （今回の目的は物件依存のoverride化であって既定値の精度変更ではない）。
+export const KIWANETA_RATIO_ALPHA = 0.28; // 際根太 = 床面積 × 0.28 (m)（アルファ実績18.2m/65.76㎡=0.2768の丸め）
+const KIWANETA_RATIO_MAX = 3.0;           // 入力ガード。別府max 1.27 m/㎡ の2倍以上＝桁違いの入力ミス
+const KIWANETA_MIN_M_ALPHA = 18;          // 下限も物件依存（アルファ実績18.2mの丸め。別府minはＢ47.2m）
+const KIWANETA_MIN_M_MAX = 300;           // 下限指定の入力ガード（住戸1戸の際根太長として非現実な値を弾く）
+const KIWANETA_SPEC_ALPHA = '45×30 米栂1等'; // 別府は 'H110'
 const AIRCON_PER_ROOM = 0.5;              // エアコン下地 = 部屋数 × 0.5
 
 // 壁下地係数
@@ -414,7 +452,10 @@ const ALPHA_STATS = {
 
   // 出隅・その他造作
   board_desumi: 198.18,      // ボード出隅 フクビ (㎡) → 22㎡/戸
-  kaibe_wall: 45.42,         // 界壁面 PBt9.5+木胴縁 (㎡) → 5㎡/戸
+  // 界壁面 PBt9.5+木胴縁 (㎡・アルファ9戸分) → 5.047㎡/戸。
+  // ※木胴縁の計算には使わない（物件依存のため KAIBE_WALL_SQM_ALPHA + overrides.kaibe_wall_sqm へ移管・S-2）。
+  //   この表は「アルファ67戸実績の記録」なので値自体は残す（他部位の実績表と並びを保つ）
+  kaibe_wall: 45.42,
   ps_tenkenkou: 18,          // PS点検口 (箇所) → 2箇所/戸
   mengi: 99,                 // 面木 (箇所) → 11箇所/戸
   mengi_general: 63,         // 面木(一般) 4R型コーナーパット (箇所) → 7箇所/戸
@@ -544,6 +585,75 @@ const PER_UNIT = {
                             ALPHA_STATS.movable_shelf_sic) / ALPHA_STATS.units) // 約1.4箇所
 };
 
+/**
+ * 際根太の物件別プロファイルを解決する（2026-07-24）
+ *
+ * 際根太は「どこに入れるか」が物件の設計そのもので、**係数だけ差し替えても足りない**
+ * （規格＝断面が違い、材積換算をするかどうかも物件で違う）。よって
+ *   ratio（長さ係数 m/㎡）/ min_m（下限m）/ spec（摘要）/ volume（材積行を出すか）
+ * を1つのプロファイルとしてまとめて解決する。既定は**アルファ実績**（後方互換）。
+ *
+ * 受け口（overrides = Overrideテーブルの itemKey→value・すべて文字列）:
+ *   kiwaneta_ratio        長さ係数 m/㎡（例: 別府 '1.07'。0〜3.0）
+ *   kiwaneta_min_m        下限m（例: 別府 '40'。0を指定すれば下限なし）
+ *   kiwaneta_spec         摘要（例: 別府 'H110'）
+ *   kiwaneta_volume       材積(m³)行を出すか（'なし'/'0'/'false' で出さない＝別府X9=0）
+ *
+ * 【値の検証方針】resolveKaibeWallSqm と同じ。数字以外の暗黙除去はしない
+ *   （'-3'→3の符号反転・'1.07'→107 の100倍化を起こさないため）。
+ *   不正値は既定へフォールバックし、呼び出し側が invalid_* を見て警告を出せるようにする。
+ *
+ * @param overrides { [itemKey]: string }
+ * @returns { ratio, min_m, spec, volume, source:{ratio,min_m,spec,volume}, invalid:{...} }
+ */
+export function resolveKiwanetaProfile(overrides = {}) {
+  const source = { ratio: 'default', min_m: 'default', spec: 'default', volume: 'default' };
+  const invalid = {};
+
+  // 0以上の数値のみ許可（'0' / '1.07' / '.5'）。空文字・null・undefined＝未設定
+  const num = (raw, max) => {
+    if (raw === null || raw === undefined) return undefined;
+    const s = String(raw).trim();
+    if (s === '') return undefined;
+    const n = /^\d*\.?\d+$/.test(s) ? Number(s) : Number.NaN;
+    if (Number.isFinite(n) && n >= 0 && n <= max) return n;
+    return { bad: s };
+  };
+
+  let ratio = KIWANETA_RATIO_ALPHA;
+  const r = num(overrides.kiwaneta_ratio, KIWANETA_RATIO_MAX);
+  if (typeof r === 'number') { ratio = r; source.ratio = 'override'; }
+  else if (r) invalid.ratio = r.bad;
+
+  // 下限は **0を明示指定できる**（＝下限なし。アルファ実績18mを他物件へ持ち込まないため）
+  let min_m = KIWANETA_MIN_M_ALPHA;
+  const mn = num(overrides.kiwaneta_min_m, KIWANETA_MIN_M_MAX);
+  if (typeof mn === 'number') { min_m = mn; source.min_m = 'override'; }
+  else if (mn) invalid.min_m = mn.bad;
+
+  // 摘要は自由文字列（断面表記は物件ごとに書式が違う: '45×30 米栂1等' / 'H110'）。
+  // 長すぎる入力はUnitPrice.spec等の桁を圧迫するので切り詰める
+  let spec = KIWANETA_SPEC_ALPHA;
+  if (overrides.kiwaneta_spec !== null && overrides.kiwaneta_spec !== undefined
+      && String(overrides.kiwaneta_spec).trim() !== '') {
+    spec = String(overrides.kiwaneta_spec).trim().slice(0, 50);
+    source.spec = 'override';
+  }
+
+  // 材積換算の有無。既定＝出す（アルファ X9=0.00135）。
+  // 別府のように集計表X9=0 の物件は「材積行を出さない」＝ m のまま発注する
+  let volume = true;
+  const rawV = overrides.kiwaneta_volume;
+  if (rawV !== null && rawV !== undefined && String(rawV).trim() !== '') {
+    const s = String(rawV).trim();
+    if (/^(なし|無|no|false|0|off)$/i.test(s)) { volume = false; source.volume = 'override'; }
+    else if (/^(あり|有|yes|true|1|on)$/i.test(s)) { volume = true; source.volume = 'override'; }
+    else invalid.volume = s;
+  }
+
+  return { ratio, min_m, spec, volume, source, invalid };
+}
+
 export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // aiReadingがnull/undefined/空の場合のガード
   if (!aiReading) {
@@ -644,9 +754,141 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     totalFloorArea = netTarget;
   }
 
+  // ── 信頼できる床面積 sanityBase（部位横断の共通分母・2026-07-24 に天井PBガードから
+  //    ここへ**巻き上げ**。壁PB/耐水PB/巾木/GWの比率型サニティも同じ分母を使うため、
+  //    選び方の重複実装を作らない。ロジックは天井PB導入時（41155a2）のものを変更していない）
+  //
+  //  選び方の根拠（誤発火の防止が最重要）:
+  //   - total_area_source が検証済み（ユーザー入力/ラベル×部屋合計整合/寸法整合）→ declaredArea を分母に。
+  //     部屋の拾い落ち補填で各部位の面積が room合計を上回るのは正常なので、信頼済み時に roomsSumArea を
+  //     分母にすると誤発火する（validator確定値はそのまま信頼する）。
+  //   - 未検証・外形寸法誤読・sourceなしの従来パスでは declaredArea が誤読で水増しされうる。ただし
+  //     ここで無条件に roomsSumArea を分母にすると、AIが一部の部屋しか拾えていない正常な拾い落ち
+  //     （例: total=65.76㎡が正しいのに rooms合計30㎡）で誤発火してしまう。
+  //     そこで「declaredArea が住戸として物理的に妥当な大きさ(≤PLAUSIBLE_MAX_FLOOR_SQM)なら
+  //     declaredArea を信頼し、非現実的に大きい場合だけ誤読とみなして roomsSumArea へ切り替える」。
+  //     住戸1戸の内法床は既知最大でも別府I≈117㎡どまり → 150㎡超は外形寸法誤読と判断できる。
+  const TRUSTED_AREA_SOURCES = ['user_input', 'ai_label_roomsum_verified', 'ai_estimate_verified'];
+  const areaSourceTrusted = TRUSTED_AREA_SOURCES.includes(data.total_area_source);
+  const PLAUSIBLE_MAX_FLOOR_SQM = 150; // 住戸1戸の内法床の物理上限目安（既知最大 別府I≈117㎡の1.3倍弱）
+  let sanityBase;
+  if (areaSourceTrusted) {
+    sanityBase = declaredArea > 0 ? declaredArea : roomsSumArea;
+  } else if (declaredArea > 0 && declaredArea <= PLAUSIBLE_MAX_FLOOR_SQM) {
+    sanityBase = declaredArea; // 妥当な大きさの専有面積は未検証でも分母として信頼する（誤発火防止）
+  } else {
+    sanityBase = roomsSumArea > 0 ? roomsSumArea : declaredArea; // 非現実的なdeclared=誤読 → 部屋実測へ
+  }
+
+  // ── 層0: 床面積そのものの「物理的にありえない大きさ」の抑制（2026-07-24 must-fix M-4）──
+  //
+  //  【なぜ層1だけでは足りないか】層1（floor_area_inflated）は
+  //    「数量計算に使う床面積 vs 信頼できる床面積(sanityBase)」という**相対比**の検査で、
+  //    2つの独立した根拠（部屋面積の合計／専有面積の転記）を突き合わせて矛盾を捕まえる仕組み。
+  //    ところが根拠が**片方しか無い**とき sanityBase は検査対象**自身**になり、比が常に≈1.0で
+  //    構造的に発火できない（レビュー M-4）:
+  //      ・roomsSumArea=0（部屋を1つも拾えず declared のみ）→ sanityBase = declaredArea
+  //      ・declaredArea=0（専有面積の入力なし・total読めず）→ sanityBase = roomsSumArea
+  //    実測（撤去直後の回帰）: 部屋合計200㎡誤読+専有未入力で 壁PB165枚/巾木164m、
+  //    declared=1000㎡なら 壁PB790枚/巾木788m が**警告ゼロ**で出ていた。
+  //    ケース前者は「専有面積は任意入力（ゲスト運用の既定は未入力）＋AIの部屋面積誤読」だけで
+  //    到達する＝ユーザーの誤操作を必要としない。
+  //
+  //  【対処】相対比が使えないときは**別の根拠**＝物理的な絶対上限で判定する。
+  //    住戸1戸の内法床は既知最大でも別府I≈117㎡（本エンジンが扱う分譲マンション住戸の実測）。
+  //    PLAUSIBLE_MAX_FLOOR_SQM(150) はまさに「これを超えたら外形寸法の誤読」という判断で、
+  //    上の sanityBase 選択でも同じ意味で使っている定数なのでそのまま流用する。
+  //    ※ 意味の二重化はしていない: 上は「declaredを分母として信頼してよいか」、
+  //      ここは「採用した床面積が住戸としてありえるか」で、**同一の物理判断の別の適用先**。
+  //      別府I(117㎡)・別府H(107.6㎡)は 150 の内側なので実在物件は一切弾かれない。
+  //
+  //  【安全側の設計】150㎡を超えたときも 150 へ丸めるだけ（0にしない・計算は続行する）。
+  //    利用者には警告で「専有面積を入力すれば正しくなる」ことを伝える。
+  //    また is-a-trusted-source（ユーザーが自分で150㎡超を入力した）ケースは**抑制しない**:
+  //    人が明示入力した値まで機械が握り潰すと、大型住戸・二戸一等の正当な入力を壊すため
+  //    （その場合は警告のみ出して数量は入力どおりにする）。
+  const floorAreaImplausible = sanityBase > PLAUSIBLE_MAX_FLOOR_SQM;
+  if (floorAreaImplausible && areaSourceTrusted) {
+    // ユーザー入力/検証済みの値が150㎡超 → 数量は入力を尊重し、警告だけ出す（書き換えない）
+    calcWarnings.push({
+      field: 'floor_area_implausible_trusted',
+      message: `床面積(${sanityBase.toFixed(1)}㎡)が住戸1戸の想定上限${PLAUSIBLE_MAX_FLOOR_SQM}㎡を超えています`
+        + '（入力値・検証済みの転記値のため数量は書き換えていません）。'
+        + '複数住戸をまとめた図面・専有面積の入力誤りでないかご確認ください',
+      before: null,
+      after: Math.round(sanityBase * 10) / 10,
+    });
+  } else if (floorAreaImplausible) {
+    // 未検証の床面積が物理上限超 → 上限へ丸めてから層1へ渡す（層1の縮小係数もこの値基準になる）
+    calcWarnings.push({
+      field: 'floor_area_implausible',
+      message: `数量計算に使う床面積(${sanityBase.toFixed(1)}㎡)が住戸1戸の想定上限`
+        + `${PLAUSIBLE_MAX_FLOOR_SQM}㎡を超えています（外形寸法・部屋面積の誤読の可能性）。`
+        + `${PLAUSIBLE_MAX_FLOOR_SQM}㎡で抑制しました。専有面積を入力すると正しく算出できます`,
+      before: Math.round(sanityBase * 10) / 10,
+      after: PLAUSIBLE_MAX_FLOOR_SQM,
+    });
+    sanityBase = PLAUSIBLE_MAX_FLOOR_SQM;
+  }
+
+  // ── 床面積の水増し是正（層1・2026-07-24 must-fix M-1で「全部位が同じ基準になる」方式へ再設計）──
+  //
+  //  【旧実装の欠陥】旧版は sanityFloorArea という**別変数**を作り、壁PB・巾木だけがそれを使い、
+  //    天井PB・フローリング・際根太・垂木などは totalFloorArea / ceilingArea / flooringArea の
+  //    ままだった。結果、発火時に「壁PB・巾木は65㎡基準／天井PB・フローリングは85㎡基準」という
+  //    **同一図面で基準が食い違う見積**が出る（レビューM-1の再現ケース）。
+  //    また旧コメントは「この分岐は発火しない」と書いていたが誤り。637-645の補填は
+  //    netTarget > totalFloorArea のときだけ totalFloorArea を書き換えるので、
+  //    roomsSumArea が declared×0.96 を超えていれば totalFloorArea は roomsSum のまま残る。
+  //    aiReadingValidator:229-241 の按分縮小は**ラベル付き部屋を縮小しない**（かつscale下限0.5）ため、
+  //    「ユーザー入力65㎡ vs ㎡ラベル部屋合計85㎡」は正規経路で普通に残存する。
+  //
+  //  【新実装】是正は「部位の出力」ではなく**部位の入力である床面積そのもの**に1回だけ掛ける。
+  //    床面積由来の値（totalFloorArea / flooringArea / cfArea / tileArea）を同じ係数で一括縮小し、
+  //    以降の全部位（天井・フローリング・際根太・垂木・壁PB・巾木…）が自動的に同じ基準になる。
+  //    ＝部位ごとの上限帯を持たなくても全部位が同時に守られる（部位を跨げる唯一の層）。
+  const FLOOR_AREA_MAX_RATIO = 1.25; // 読み取りの揺れ（拾い落ち補填0.96・内法/壁芯差）を吸収した閾値
+  //  ※ 層0で sanityBase を物理上限へ丸めた場合は、許容比(1.25)を挟まず**必ず**是正する。
+  //    150㎡は「読み取りの揺れ」ではなく物理的にありえない値なので、150×1.25=187.5㎡までを
+  //    見逃す余地を残してはいけない（例: 部屋合計165㎡の誤読が素通りする穴になる）。
+  const floorAreaInflated = sanityBase > 0
+    && (totalFloorArea > sanityBase * FLOOR_AREA_MAX_RATIO
+      || (floorAreaImplausible && !areaSourceTrusted && totalFloorArea > sanityBase));
+  // 是正係数（<1）。**部屋データの生値に対する**縮小率なので分母は roomsSumArea を使う。
+  //   （totalFloorArea は拾い落ち補填で netTarget に置き換わっていることがあり、
+  //     それを分母にすると UB・収納の控除だけが過剰に縮む＝天井面積が過大になる）
+  const inflationScale = (floorAreaInflated && roomsSumArea > 0)
+    ? Math.min(1, sanityBase / roomsSumArea) : 1;
+  if (floorAreaInflated) {
+    const before = totalFloorArea;
+    // 床の内訳（居室/水回り/土間）を按分縮小する。
+    //   ※ flooringArea には拾い落ち補填分（netTarget − roomsSum）が乗っていることがあるが、
+    //     水増しと判定した以上その補填は根拠を失うので先に落とす。
+    //   ※ 収納（クロゼット等）は totalFloorArea には入るが3バケットのどれにも入らないため、
+    //     3バケットの合計は sanityBase より小さいのが正常（合計を sanityBase に合わせない）。
+    flooringArea = Math.max(0, flooringArea - Math.max(0, netTarget - roomsSumArea)) * inflationScale;
+    cfArea *= inflationScale;
+    tileArea *= inflationScale;
+    totalFloorArea = sanityBase;
+    calcWarnings.push({
+      field: 'floor_area_inflated',
+      // 【M-1】旧文言は before/after と説明が逆だった（sanityBase を「部屋面積の合計」と
+      //   決め打ちしていたが、実際は信頼できる床面積＝ユーザー入力の専有面積であることが多い）。
+      //   分母の出どころを sanityBase の選ばれ方から明示する。
+      message: `数量計算に使う床面積(${before.toFixed(1)}㎡)が信頼できる床面積(${sanityBase.toFixed(1)}㎡`
+        + `・${areaSourceTrusted ? '専有面積の入力/検証済みの転記値' : '部屋面積の合計'})に対し過大です`
+        + '（外形寸法の誤読・部屋面積の読みすぎの可能性）。'
+        + `全部位を${sanityBase.toFixed(1)}㎡ベースで算出しました。専有面積を正しく入力すると改善します`,
+      before: Math.round(before * 10) / 10,
+      after: Math.round(sanityBase * 10) / 10,
+    });
+  }
+
   // 天井面積 (UB・CLを除く)
-  const ubArea = rooms.filter(r => r.name?.includes('UB') || r.name?.includes('浴室')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
-  const closetArea = rooms.filter(r => r.name?.includes('クローゼット') || r.name?.includes('クロゼット') || r.name?.includes('CL') || r.name?.includes('収納') || r.name?.includes('物入')).reduce((sum, r) => sum + (r.area_sqm || 0), 0);
+  //  ※ UB・収納の面積は部屋データの生値なので、床面積を縮小した場合は同じ係数で揃える
+  //    （縮小後の totalFloorArea から生値の ubArea を引くと控除が過大になるため）
+  const ubArea = rooms.filter(r => r.name?.includes('UB') || r.name?.includes('浴室')).reduce((sum, r) => sum + (r.area_sqm || 0), 0) * inflationScale;
+  const closetArea = rooms.filter(r => r.name?.includes('クローゼット') || r.name?.includes('クロゼット') || r.name?.includes('CL') || r.name?.includes('収納') || r.name?.includes('物入')).reduce((sum, r) => sum + (r.area_sqm || 0), 0) * inflationScale;
   let ceilingArea = totalFloorArea - ubArea - closetArea;
   // 天井面積が0以下の場合、床面積の90%として推定（最低50㎡）
   if (ceilingArea <= 0) {
@@ -765,6 +1007,208 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // --- 資材計算 ---
   // アルファステイツ新宮町67戸実績に基づく
 
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 【実績レンジのクランプ4件の置換（2026-07-24・must-fix M-2で設計やり直し）】
+  //
+  // 旧実装は Math.min(Math.max(x, min), max) の**絶対値クランプ**で、帯はすべて
+  // アルファステイツ新宮町（=リノベ実績・67㎡級）から取られていた。他物件に出すと必ず頭打ちする:
+  //   壁PB[30,90]枚  別府実測23.6〜98.4枚 → I=98.4が90で頭打ち
+  //   耐水PB[2,7]枚  別府実測2.5〜9.5枚   → G=9.5が7で頭打ち
+  //   巾木[30,60]m   別府実測43.8〜106.8m → 7/9タイプが60で頭打ち（H=106.8は-44%）
+  //   間仕切GW[5,15]㎡ 別府実測35.0〜53.6㎡ → **9/9タイプ全滅**（-57〜72%）
+  //   （実測値の出典: scripts/beppu-9types-ground-truth.json = 別府4丁目XLS集計表の戸当セル）
+  //
+  // 一方でクランプの上限は「外形寸法の誤読で totalFloorArea が水増しされたときの暴走を
+  // 止める唯一の安全弁」でもあった（従来パスでは validateTakeoffSanity は呼ばれず、
+  // applyElevationTakeoff もこの経路では走らない）。実測: total=200㎡誤読で
+  // 壁PB165枚 / 巾木164m / GW96㎡ まで伸びる。単純撤去は暴走を野放しにするので不可。
+  //
+  // 【M-2で判明した設計ミスと、その修正方針】
+  //   第1版は4部位すべてに「床面積比の上限」を掛けたが、そのうち**壁PBと巾木は床面積の
+  //   固定倍そのもの**（壁PB=床×1.37×0.6=0.822枚/㎡・巾木=床×0.82m/㎡）であり、
+  //   同じ床面積から作った値を同じ床面積の倍率(1.509枚/㎡・1.5m/㎡)と比べていた。
+  //   比は床面積に依らず一定（54%・55%）なので**上限には永久に到達しない＝死んだガード**。
+  //   540通りの総当たりでも発火0件だった。巾木で唯一発火したのは間取り別の最低値
+  //   （3LDKなら50m）を打ち消すケースだけで、床20㎡の住戸で50m→30mに「抑制」する
+  //   **誤発火**（=逆効果）だった。
+  //
+  //   → 床面積に比例するだけの部位に床面積比のcapを掛けても無意味。この2部位で本当に
+  //     守るべきは「床面積そのものの誤り」なので、**層1（floor_area_inflated）に一本化**する。
+  //     層1は totalFloorArea/flooringArea/cfArea/tileArea を一括是正するので、壁PB・巾木・
+  //     天井・フローリングが**同じ基準**で同時に守られる（部位を跨げる唯一の層）。
+  //     壁PB・巾木の部位capは撤去（死んだコードを残さない）。
+  //
+  // 【層2（部位capを残す部位）】床面積とは**独立した入力**を持ち、その入力が壊れると
+  //   床面積が正しくても部位単独で暴走する部位だけに置く:
+  //     耐水PB  ← cfArea（水回り部屋の面積誤読。トイレ60㎡等）
+  //     間仕切GW ← partitionWallLength（躯体壁混入・ユーザー上書きの誤入力）
+  //   この2部位は「出力/床面積」が入力次第で何倍にも振れるので床面積比のcapが実際に効く
+  //   （総当たりで発火を実証: scripts/test-clamp-ratio-sanity.mjs のセクション9）。
+  //
+  // 【下限は設けない】別府Bの壁PB23.6枚・耐水2.5枚のように、実在物件が旧下限（30枚・2枚）を
+  //   下回る実測を持つ。「小さすぎる＝異常」とは言えないので底上げしない（天井PBと同じ方針）。
+  //   ただし過少側は**書き換えずに警告だけ出す**（S-3。天井PBの ceiling_pb_area_small と同じ扱い）。
+
+  /**
+   * 部位ごとの物理上限比による抑制（層2）。
+   *   value が totalFloorArea × maxRatio を超えたら上限で抑制し警告を出す。
+   *   分母が無い（部屋も専有面積も拾えていない）場合は絶対上限 absoluteMax で最終防波堤とする。
+   *   ※ 床面積は層1で是正済み（floorAreaInflated 時は sanityBase へ縮小済み）なので、
+   *     ここでは totalFloorArea をそのまま分母に使う（旧 sanityFloorArea 変数は層1の
+   *     一本化にともない廃止＝部位ごとに基準が分かれる M-1 の温床だった）。
+   *   @param {string} basis 警告文に出す上限の根拠（人が読める表現）。maxRatio をそのまま
+   *     文面に出すと枚数系で 0.2415167250332086 のような数字が並び読めないため別引数にする
+   *   @returns {number} 抑制後の値（抑制しなければ value のまま）
+   */
+  const applyRatioCap = ({ value, maxRatio, absoluteMax, field, label, unit, round, basis }) => {
+    const fmt = (v) => (round === 'ceil' ? Math.ceil(v) : Math.round(v * 10) / 10);
+    if (totalFloorArea > 0) {
+      const cap = fmt(totalFloorArea * maxRatio);
+      if (value > cap) {
+        calcWarnings.push({
+          field,
+          message: `${label}(${value}${unit})が床面積${totalFloorArea.toFixed(1)}㎡に対し過大です`
+            + `（実在物件の実測上限は${basis}）。${cap}${unit}に抑制しました。`
+            + '専有面積・部屋面積の読み取りをご確認ください',
+          before: value,
+          after: cap,
+        });
+        return cap;
+      }
+      return value;
+    }
+    // 分母が全く無い場合のみ絶対上限（実在最大物件を弾かない高さに置く）
+    if (value > absoluteMax) {
+      calcWarnings.push({
+        field,
+        message: `${label}(${value}${unit})が上限${absoluteMax}${unit}を超えました`
+          + '（図面の面積読み取りに問題がある可能性）。上限で抑制しました。専有面積を入力してください',
+        before: value,
+        after: absoluteMax,
+      });
+      return absoluteMax;
+    }
+    return value;
+  };
+
+  /**
+   * 過少側の情報提供（S-3。数量は**書き換えない**・警告のみ）。
+   *   下限の底上げは実在物件を歪めるので行わないが、「読み落としで0に近づいた」ことを
+   *   検知する手段は必要（天井PBの ceiling_pb_area_small と同じ設計）。
+   *   閾値は実測最小の**半分**に置く（実在の小さい物件で鳴らさないため）:
+   *     壁PB   実測最小 別府B 23.6枚/48.7㎡=0.485枚/㎡ → 0.24
+   *     巾木   実測最小 別府B 43.8m/48.7㎡=0.900m/㎡  → 0.45
+   *     耐水PB 実測最小 別府H 2.49枚/107.6㎡=0.023枚/㎡ → 0.012
+   *     GW     実測最小 アルファG 6.425㎡/67.3㎡=0.095㎡/㎡ → 0.048
+   *       （GWだけは物件仕様で桁が違う＝アルファ基準の方が小さいのでそちらを採用）
+   *
+   *   @param {boolean} [suppressed] 直前に上限で抑制された値か（2026-07-24 MF-1）。
+   *     true のときは鳴らさない。上限で書き換えた値を「床面積に対し小さい＝読み落とし疑い」と
+   *     報告するのは**自作自演の矛盾警告**で、しかも床面積が巨大なときほど必ず起きる
+   *     （実測: user_input 1000㎡ で wall_pb_absolute_cap[140枚] と wall_pb_sheets_small が同時発火）。
+   *     抑制済みなら原因は既に上限側の警告で伝わっているので二重に鳴らさない。
+   */
+  const warnIfTooSmall = ({ value, minRatio, field, label, unit, basis, suppressed }) => {
+    if (suppressed) return;
+    if (!(totalFloorArea > 0) || !(value >= 0)) return;
+    const floorMin = totalFloorArea * minRatio;
+    if (value < floorMin) {
+      calcWarnings.push({
+        field,
+        message: `${label}(${value}${unit})が床面積${totalFloorArea.toFixed(1)}㎡に対し小さいため`
+          + `過少の可能性があります（部屋・寸法の読み落とし疑い。実在物件の実測最小は${basis}）。`
+          + '数量は書き換えていません。図面の読み取りをご確認ください',
+        before: null,
+        after: value,
+      });
+    }
+  };
+
+  // 実在物件の実測から導いた「床面積あたりの物理上限」。
+  // 出典: アルファG（'Ａタイプ'シート戸当・専有67.3㎡）と別府9タイプ（集計表戸当・
+  //   床面積は天井面積÷0.88で逆算。天井/専有比0.88は両物件で収束＝test-ceiling-pb-clamp.mjs参照）。
+  // いずれも「実測の最大値」に余裕を掛けた値で、**実在物件を弾かない**ことを最優先にしている
+  // （正解に一致させる閾値ではなく、物理的にありえない値だけを弾く閾値）。
+  //
+  // 耐水PB: 実測 アルファG 6.45/67.3=0.096 / 別府max 0.161（Gタイプ13.23㎡）→ 上限 0.4㎡/㎡（実測max×2.5）
+  //   水回りが極端に大きい間取り（1戸に浴室2つ等）を弾かないよう広めに取る
+  const WATERPROOF_PB_MAX_SQM_PER_FLOOR_SQM = 0.4;
+  // 間仕切GW: 実測 アルファG 6.43/67.3=0.095（Gは遮音壁2枚だけ）/ 別府max 0.775（Eタイプ47.15㎡）
+  //   → 上限 1.2㎡/㎡（実測max×1.55）。物件により「全間仕切に充填」まで振れる部位なので広めに取る
+  const GLASSWOOL_MAX_SQM_PER_FLOOR_SQM = 1.2;
+  // 分母が全く無い場合の絶対上限。既知最大住戸（別府I 床≈117㎡）の実測を弾かない高さに置く:
+  //   耐水 別府G=9.5枚 → 40枚 / GW 別府G=53.6㎡ → 150㎡
+  const WATERPROOF_PB_ABSOLUTE_MAX_SHEETS = 40;
+  const GLASSWOOL_ABSOLUTE_MAX_SQM = 150;
+
+  // ── 層3: 壁PB・巾木の「部位絶対上限」（2026-07-24 must-fix MF-1）──
+  //
+  //  【なぜ必要か】層0（floor_area_implausible）は sanityBase>150㎡ でしか、
+  //    層1（floor_area_inflated）は totalFloorArea > sanityBase×1.25 でしか発火しない。
+  //    その結果 **declared ≤ 150 かつ roomsSum ≤ declared×1.25** の帯が両層をすり抜け、
+  //    床面積の警告が1件も出ないまま最大187㎡ベースで計算される。
+  //    実測（この修正前・レビュアー独立検証と一致）:
+  //      decl=150 rooms=187 → 壁PB 155枚 / 巾木 154m ・床面積警告ゼロ
+  //      decl=149 rooms=165 → 壁PB 137枚 / 巾木 136m ・床面積警告ゼロ
+  //      decl=130 rooms=160 → 壁PB 132枚 / 巾木 132m ・床面積警告ゼロ（誤操作不要の現実的経路）
+  //    天井PBには CEILING_PB_ABSOLUTE_MAX_SHEETS=100 の最終防波堤があり、この帯でも
+  //    唯一鳴っていた（上の実測で ceiling_pb_absolute_cap だけが出ている）。
+  //    壁PB・巾木には同等の防波堤が無かった＝MF-1の穴。
+  //
+  //  【M-2の「死んだガード」結論との関係】M-2で撤去したのは**床面積比**のcap
+  //    （壁PB=床×0.822枚/㎡ を 床×1.509枚/㎡ と比べる＝比が床面積に依らず一定で到達不能）。
+  //    ここで置くのは**絶対上限**で、床面積が大きくなれば必ず到達する＝性質が異なり死なない。
+  //    天井PBの100枚capが現に機能している（上の実測で唯一鳴った警告）ことがその実証。
+  //
+  //  【上限値の置き方】2つの制約の間に置く（勘で決めない）:
+  //    下側の制約＝実在物件を弾かない。実測max（beppu-9types-ground-truth.json 戸当）と
+  //      エンジン出力（従来パス・別府規模の入力）の**両方**を上回る必要がある:
+  //        壁PB 実測max 別府I=98.4枚（137.79㎡÷1.4）／エンジン出力 別府I=97枚
+  //        巾木 実測max 別府H=106.85m           ／エンジン出力 別府I=96枚（H=89m）
+  //    上側の制約＝すり抜け帯を実効的に閉じる。この帯の床面積上限は
+  //      150（層0の閾値）×1.25（層1の閾値）=187.5㎡ で、無抑制なら壁PB155枚・巾木154m に達する。
+  //      上限をこの到達値より十分下に置かないと防波堤として機能しない。
+  //  → 実測maxの約1.2倍に置く（天井PBの100枚が実測max70.9枚の1.41倍なのより厳しめ。
+  //    天井PBは「面積÷1.45」の素直な換算なのに対し、壁PB・巾木は床面積の固定倍推定で
+  //    物件差が出にくく、実測を大きく超える正当な値が出にくいため）:
+  //        壁PB 120枚（実測max×1.22・エンジン出力max×1.24・床≈146㎡相当）
+  //        巾木 130m （実測max×1.22・エンジン出力max×1.35・床≈159㎡相当）
+  //    ※ 別府I(床≈116.8㎡)・別府H(≈107.6㎡)はいずれも上限の内側で、実在物件は一切弾かれない
+  //      （test-clamp-ratio-sanity.mjs のセクション13/14で9タイプ全数を実測して確認）。
+  //    ※ 巾木を壁PBより高くしているのは実測の絶対値が大きいため（別府H 106.9m vs 壁PB 98.4枚）。
+  const WALL_PB_ABSOLUTE_MAX_SHEETS = 120;
+  const HABAKI_ABSOLUTE_MAX_M = 130;
+
+  /**
+   * 部位の絶対上限による最終防波堤（層3）。
+   *   床面積比ではなく**部位の出力そのもの**を実在物件の実測上限と比べる。
+   *   層0/層1が発火しない帯（declared≤150 かつ roomsSum≤declared×1.25）と、
+   *   ユーザー入力を尊重して床面積を書き換えない経路（floor_area_implausible_trusted）の
+   *   両方をここで受け止める。天井PBの ceiling_pb_absolute_cap と同じ形。
+   *   @returns {{value:number, note:string|null}} 抑制後の値と、抑制時の根拠欄の差し替え文言
+   */
+  const applyAbsoluteCap = ({ value, absoluteMax, field, label, unit, basis }) => {
+    if (!(value > absoluteMax)) return { value, note: null };
+    calcWarnings.push({
+      field,
+      message: `${label}算出値(${value}${unit})が上限${absoluteMax}${unit}を超えました`
+        + `（実在物件の実測上限は${basis}）。図面の面積読み取りに問題がある可能性があります。`
+        + '上限で抑制しました。専有面積を正しく入力すると改善します',
+      before: value,
+      after: absoluteMax,
+    });
+    // S-1と同じ扱い: 数量を書き換えたら calculation 列（Excelの根拠）も揃える
+    return {
+      value: absoluteMax,
+      note: `算出値が上限${absoluteMax}${unit}を超えたため上限で抑制（面積読み取り要確認）`,
+    };
+  };
+  // 過少側の警告閾値（実測最小の半分。書き換えはしない＝S-3）
+  const WALL_PB_MIN_SHEETS_PER_FLOOR_SQM = 0.24;
+  const WATERPROOF_PB_MIN_SHEETS_PER_FLOOR_SQM = 0.012;
+  const HABAKI_MIN_M_PER_FLOOR_SQM = 0.45;
+  const GLASSWOOL_MIN_SQM_PER_FLOOR_SQM = 0.048;
+
   // === 石膏ボード ===
 
   // 壁PB t-9.5 (3'×6') - メイン壁用
@@ -774,7 +1218,31 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   let wallPb95Sheets = Math.ceil(totalFloorArea * wallPbCoeff);
   // リノベの場合は少なめに調整（新築の60%程度）
   wallPb95Sheets = Math.ceil(wallPb95Sheets * WALL_PB_REDUCTION);
-  wallPb95Sheets = Math.min(Math.max(wallPb95Sheets, 30), 90);
+  // 旧: Math.min(Math.max(wallPb95Sheets, 30), 90) → 別府I=98.4枚を90で頭打ち・B=23.6枚を30へ底上げ
+  //
+  // 【床面積比の部位capは置かない（2026-07-24 M-2）】この式の出力は床面積の固定倍
+  //   （1.37×0.6=0.822枚/㎡）でしかなく、床面積比の上限（旧: 2.5㎡/㎡÷1.6562=1.509枚/㎡）とは
+  //   常に比54%で**到達不能**だった。床面積の誤読に対する守りは層1（床面積そのものの是正）が担う。
+  //
+  // 【ただし絶対上限は置く（2026-07-24 MF-1）】層0/層1は
+  //   「declared≤150 かつ roomsSum≤declared×1.25」の帯では発火せず、床面積の警告が
+  //   1件も出ないまま最大187㎡ベースの計算が通る（decl=150/rooms=187 で155枚）。
+  //   絶対上限は床面積比と違い床面積が伸びれば必ず到達する＝この帯の最終防波堤になる。
+  let wallPbCalcNote = `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${wallPbCoeff}枚/㎡ × 0.6（リノベ係数）`;
+  const wallPbCapped = applyAbsoluteCap({
+    value: wallPb95Sheets, absoluteMax: WALL_PB_ABSOLUTE_MAX_SHEETS,
+    field: 'wall_pb_absolute_cap', label: '壁石膏ボード', unit: '枚',
+    basis: '別府I 98.4枚（床≈117㎡）',
+  });
+  wallPb95Sheets = wallPbCapped.value;
+  if (wallPbCapped.note) wallPbCalcNote = wallPbCapped.note;
+  //   過少側は書き換えず警告のみ（S-3）。
+  warnIfTooSmall({
+    value: wallPb95Sheets, minRatio: WALL_PB_MIN_SHEETS_PER_FLOOR_SQM,
+    field: 'wall_pb_sheets_small', label: '壁石膏ボード', unit: '枚',
+    basis: '別府B 23.6枚/48.7㎡=0.49枚/㎡',
+    suppressed: wallPbCapped.note !== null, // 上限で書き換えた値を「過少」と鳴らさない（MF-1）
+  });
   const wallPb95Area = Math.round(wallPb95Sheets * PB_SHEET_SIZE_3x6 * 100) / 100;
   materials.push({
     category: '下地材',
@@ -782,13 +1250,56 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: wallPb95Sheets,
-    calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${wallPbCoeff}枚/㎡ × 0.6（リノベ係数）`
+    calculation: wallPbCalcNote
   });
 
   // 壁耐水PB t-9.5 - 水回り用
   // アルファステイツ実績: 280枚/67戸 = 約4枚/戸
   let wallPbWaterSheets = Math.ceil(cfArea / PB_SHEET_SIZE_3x6 * LOSS_RATE_20);
-  wallPbWaterSheets = Math.min(Math.max(wallPbWaterSheets, 2), 7);
+  let waterproofPbCalcNote = `水回り面積 ${cfArea.toFixed(1)}㎡から算出`;
+  // 旧: Math.min(Math.max(wallPbWaterSheets, 2), 7) → 別府G=9.5枚を7で頭打ち（-26%）
+  //
+  // 【下限2枚を撤去したことの副作用と、その限定的な埋め合わせ】
+  //   下限撤去は正しい（別府H=2.49枚のように旧下限すれすれの実測があり、
+  //   「小さい＝異常」とは言えないため底上げしない）。ただし旧下限は
+  //   「AIが水回りの部屋を1つも拾えなかった（cfArea=0）」ときに 0枚を出さない役割も
+  //   兼ねていた。住戸には必ず浴室・便所があり（別府9タイプ・アルファG とも耐水PBは
+  //   最小でも2.49枚）、0枚は物理的にありえず**部屋の読み落とし**を意味する。
+  //   → 「読めた結果が小さい」場合は尊重して底上げしない。
+  //     「1つも読めていない（cfArea=0）」場合だけ、実績最小値の推定を置いて**警告を出す**。
+  //   ※ 平面図に水回りが存在しない特殊な区画（倉庫等）ではこの推定が過大になるが、
+  //     警告付きで可視化されるため黙って0を出すより安全と判断した。
+  const WATERPROOF_PB_FALLBACK_SHEETS = 2; // 実測最小 別府H=2.49枚 の切り捨て（過大にしない側へ丸める）
+  if (cfArea <= 0 && totalFloorArea > 0) {
+    wallPbWaterSheets = WATERPROOF_PB_FALLBACK_SHEETS;
+    waterproofPbCalcNote = `水回りの部屋を読み取れなかったため実績最小 ${WATERPROOF_PB_FALLBACK_SHEETS}枚を仮置き（要確認）`;
+    calcWarnings.push({
+      field: 'waterproof_pb_no_wet_room',
+      message: '図面から浴室・洗面・トイレ等の水回りを読み取れなかったため、'
+        + `壁耐水石膏ボードを実績最小の${WATERPROOF_PB_FALLBACK_SHEETS}枚で仮置きしました。`
+        + '水回りの部屋名・面積が図面に記載されているかご確認ください（要確認）',
+      before: 0,
+      after: WATERPROOF_PB_FALLBACK_SHEETS,
+    });
+  }
+  // 層2のcapを置く部位（M-2）: 入力の cfArea が床面積とは独立に壊れうる
+  //   （水回り部屋の面積誤読・部屋名の取り違えでLDKが水回りに入る等）。
+  //   出力/床面積 は cfArea 次第で何倍にも振れるため床面積比のcapが実際に効く。
+  wallPbWaterSheets = applyRatioCap({
+    value: wallPbWaterSheets,
+    maxRatio: WATERPROOF_PB_MAX_SQM_PER_FLOOR_SQM / PB_SHEET_SIZE_3x6,
+    absoluteMax: WATERPROOF_PB_ABSOLUTE_MAX_SHEETS,
+    field: 'waterproof_pb_sheets_excessive', label: '壁耐水石膏ボード', unit: '枚', round: 'ceil',
+    basis: `耐水ボード面積が床面積の${WATERPROOF_PB_MAX_SQM_PER_FLOOR_SQM}倍まで`,
+  });
+  // 過少側（S-3）。cfArea=0 の仮置きは上の専用警告で伝わるので二重に鳴らさない
+  if (cfArea > 0) {
+    warnIfTooSmall({
+      value: wallPbWaterSheets, minRatio: WATERPROOF_PB_MIN_SHEETS_PER_FLOOR_SQM,
+      field: 'waterproof_pb_sheets_small', label: '壁耐水石膏ボード', unit: '枚',
+      basis: '別府H 2.49枚/107.6㎡=0.023枚/㎡',
+    });
+  }
   const waterproofPb95Area = Math.round(wallPbWaterSheets * PB_SHEET_SIZE_3x6 * 100) / 100;
   materials.push({
     category: '下地材',
@@ -796,7 +1307,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     spec: "耐水t-9.5（3'×6'）910×1820mm",
     unit: '枚',
     quantity: wallPbWaterSheets,
-    calculation: `水回り面積 ${cfArea.toFixed(1)}㎡から算出`
+    calculation: waterproofPbCalcNote
   });
 
   // 天井PB t-9.5 (3'×6')
@@ -874,56 +1385,24 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   //   天井PB行を書き換えず・validateTakeoffSanityは壁PB比率のみ検査で天井は対象外・かつ
   //   展開図なしパスでは未呼び出し。旧クランプが実質唯一のガードだった）。
   //
-  // そこで実績レンジではなく「天井面積 ÷ 信頼できる床面積 の比」で暴走だけを捕捉する。
-  // この比は物件をまたいで≈0.88に収束する（H 94.71/107.9・I 102.786/117.1・アルファG 59/67
-  //   いずれも天井面積/専有面積≈0.88）。物理的にも天井面積は床面積を超えない（UB・CLを引いた残り）。
+  // 【2026-07-24 M-1: 天井側の水増しブランチは層1へ統合して撤去した】
+  //   旧実装はここで「天井面積 ÷ sanityBase > 1.3 なら 床面積×0.88 へ丸める」を行っていたが、
+  //   層1（floor_area_inflated）が**床面積そのもの**を sanityBase へ是正するようになったため、
+  //   ここへ来る時点で必ず totalFloorArea ≤ sanityBase かつ ceilingArea ≤ totalFloorArea、
+  //   すなわち ceilingArea/sanityBase ≤ 1.0 < 1.3 で**構造的に到達不能**になった
+  //   （層1が非発火なら比 ≤ 1.25 < 1.3、発火すれば ≤ 1.0）。
+  //   到達不能なガードを残すと「守られているつもり」の誤報告を生む（M-2で起きた事故）ので削除する。
+  //   撤去による品質面の変化はむしろ改善: 旧は 床面積×0.88 という**推定値**へ丸めていたが、
+  //   新は層1で是正された床面積から UB・収納を実測控除した**実面積**で算出する
+  //   （誤読200㎡の回帰ケースで 40枚[推定] → 44枚[実測ベース]）。
   //
-  // 信頼できる分母(sanityBase)の選び方が肝（誤発火の防止が最重要）:
-  //   - total_area_source が検証済み（ユーザー入力/ラベル×部屋合計整合/寸法整合）→ declaredArea を分母に。
-  //     部屋の拾い落ち補填で ceilingArea が room合計を上回るのは正常なので、信頼済み時に roomsSumArea を
-  //     分母にすると誤発火する（validator確定値はそのまま信頼する）。
-  //   - 未検証・外形寸法誤読・sourceなしの従来パスでは declaredArea が誤読で水増しされうる。ただし
-  //     ここで無条件に roomsSumArea を分母にすると、AIが一部の部屋しか拾えていない正常な拾い落ち
-  //     （例: total=65.76㎡が正しいのに rooms合計30㎡）で誤発火してしまう。
-  //     そこで「declaredArea が住戸として物理的に妥当な大きさ(≤PLAUSIBLE_MAX_FLOOR_SQM)なら
-  //     declaredArea を信頼し、非現実的に大きい場合だけ誤読とみなして roomsSumArea へ切り替える」。
-  //     住戸1戸の内法床は既知最大でも別府I≈117㎡どまり → 150㎡超は外形寸法誤読と判断できる。
-  //     これで「rooms65㎡なのに total=200㎡」の水増しは roomsSumArea基準の比≈3で捕まり、
-  //     一方 total=65.76㎡の正常な拾い落ちは declaredArea基準の比≈0.96で誤発火しない。
-  const TRUSTED_AREA_SOURCES = ['user_input', 'ai_label_roomsum_verified', 'ai_estimate_verified'];
-  const areaSourceTrusted = TRUSTED_AREA_SOURCES.includes(data.total_area_source);
-  const PLAUSIBLE_MAX_FLOOR_SQM = 150; // 住戸1戸の内法床の物理上限目安（既知最大 別府I≈117㎡の1.3倍弱）
-  let sanityBase;
-  if (areaSourceTrusted) {
-    sanityBase = declaredArea > 0 ? declaredArea : roomsSumArea;
-  } else if (declaredArea > 0 && declaredArea <= PLAUSIBLE_MAX_FLOOR_SQM) {
-    sanityBase = declaredArea; // 妥当な大きさの専有面積は未検証でも分母として信頼する（誤発火防止）
-  } else {
-    sanityBase = roomsSumArea > 0 ? roomsSumArea : declaredArea; // 非現実的なdeclared=誤読 → 部屋実測へ
-  }
-  const CEILING_AREA_MAX_RATIO = 1.3;   // 天井/床≈0.88に対し余裕を持たせた上限（超過=面積水増し疑い）
-  const CEILING_AREA_NOMINAL_RATIO = 0.88; // 収束比（水増し検出時のフォールバック天井面積の推定に使う）
-  // 絶対上限: 分母が全く無い（部屋も専有も拾えず declaredのみ・それも誤読）最終防波堤。
+  // 絶対上限は残す: 分母が全く無い（部屋も専有も拾えず declaredのみ・それも誤読）と
+  //   層1も働けないため、ここが最終防波堤になる。
   //   別府I=71枚を弾かないよう十分高く取る（100枚=天井145㎡相当。既知最大住戸の1.4倍の余裕）。
   const CEILING_PB_ABSOLUTE_MAX_SHEETS = 100;
 
   if (ceilingPb95Sheets < 0) ceilingPb95Sheets = 0;
-  if (sanityBase > 0 && ceilingArea > sanityBase * CEILING_AREA_MAX_RATIO) {
-    // 面積水増しを検出 → 天井面積を信頼できる床面積×収束比へ丸めて枚数を再計算し、要確認警告を出す
-    const cappedCeilingArea = sanityBase * CEILING_AREA_NOMINAL_RATIO;
-    const cappedSheets = Math.ceil(cappedCeilingArea / CEILING_PB_SQM_PER_SHEET);
-    calcWarnings.push({
-      field: 'ceiling_pb_area_inflated',
-      message: `天井面積(${ceilingArea.toFixed(1)}㎡)が床面積(${sanityBase.toFixed(1)}㎡)に対し過大です`
-        + `（外形寸法の誤読等で専有面積が水増しされた可能性）。天井PBを${cappedSheets}枚に抑制しました。`
-        + '専有面積を正しく入力すると改善します',
-      before: ceilingPb95Sheets,
-      after: cappedSheets,
-    });
-    ceilingPb95Sheets = cappedSheets;
-    ceilingPbCalcNote = `天井面積${ceilingArea.toFixed(1)}㎡が床面積${sanityBase.toFixed(1)}㎡に対し過大のため`
-      + `${cappedCeilingArea.toFixed(1)}㎡（床面積×${CEILING_AREA_NOMINAL_RATIO}）÷${CEILING_PB_SQM_PER_SHEET}㎡/枚に抑制`;
-  } else if (ceilingPb95Sheets > CEILING_PB_ABSOLUTE_MAX_SHEETS) {
+  if (ceilingPb95Sheets > CEILING_PB_ABSOLUTE_MAX_SHEETS) {
     // 分母が無く比率で捕捉できないケースの最終ガード（従来パス・部屋も専有も不明で誤読totalのみ）
     calcWarnings.push({
       field: 'ceiling_pb_absolute_cap',
@@ -1040,15 +1519,70 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // 間仕切グラスウール
   // アルファステイツ実績: 451㎡/67戸 = 約7㎡/戸
-  let glasswoolArea = Math.ceil(partitionWallLength * ceilingHeight * GLASSWOOL_COVERAGE);
-  glasswoolArea = Math.min(Math.max(glasswoolArea, 5), 15);
+  //
+  // 【充填率は物件依存（2026-07-24 must-fix M-3）】
+  //   旧上限[5,15]㎡は別府9/9タイプ全滅（実測35.0〜53.6㎡を15で頭打ち＝-57〜72%）だが、
+  //   上限を外すだけではアルファ側が逆に大きく外れる。実fixture 4本の実測（従来パス）:
+  //     gtype_parsedData.json 15→35㎡ / _p2 15→25㎡ / _p2v2 15→31㎡ / _p3 15→19㎡
+  //     （アルファGの正解は 6.425㎡。旧15㎡=+133% → 撤去だけだと +196〜445%へ悪化）
+  //   原因は上限ではなく **GLASSWOOL_COVERAGE=0.5 という充填率そのものが物件依存**であること:
+  //     アルファ（実測GW/床）= 6.425/67.3 = 0.095㎡/㎡（住戸内遮音壁2枚だけに充填する仕様）
+  //     別府   （同）        = 0.411〜0.775㎡/㎡（間仕切のほぼ全部に充填する仕様）＝**7〜8倍差**
+  //   1つの係数で両者を満たすことは不可能なので、係数を物件別overrideで差し替えられるようにする
+  //   （天井PB加算 overrides.ceiling_pb_extra_sheets と同じ方式）。
+  //   デフォルトは**エンジンが作られたアルファ基準**（＝既存物件の後方互換）:
+  //     間仕切壁のうち遮音壁だけに充填する ⇒ 充填率 GLASSWOOL_COVERAGE_ALPHA。
+  //   別府のように全間仕切へ充填する物件は overrides.glasswool_coverage='0.5' 等を指定する。
+  //   ※ 展開図ありの本番経路では applyElevationTakeoff が実測値で置換するのでこの推定は表に出ない
+  //     （eval-gtype-buildup の間仕切GW +0.1%✅は本ロジックの影響を受けない）。
+  //
+  //   アルファ基準の充填率の導出（実績からの逆算・答え合わせではなく係数の定義）:
+  //     GW実測 6.425㎡ ÷（間仕切壁延長19.8m × 天井高2.4m = 47.52㎡）= 0.135
+  //     出典: 'Ａタイプ'!P113/P221/P275（LDK↔洋1 1450mm・LDK↔洋3 1050mm の遮音壁片面）
+  const GLASSWOOL_COVERAGE_ALPHA = 0.135; // 住戸内遮音壁のみ充填（アルファG実測6.425㎡から逆算）
+  const GLASSWOOL_COVERAGE_MAX = 1.0;     // 両面・全間仕切でも1.0を超えることはない（入力ガード）
+  const glasswoolCoverage = (() => {
+    const raw = overrides.glasswool_coverage;
+    if (raw === null || raw === undefined) return GLASSWOOL_COVERAGE_ALPHA;
+    const s = String(raw).trim();
+    if (s === '') return GLASSWOOL_COVERAGE_ALPHA;
+    // 許可パターン: 0より大きく1.0以下の小数（'0.5' / '.5' / '1'）。
+    //   ceiling_pb_extra_sheets と同じ方針で、暗黙の文字除去はしない（'0.5'→5 のような
+    //   黙った10倍化を避ける）。不正値は既定へフォールバックしたうえで必ず警告を出す。
+    const n = /^\d*\.?\d+$/.test(s) ? Number(s) : Number.NaN;
+    if (Number.isFinite(n) && n > 0 && n <= GLASSWOOL_COVERAGE_MAX) return n;
+    calcWarnings.push({
+      field: 'glasswool_coverage_invalid',
+      message: `グラスウール充填率の指定値（${s}）が不正のため既定の${GLASSWOOL_COVERAGE_ALPHA}を使用しました`
+        + `（0より大きく${GLASSWOOL_COVERAGE_MAX}以下の数値で入力してください）`,
+      before: s,
+      after: GLASSWOOL_COVERAGE_ALPHA,
+    });
+    return GLASSWOOL_COVERAGE_ALPHA;
+  })();
+  let glasswoolArea = Math.ceil(partitionWallLength * ceilingHeight * glasswoolCoverage);
+  // 層2のcapを置く部位（M-2）: 入力の partitionWallLength が床面積と独立に壊れうる
+  //   （躯体壁の混入・ユーザー上書きの誤入力）。出力/床面積 が入力次第で何倍にも振れる。
+  glasswoolArea = applyRatioCap({
+    value: glasswoolArea,
+    maxRatio: GLASSWOOL_MAX_SQM_PER_FLOOR_SQM,
+    absoluteMax: GLASSWOOL_ABSOLUTE_MAX_SQM,
+    field: 'glasswool_area_excessive', label: '間仕切グラスウール', unit: '㎡', round: 'ceil',
+    basis: `床面積あたり${GLASSWOOL_MAX_SQM_PER_FLOOR_SQM}㎡/㎡まで`,
+  });
+  // 過少側（S-3）。書き換えずに警告のみ
+  warnIfTooSmall({
+    value: glasswoolArea, minRatio: GLASSWOOL_MIN_SQM_PER_FLOOR_SQM,
+    field: 'glasswool_area_small', label: '間仕切グラスウール', unit: '㎡',
+    basis: 'アルファG 6.43㎡/67.3㎡=0.095㎡/㎡',
+  });
   materials.push({
     category: '下地材',
     name: '間仕切 グラスウール充填',
     spec: "t-50 24kg/m3",
     unit: '㎡',
     quantity: glasswoolArea,
-    calculation: `間仕切壁 ${partitionWallLength.toFixed(1)}m × ${ceilingHeight.toFixed(1)}m × ${GLASSWOOL_COVERAGE}`
+    calculation: `間仕切壁 ${partitionWallLength.toFixed(1)}m × ${ceilingHeight.toFixed(1)}m × ${glasswoolCoverage}（充填率）`
   });
 
   // === 下地補強合板 ===
@@ -1115,16 +1649,29 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // === 木下地詳細（集計表シートより） ===
 
-  // 際根太 45×30
-  // 実績: 18.2m/戸
-  const kiwanetaLength = Math.max(Math.ceil(totalFloorArea * KIWANETA_RATIO), 18);
+  // 際根太（係数・規格・材積換算の有無が物件依存。既定=アルファ実績18.2m/戸・45×30）
+  //   別府は overrides.kiwaneta_ratio='1.07' / kiwaneta_min_m='0' / kiwaneta_spec='H110' /
+  //   kiwaneta_volume='なし' を指定する（集計表9行「際根太 H110」・X9=0＝材積換算なし）
+  const kiwaneta = resolveKiwanetaProfile(overrides);
+  for (const [k, bad] of Object.entries(kiwaneta.invalid)) {
+    const label = { ratio: '長さ係数', min_m: '下限', volume: '材積換算の有無' }[k] || k;
+    calcWarnings.push({
+      field: `kiwaneta_${k}_invalid`,
+      message: `際根太の${label}の指定値（${bad}）が不正のため既定値を使用しました`,
+      before: bad,
+      after: k === 'volume' ? 'あり' : kiwaneta[k],
+    });
+  }
+  const kiwanetaLength = Math.max(Math.ceil(totalFloorArea * kiwaneta.ratio), kiwaneta.min_m);
   materials.push({
     category: '下地材',
     name: '際根太',
-    spec: '45×30 米栂1等',
+    spec: kiwaneta.spec,
     unit: 'm',
     quantity: kiwanetaLength,
-    calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${KIWANETA_RATIO}（実績18.2m/戸）`
+    calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${kiwaneta.ratio}`
+      + (kiwaneta.min_m > 0 ? `（下限${kiwaneta.min_m}m）` : '')
+      + (kiwaneta.source.ratio === 'override' ? '［物件別指定］' : '（アルファ実績18.2m/戸）')
   });
 
   // 吊戸下地 30×40
@@ -1180,15 +1727,20 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   // 名称/摘要は見積明細・木材ブロックの表記（際根太/間仕切木軸/木胴縁（界壁面）/天井下地）。
   // 単価は未整備（¥0）— m単価・㎡単価の同名行と混ざらないよう unit_price を明示する。
   // 展開図がある場合は applyElevationTakeoff が実測ベースで上書きする。
-  materials.push({
-    category: '下地材',
-    name: '際根太',
-    spec: 'LVL 30×45',
-    unit: 'm³',
-    quantity: timberVolumeM3(TIMBER_SECTIONS.kiwaneta, kiwanetaLength),
-    unit_price: 0,
-    calculation: `際根太 ${kiwanetaLength}m × 断面45×30（実績0.027m³/戸）`
-  });
+  // 【際根太の材積行は物件依存で「出さない」ことがある（2026-07-24）】
+  //   アルファ集計表X9=0.00135 m³/m で材積化するが、**別府はX9=0＝材積換算をしない**
+  //   （mのまま発注する運用）。0m³の行を出すと「存在しない材の発注行」になるため行ごと出さない。
+  if (kiwaneta.volume) {
+    materials.push({
+      category: '下地材',
+      name: '際根太',
+      spec: TIMBER_SECTIONS.kiwaneta.spec,
+      unit: 'm³',
+      quantity: timberVolumeM3(TIMBER_SECTIONS.kiwaneta, kiwanetaLength),
+      unit_price: 0,
+      calculation: `際根太 ${kiwanetaLength}m × 断面45×30（実績0.027m³/戸）`
+    });
+  }
   const majikiriTimberLen = majikiriTimberLengthM(majikiriLength);
   materials.push({
     category: '下地材',
@@ -1199,18 +1751,44 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     unit_price: 0,
     calculation: `間仕切下地 ${majikiriLength} × 両面縦横@450 = ${Math.round(majikiriTimberLen)}m × 断面45×30（実績1.15m³/戸）`
   });
-  // 木胴縁: RC面木の実績面積（収納内RC面7.5㎡ + 界壁面5㎡ + EV面）× 横胴縁@455
-  const dobuchiSqm = ALPHA_STATS.closet_rc_wall / 9 + ALPHA_STATS.kaibe_wall / 9
-    + (overrides.ev_insulation === 'あり' ? 9 : 2);
-  const dobuchiLen = dobuchiLengthM(dobuchiSqm);
+  // 木胴縁（一部界壁面）: 拾い面積は**界壁面のみ**（収納内RC面・EV面は含めない）。
+  // 【XLS原典 2026-07-24】見積明細「木胴縁（一部界壁面）」3.6m³/67戸 の実体は
+  //   集計表 r85（アルファ「界壁面 ＰＢｔ9.5+木胴縁」/ 別府「部分界壁 ｔ9.5+木胴縁」）1行のみで、
+  //   Y85 {=W85*X$86} = 45.423㎡ × 0.0098 = 0.4451454m³（AJ列=構造材・軸組み）。
+  // 【分離の根拠は「係数が違う」ではなく「集計先の行が違う」（2026-07-24 S-1 訂正）】
+  //   旧コメントは「EV面(r26)は**別係数**へ入る」と書いていたが誤り。実セルを検算すると
+  //     r26 EV面     : Y26 {=W26*X$27} = 80.955 × 0.0098 = 0.793359（AJ26と一致）
+  //     r73 収納内RC面: Y73 {=W73*X$72} = 67.59  × 0.0098 = 0.662382（AK73と一致）
+  //     r85 界壁面    : Y85 {=W85*X$86} = 45.423 × 0.0098 = 0.4451454
+  //   と**3行とも同じ0.0098**。違うのは集計先（r85→AJ85単独 / r73→AK73 / r26→AJ26）＝
+  //   見積明細で別々の行として発注される点であり、木胴縁の行(r85)に他2行を合算してはいけない
+  //   （旧実装は3行を足していた）。「係数が違うから分ける」と読むと将来の判断を誤る。
+  //
+  // 【拾い面積は物件依存（2026-07-24 S-2）】既定のアルファ実績5.047㎡/戸は全物件共通ではない。
+  //   別府の部分界壁は戸当 0.000〜17.332㎡ とタイプで大きく違い、0（界壁なし）のタイプもある。
+  //   → overrides.kaibe_wall_sqm（itemKey='kaibe_wall_sqm'・文字列）で差し替え可能にする。
+  //     未設定＝既定（アルファ後方互換）／'0'＝界壁を計上しない、が成立すること。
+  //     解決ロジックは高さ側と同じ場所（buildupCalculator の resolveKaibeWallSqm）に一元化する。
+  const kaibeResolved = resolveKaibeWallSqm(overrides.kaibe_wall_sqm);
+  if (kaibeResolved.invalid) {
+    calcWarnings.push({
+      field: 'kaibe_wall_sqm_invalid',
+      message: `界壁面の拾い面積の指定値（${kaibeResolved.invalid}）が不正のため既定の${KAIBE_WALL_SQM_ALPHA}㎡/戸を使用しました`
+        + '（0以上の数値で入力してください。界壁が無い物件は0）',
+      before: kaibeResolved.invalid,
+      after: KAIBE_WALL_SQM_ALPHA,
+    });
+  }
+  const dobuchiSqm = kaibeResolved.value; // 既定: 界壁面 45.423㎡/9戸 = 5.047㎡/戸（ALPHA_STATS.kaibe_wall）
   materials.push({
     category: '下地材',
     name: '木胴縁（界壁面）',
     spec: 'LVL 30×45',
     unit: 'm³',
-    quantity: timberVolumeM3(TIMBER_SECTIONS.dobuchi, dobuchiLen),
+    quantity: dobuchiVolumeM3(dobuchiSqm),
     unit_price: 0,
-    calculation: `RC面木 ${dobuchiSqm.toFixed(1)}㎡ × 横胴縁@455 = ${Math.round(dobuchiLen)}m × 断面45×30（実績0.054m³/戸）`
+    calculation: `界壁面 ${dobuchiSqm.toFixed(2)}㎡ × ${DOBUCHI_M3_PER_SQM}m³/㎡`
+      + (kaibeResolved.source === 'override' ? '（物件別指定）' : '（XLS集計表X86・実績0.054m³/戸）')
   });
   const ceilingFrameLen = ceilingFrameLengthM(ceilingArea);
   materials.push({
@@ -1357,17 +1935,47 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   let habakiLength = Math.ceil(totalFloorArea * habakiCoeff);
   const layoutTypeForHabaki = data.layout_type || '';
 
-  // 間取りによる調整
+  // 間取りによる調整（下限の底上げのみ。1LDKの上限35mは下記参照）
   if (layoutTypeForHabaki.includes('3LDK') || layoutTypeForHabaki.includes('4LDK')) {
     habakiLength = Math.max(habakiLength, 50);
   } else if (layoutTypeForHabaki.includes('2LDK')) {
     habakiLength = Math.max(habakiLength, 40);
   } else if (layoutTypeForHabaki.includes('1LDK')) {
+    // ※ 1LDKの上限35mもアルファのリノベ実績帯だが、別府9タイプに1LDKが無く比較データが無いため
+    //   今回は触らない（帯外実測が確認できていないものを推測で動かさない）。1LDK実測が手に入り次第見直す
     habakiLength = Math.min(habakiLength, 35);
   }
 
-  // 実績に基づく範囲制限: 30〜60m
-  habakiLength = Math.min(Math.max(habakiLength, 30), 60);
+  // 旧: Math.min(Math.max(habakiLength, 30), 60) → 別府7/9タイプが60mで頭打ち
+  //   （H=106.85m→-44% / I=102.14m→-41% / G=88.48m→-32%）。実績帯[30,60]はアルファ67㎡級の値で、
+  //   90〜117㎡級の住戸には物理的に足りない。
+  //
+  // 【床面積比の部位capは置かない（2026-07-24 M-2）】壁PBと同じく出力は床面積の固定倍
+  //   （0.82m/㎡）で、床面積比の上限1.5m/㎡とは常に比55%＝**到達不能**だった。唯一発火したのは上の
+  //   間取り別の最低値（3LDK=50m）を打ち消すケースで、床20㎡の住戸で50m→30mに下げる
+  //   **誤発火**（暴走の抑制ではなく最低値の破壊）だった。
+  //
+  // 【ただし絶対上限は置く（2026-07-24 MF-1）】壁PBと同じ理由。層0/層1が発火しない帯
+  //   （decl=150/rooms=187 で巾木154m）を受け止める最終防波堤。
+  //   ※ 上の間取り別の最低値（3LDK=50m 等）より**後**に置く。最低値は「小さすぎる側の底上げ」で
+  //     上限とは方向が逆、かつ最低値の最大は50m＜上限150mなので打ち消し合わない
+  //     （M-2で問題になった「capが最低値を破壊する誤発火」はここでは構造的に起きない）。
+  let habakiCalcNote = `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${habakiCoeff}m/㎡`;
+  const habakiCapped = applyAbsoluteCap({
+    value: habakiLength, absoluteMax: HABAKI_ABSOLUTE_MAX_M,
+    field: 'habaki_absolute_cap', label: '木製巾木', unit: 'm',
+    basis: '別府H 106.9m（床≈107.6㎡）',
+  });
+  habakiLength = habakiCapped.value;
+  if (habakiCapped.note) habakiCalcNote = habakiCapped.note;
+  //   ※ 過少側の警告も間取り別の最低値（50/40m）が先に効くため、最低値が適用されない
+  //     間取り不明のケースでのみ実効的に鳴る。
+  warnIfTooSmall({
+    value: habakiLength, minRatio: HABAKI_MIN_M_PER_FLOOR_SQM,
+    field: 'habaki_length_small', label: '木製巾木', unit: 'm',
+    basis: '別府B 43.8m/48.7㎡=0.90m/㎡',
+    suppressed: habakiCapped.note !== null, // 上限で書き換えた値を「過少」と鳴らさない（MF-1）
+  });
 
   materials.push({
     category: '造作材',
@@ -1375,7 +1983,7 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     spec: packageSpecs?.habaki || 'ニホンフラッシュ LM-9KJ H=40',
     unit: 'm',
     quantity: habakiLength,
-    calculation: `床面積 ${totalFloorArea.toFixed(1)}㎡ × ${habakiCoeff}m/㎡`
+    calculation: habakiCalcNote
   });
 
   // 木製巾木出隅役物

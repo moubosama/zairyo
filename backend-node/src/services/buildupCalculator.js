@@ -14,7 +14,7 @@
  */
 
 import {
-  TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, dobuchiLengthM,
+  TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, dobuchiVolumeM3, DOBUCHI_M3_PER_SQM,
 } from './timberVolume.js';
 
 const PB_SQM_PER_SHEET = 1.4; // XLS集計表の換算係数（3×6板・ロス込み。壁X56/耐水X58/遮音X54=1.4）
@@ -126,6 +126,85 @@ const OPENING_MAX_FACE_RATIO = 0.9;
 // （+40mmを適用するのは高さ未指定の面に天井高からデフォルトを立てる場合のみ）。
 // ※ 下地高STUD_PLENUM_M(+370=スラブ下端まで)とは別物。巾木（周長ベース）には影響しない。
 const WALL_PICKUP_EXTRA_MM = 40;
+
+// ============================================================
+// 界壁面（一部界壁）＝ 木胴縁（一部界壁面）の拾い対象
+// ============================================================
+// 【XLS原典（2026-07-24）】タイプ別シートの「界壁面 ＰＢｔ9.5+木胴縁」行（アルファ 'Ａタイプ'!r155/209/261/318、
+//   別府「部分界壁 ｔ9.5+木胴縁」）。Gタイプ実績 = 洋室(3) Ｃ面 0.98m×2.45 + 台所 Ｃ面 1.08m×2.45 = 5.047㎡/戸。
+//   集計表 C85 が上記4セルの合計を参照し、Y85 {=W85*X$86} で材積化される（timberVolume.js の注記参照）。
+//
+// 【拾い高さ 2.45m】XLSの界壁面行の高さセル（'Ａタイプ'!K261/K318）が両方2.45。
+//   一般部の下地高2.57・壁ボードのCH+40=2.44 のいずれとも違う界壁専用の高さ。
+//   ※別府は界壁面の高さ＝その物件の下地高（2.72/2.86）を使っており**物件依存**のため
+//     opts.kaibeWall.height_m で差し替え可能にする（既定はアルファ実績2.45）。
+export const KAIBE_FACE_HEIGHT_M = 2.45;
+
+// 【幅は展開図から機械的に切り出せない（重要・過大計上の防止）】
+//   界壁は「隣戸との境界にあたるRC壁の一部分」で、平面図では打放し記号(C04/別府C)が付く面の
+//   **一部の区間**にすぎない。実例（Gタイプ洋室(3)）: 展開図のＣ面幅は2.36mだが、XLSの界壁面は0.98m。
+//   残りは壁(ボード)行に別セグメント(1.24/3.33/3.24)として拾われており、面幅からの按分則は存在しない
+//   （別府の部分界壁幅も0.75〜2.78mとばらつき、面幅比の一定則は無い）。
+//   平面図の凡例にも界壁の範囲マークは無い（太線は「遮音壁の範囲」）。
+//   → 面に界壁の明示（face.is_kaibe / wall_code の界壁指定 / 幅の実測入力）がある場合のみ実測計上し、
+//     無ければ**実測ゼロ**として materialCalculator の実績推定（KAIBE_WALL_SQM_ALPHA）を維持する。
+//     面幅をそのまま界壁とみなす実装は+3〜5倍の過大になるため採らない。
+const KAIBE_FACE_RE = /界壁|戸境|かいへき/;
+
+// 【界壁面の拾い面積も物件依存（2026-07-24 S-2）】
+//   実測が取れないとき（＝界壁の明示が展開図に無い通常ケース）に使う推定面積。
+//   既定はアルファ実績 5.047㎡/戸（'Ａタイプ'!P158+P212+P264+P321 の戸当。C85が参照する4セル合計）
+//   だが、これは**アルファでしか成立しない値**。別府の「部分界壁 ｔ9.5+木胴縁」戸当（XLS r85）は
+//     Ａ2.266 / Ｂ0.000 / Ｃ? / Ｄ2.040 / Ｅ2.448 / Ｈ17.332 / Ｉ15.902 ㎡/戸
+//   と物件・タイプで3桁%レベルにばらつき、**界壁が存在しない（0.000）タイプまである**。
+//   固定値のままだと別府Ｂ/Ｊのように実在しない材を計上してしまうため、高さ（KAIBE_FACE_HEIGHT_M）と
+//   同じく差し替え可能にする:
+//     ・opts.kaibeWall.area_sqm（buildup経由・数値）
+//     ・overrides.kaibe_wall_sqm（Overrideテーブル経由・文字列。materialCalculatorの推定パス）
+//   **0を明示指定できる**（＝界壁を計上しない）ことが要件。未設定のみ既定へフォールバックする。
+export const KAIBE_WALL_SQM_ALPHA = 5.047;
+
+// 界壁面の拾い面積として受け付ける上限（㎡/戸）。別府Ｈ17.332の約1.7倍。
+// 住戸1戸の界壁面としてこれを超える値は入力ミス（桁違い）とみなして既定へ戻す
+const KAIBE_WALL_SQM_MAX = 30;
+
+/**
+ * 界壁面の拾い面積（㎡/戸）を解決する。高さ側 opts.kaibeWall.height_m と対になる面積側の入力口。
+ *
+ * @param raw 面積指定（数値 or 文字列。undefined/null/空文字＝未設定）
+ * @returns { value: number, source: 'default'|'override', invalid?: string }
+ *   invalid が付くのは「値は入っているが採用できなかった」場合のみ（呼び出し側で警告を出す）。
+ *   **0 は正当な指定**（界壁が存在しない物件）なので既定へ戻さない。
+ */
+export function resolveKaibeWallSqm(raw) {
+  if (raw === null || raw === undefined) return { value: KAIBE_WALL_SQM_ALPHA, source: 'default' };
+  const s = String(raw).trim();
+  if (s === '') return { value: KAIBE_WALL_SQM_ALPHA, source: 'default' };
+  // 許可パターン: 0以上の数値（'0' / '2.266' / '.5'）。ceiling_pb_extra_sheets と同様、
+  // 数字以外の暗黙除去はしない（'-3'→3の符号反転・'2.5'→25の10倍化を起こさないため）
+  const n = /^\d*\.?\d+$/.test(s) ? Number(s) : Number.NaN;
+  if (Number.isFinite(n) && n >= 0 && n <= KAIBE_WALL_SQM_MAX) return { value: n, source: 'override' };
+  return { value: KAIBE_WALL_SQM_ALPHA, source: 'default', invalid: s };
+}
+
+/**
+ * 面が「界壁面」として明示されているかを判定し、拾い幅(mm)を返す（無ければ0）。
+ * 受け付ける入力（いずれも図面/AI読取からの明示。推測はしない）:
+ *   face.kaibe_width_mm  … 界壁部分の実測幅（最優先。XLSのJ261/J318に相当する値）
+ *   face.is_kaibe = true … 面の全幅が界壁（幅は面幅を使う）
+ *   face.part      … '界壁' 等の注記（同上）
+ */
+export function kaibeFaceWidthMm(face) {
+  if (!face || typeof face !== 'object') return 0;
+  const w = Number(face.kaibe_width_mm);
+  if (Number.isFinite(w) && w > 0) return w;
+  const marked = face.is_kaibe === true
+    || (typeof face.part === 'string' && KAIBE_FACE_RE.test(face.part))
+    || (typeof face.note === 'string' && KAIBE_FACE_RE.test(face.note));
+  if (!marked) return 0;
+  const fw = Number(face.width_mm);
+  return Number.isFinite(fw) && fw > 0 ? fw : 0;
+}
 
 /**
  * 壁仕上記号のパース。 'D14' -> { base: 'D', mid: 1, surf: 4 }
@@ -740,6 +819,15 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 遮音壁ルールの適用対象: ペアの両部屋が展開図に存在する場合のみ（片方しか読めていない
   // 読取で幻の壁を積まない安全側ゲート。Gタイプ以外の間取りで部屋名が偶然一致した場合に
   // 誤計上するリスクはDEFAULT_SOUND_WALL_PAIRS側のコメント参照=他タイプ検証時に差し替え）
+  // 界壁面の拾い高さ（物件依存: アルファ2.45 / 別府は下地高2.72・2.86）。
+  // 不正値（0以下・非数・非現実的な高さ）は既定へフォールバックする
+  const kaibeHeightOpt = Number(opts.kaibeWall?.height_m);
+  const kaibeHeightM = (Number.isFinite(kaibeHeightOpt) && kaibeHeightOpt > 0 && kaibeHeightOpt <= 5)
+    ? kaibeHeightOpt : KAIBE_FACE_HEIGHT_M;
+  // 界壁面の拾い**面積**の物件別指定（実測が無いときの推定値。0＝界壁なしの明示も可）。
+  // takeoffに載せて applyElevationTakeoff へ運ぶ（materialCalculatorの推定行を差し替えるため）
+  const kaibeAreaOpt = resolveKaibeWallSqm(opts.kaibeWall?.area_sqm);
+
   const soundPairs = (Array.isArray(opts.soundWallRule?.pairs)
     ? opts.soundWallRule.pairs : DEFAULT_SOUND_WALL_PAIRS)
     .filter((p) => p && Number.isFinite(p.width_mm) && p.width_mm > 0 &&
@@ -763,7 +851,21 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // 間仕切下地(木)の拾い量。XLS慣行の"m"表記だが実態は「壁1枚あたり片面の下地面積(㎡)」
     // = Σ(間仕切面幅×下地高(2.57/水回り2.77)−開口) を壁1枚換算(÷2)したもの。timberVolume.js解読メモ参照
     majikiri_shitaji_m: 0,
-    rc_furring_sqm: 0,       // RC面木(D下地)の面積 — 木胴縁の材積換算用（D14防露/EV面・D64収納内）
+    // RC面木(D下地)の面積（D14防露/EV面・D64収納内）。木胴縁の換算には使わない（下記）ため
+    // 現在この欄を読む資材行は無い（N-1）。**観測用として残す**:
+    //   ①XLS集計表の別行（r26 EV面 / r73 収納内RC面）の実装時にそのまま拾い値として使う予定
+    //   ②「木胴縁にD下地を混ぜていた」旧バグの再発検知に使っている（test-dobuchi-volume ③）
+    rc_furring_sqm: 0,
+    // 界壁面（一部界壁）の面積 — 木胴縁（一部界壁面）の材積換算用。
+    // XLS集計表r85（アルファ「界壁面」/別府「部分界壁」）に対応し、rc_furring_sqmとは**別部位**。
+    // 展開図の面から機械的に切り出せないため（下記 KAIBE_* の注記参照）、面に界壁の明示があるときだけ積む。
+    kaibe_furring_sqm: 0,
+    kaibe_furring_faces: 0,  // 界壁面として拾えた面の数（0なら実測なし=推定を維持する判定に使う）
+    // 実測が無い場合に使う推定面積（㎡/戸）と、その出どころ。物件別指定 opts.kaibeWall.area_sqm を
+    // applyElevationTakeoff まで運ぶための欄（source='override' なら 0 指定も含めて推定行を置き換える）
+    kaibe_estimate_sqm: kaibeAreaOpt.value,
+    kaibe_estimate_source: kaibeAreaOpt.source, // 'default'（アルファ実績）| 'override'（物件別指定）
+    kaibe_estimate_invalid: kaibeAreaOpt.invalid || null, // 採用できなかった指定値（警告用）
     skirting_m: { 木製: 0, ソフト: 0, 樹脂: 0 },
     // 参考
     opening_area_sqm: 0,
@@ -1177,13 +1279,23 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
           majikiriDouble += Math.max(0, w * studH - openingAreaStud);
         }
       }
-      // RC面木(D下地)は木胴縁の対象面（D14=防露/EV面、D64=収納内コンパネ）
+      // RC面木(D下地)の面積（D14=防露/EV面、D64=収納内コンパネ）。
+      // ※ 木胴縁（一部界壁面）の換算には使わない: XLSでは収納内RC面(集計表r73)・EV面(r26)は
+      //   木胴縁の行(r85)とは**別行**（別の発注行）に集計される。係数は3行とも0.0098で同じであり、
+      //   分離の根拠は係数差ではなく集計先の違い（timberVolume.js / materialCalculator.js の注記参照）
       if (code.base === 'D') {
         t.rc_furring_sqm += net;
         if (code.mid === 6) {
           const rn = normalizeRoomName(room.name);
           d6ByElevRoom.set(rn, (d6ByElevRoom.get(rn) || 0) + w);
         }
+      }
+      // 界壁面（一部界壁）: 面に界壁の明示がある場合のみ、界壁高さ(既定2.45m)で拾う。
+      // 面幅から界壁部分を推測はしない（KAIBE_FACE_HEIGHT_M 付近の注記＝過大計上の防止）
+      const kaibeW = kaibeFaceWidthMm(face);
+      if (kaibeW > 0) {
+        t.kaibe_furring_sqm += (kaibeW / 1000) * kaibeHeightM;
+        t.kaibe_furring_faces++;
       }
 
       // 下地
@@ -1403,8 +1515,11 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   }
 
   // 丸め
+  // ※ kaibe_estimate_sqm は「拾い値」ではなく**入力された定数のまま運ぶ欄**なので丸めない
+  //   （既定5.047が5.05になると材積が+0.06%ずれ、推定パスとの後方互換が崩れる）
+  const NO_ROUND_KEYS = new Set(['kaibe_estimate_sqm']);
   for (const k of Object.keys(t)) {
-    if (typeof t[k] === 'number') t[k] = Math.round(t[k] * 100) / 100;
+    if (typeof t[k] === 'number' && !NO_ROUND_KEYS.has(k)) t[k] = Math.round(t[k] * 100) / 100;
   }
   for (const k of Object.keys(t.skirting_m)) {
     t.skirting_m[k] = Math.round(t.skirting_m[k] * 10) / 10;
@@ -1530,24 +1645,60 @@ export function applyElevationTakeoff(result, takeoff) {
   set((m) => m.name === '間仕切木軸',
     timberVolumeM3(TIMBER_SECTIONS.majikiri, majikiriLen),
     `間仕切下地 ${Math.round(takeoff.majikiri_shitaji_m * 10) / 10} × 両面縦横@450 = ${Math.round(majikiriLen)}m × 断面45×30`);
-  // 木胴縁: RC面木(D下地)の実測面積 → 横胴縁@455の材長 → 材積
-  // ※ 界壁・EV面が展開図に現れないタイプでは実測が過少になりうる（Gは界壁C04=胴縁なしで正）
-  //   実測が従来推定の50%を切る場合は部分実測の疑いとして _warnings で要確認にする（実測値は採用）
-  const dobuchiLen = dobuchiLengthM(takeoff.rc_furring_sqm);
-  const dobuchiVol = timberVolumeM3(TIMBER_SECTIONS.dobuchi, dobuchiLen);
+  // 木胴縁（一部界壁面）: 界壁面の実測面積 × XLS材積係数（timberVolume.js の DOBUCHI_M3_PER_SQM）。
+  // 【拾い対象は界壁面のみ】旧実装は rc_furring_sqm（D下地=EV面+収納内RC面）を投入していたが、
+  //   XLSではそれらは木胴縁とは別行（集計表r73/r26）に集計される別部位で、対象が誤っていた。
+  //   さらに旧係数(1/0.455×断面=0.00297)がXLS実測0.0098の1/3.3だったため、
+  //   「対象が過大 × 係数が過少」の相殺で-46%に見えていた（2026-07-24に両方セットで是正）。
+  // 【実測が無い場合は推定を維持】界壁の区間幅は展開図の面幅から切り出せない（kaibeFaceWidthMm の注記）。
+  //   面に界壁の明示が無い＝実測ゼロのときは上書きせず、materialCalculatorの実績推定を残す
+  //   （面幅を界壁とみなすと数倍の過大になるため、"読めなかった"を"ゼロ"にしない）
   const dobuchiRow = result.materials.find((m) => m.name === '木胴縁（界壁面）');
-  if (dobuchiRow && dobuchiVol > 0 && dobuchiRow.quantity > 0 && dobuchiVol < dobuchiRow.quantity * 0.5) {
+  if (takeoff.kaibe_furring_faces > 0) {
+    const dobuchiVol = dobuchiVolumeM3(takeoff.kaibe_furring_sqm);
+    const kaibeSqm = Math.round(takeoff.kaibe_furring_sqm * 100) / 100;
+    if (dobuchiRow && dobuchiVol > 0 && dobuchiRow.quantity > 0 && dobuchiVol < dobuchiRow.quantity * 0.5) {
+      result._warnings = result._warnings || [];
+      result._warnings.push({
+        field: '木胴縁（界壁面）',
+        message: `展開図実測の木胴縁材積(${dobuchiVol}m³)が実績ベース推定(${dobuchiRow.quantity}m³)の50%未満です。`
+          + '界壁面の一部が展開図に写っていない可能性があります（実測値を採用済み・要確認）',
+        before: dobuchiRow.quantity,
+        after: dobuchiVol,
+      });
+    }
+    set((m) => m.name === '木胴縁（界壁面）', dobuchiVol,
+      `界壁面 ${kaibeSqm}㎡（実測${takeoff.kaibe_furring_faces}面）× ${DOBUCHI_M3_PER_SQM}m³/㎡`);
+  } else if (dobuchiRow) {
+    // 実測なし。物件別の拾い面積指定（opts.kaibeWall.area_sqm）があればそれで推定を差し替える。
+    // 【0の指定も採用する】別府Ｂ/Ｊのように界壁が存在しないタイプでは 0 が正解であり、
+    //   「未設定」と区別して 0m³ まで落とせないと実在しない材を計上し続ける（S-2）。
+    //   materialCalculator 側は overrides.kaibe_wall_sqm で同じ差し替えができるので、
+    //   通常は同値になる（ここは buildup経由 opts の指定が効くことを保証する二重の入口）。
+    if (takeoff.kaibe_estimate_source === 'override') {
+      const estSqm = takeoff.kaibe_estimate_sqm;
+      // set() は quantity>0 を条件にする（実測0＝「読めなかった」で潰さないための共通ガード）が、
+      // ここは実測ではなく**人が宣言した値**なので 0 もそのまま採用する必要がある（別府Ｂ/Ｊ）。
+      // 共通ガードを緩めると他部位の「読めなかった→0」が通ってしまうため、この行だけ直接書く
+      // takeoff:true は付けない（実測ではなく人の指定値。実測フラグを立てると
+      // 「展開図から読めた」と誤って読まれる）
+      dobuchiRow.quantity = dobuchiVolumeM3(estSqm);
+      dobuchiRow.calculation = `界壁面 ${estSqm}㎡（物件別指定・実測なし）× ${DOBUCHI_M3_PER_SQM}m³/㎡`;
+    }
+    // 読者が「実測されている」と誤解しないよう根拠に明示する（指定の有無にかかわらず出す）
+    const kept = result.materials.find((m) => m.name === '木胴縁（界壁面）');
     result._warnings = result._warnings || [];
     result._warnings.push({
       field: '木胴縁（界壁面）',
-      message: `展開図実測の木胴縁材積(${dobuchiVol}m³)が実績ベース推定(${dobuchiRow.quantity}m³)の50%未満です。`
-        + '界壁・EV廻りのRC面が展開図に写っていない可能性があります（実測値を採用済み・要確認）',
+      message: '展開図に界壁面の明示が無いため、木胴縁は'
+        + (takeoff.kaibe_estimate_source === 'override'
+          ? `物件別に指定された界壁面積${takeoff.kaibe_estimate_sqm}㎡からの計算値です`
+          : '実績ベースの推定値のままです')
+        + '（界壁の区間幅は面幅から特定できません。実測したい場合は界壁部分の幅を指定してください）',
       before: dobuchiRow.quantity,
-      after: dobuchiVol,
+      after: kept ? kept.quantity : dobuchiRow.quantity,
     });
   }
-  set((m) => m.name === '木胴縁（界壁面）', dobuchiVol,
-    `RC面木 ${takeoff.rc_furring_sqm}㎡ × 横胴縁@455 = ${Math.round(dobuchiLen)}m × 断面45×30`);
 
   // 開口ガード等、takeoff側で検出した要確認事項を結果の警告へ載せ替える
   // （/calculateの警告マージ経路（サイクルC）に乗り、結果画面の警告パネルに表示される）

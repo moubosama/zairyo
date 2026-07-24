@@ -10,9 +10,22 @@
 //   - ただし旧クランプは「外形寸法誤読で total_floor_area_sqm=200㎡ → 天井PB138枚」の暴走を
 //     止める唯一の安全弁でもあった（applyElevationTakeoffは天井PB行を書き換えず・
 //     validateTakeoffSanityは壁PB比率のみ・従来パスでは未呼び出し）。虚偽根拠で外したのがNG。
-//   - 置換: 天井/床面積比≈0.88の収束を利用し、ceilingArea が信頼できる床面積×1.3 を超えたら
-//     床面積×0.88へ抑制+警告。信頼できる床面積(sanityBase)は total_area_source が検証済みなら
-//     declaredArea、未検証/誤読/source無しなら roomsSumArea（部屋面積の生合計＝誤読の影響を受けない）。
+//   - 第1版の置換: 天井/床面積比≈0.88の収束を利用し、ceilingArea が信頼できる床面積×1.3 を
+//     超えたら床面積×0.88へ抑制+警告する**天井PB独自のブランチ**を置いた。
+//
+// 【現行仕様（S-4是正・上の第1版はもう存在しない）】
+//   天井PB独自の水増しブランチ（ceilingArea/sanityBase>1.3 → 床面積×0.88）は M-1 で
+//   層1（floor_area_inflated）へ統合され**撤去済み**。層1が床面積そのものを是正するため
+//   ここへ来る時点で比 ≤1.0 となり構造的に到達不能になったため（`ceiling_pb_area_inflated`
+//   はもう出ない。セクション9-2でその不在を回帰テストしている）。
+//   現行の天井PBのガードは以下の3つだけ:
+//     (a) 層0 floor_area_implausible / 層1 floor_area_inflated で是正された床面積を入力に使う
+//         （部位横断の共通是正。天井PB固有の抑制ではない）
+//     (b) 分母不明時の絶対上限100枚 ceiling_pb_absolute_cap
+//     (c) 過少側の情報提供 ceiling_pb_area_small（数量は書き換えない）
+//   信頼できる床面積(sanityBase)は total_area_source が検証済みなら declaredArea、
+//   未検証/誤読/source無しなら roomsSumArea（部屋面積の生合計＝誤読の影響を受けない）。
+//   さらに sanityBase 自体が住戸の物理上限150㎡を超える場合は層0が150へ丸める（M-4）。
 //
 // 期待値の出所（答え合わせではなく実装式からの論理導出）:
 //   天井PB枚数 = ceil((ceilingArea − パウダー・トイレ天井) ÷ 1.45) [+ 4枚（該当室がある場合）]
@@ -193,13 +206,22 @@ console.log('--- 4. 誤読200㎡の暴走を比率で捕捉 ---');
   // 旧クランプ撤去直後（ガード無し）なら ceilingArea≈192 → 138枚まで暴走していた
   check('誤読200㎡で天井PBが暴走せず抑制される（<=72枚≒別府I上限相当）', sheets <= 72,
     `ceilingArea=${ceilingArea} sheets=${sheets}`);
-  check('誤読200㎡で水増し警告が出る', warnFields.includes('ceiling_pb_area_inflated'),
+  // 【2026-07-24 M-1で捕捉層が変わった】層1（floor_area_inflated）が**床面積そのもの**を
+  //   是正するようになったため、天井面積は ceilingArea = 65 − UB3 − WIC3 = 59㎡ となり、
+  //   天井PB側の比率ガード（ceilingArea > sanityBase×1.3）はもう発火しない（発火する必要がない）。
+  //   旧: 天井側で 65×0.88=57.2㎡ へ丸めて40枚（フォールバック推定）
+  //   新: 是正済みの実面積59㎡から ceil(59/1.45)+4 = 45枚（推定ではなく部屋実測ベース＝より正確）
+  //   暴走が止まることは上のチェックで担保済み。ここでは「どちらか一方の層で必ず捕捉される」ことを見る。
+  check('誤読200㎡で層1の水増し警告 floor_area_inflated が出る（天井側ブランチは撤去済み）',
+    warnFields.includes('floor_area_inflated') && !warnFields.includes('ceiling_pb_area_inflated'),
     `warnFields=${warnFields.join(',')}`);
-  // sanityBase=roomsSumArea=65 → 抑制天井=65×0.88=57.2 → ceil(57.2/1.45)=40枚
-  const expectedCapped = Math.ceil(65 * 0.88 / CEILING_PB_SQM_PER_SHEET);
-  check(`誤読200㎡の抑制枚数が room合計ベース${expectedCapped}枚`, sheets === expectedCapped,
-    `sheets=${sheets} expected=${expectedCapped}`);
-  const w = warnings.find((x) => x.field === 'ceiling_pb_area_inflated');
+  // 層1で是正された床面積65㎡から UB・収納を引いた実面積ベースになる
+  const correctedCeiling = 65 - 3 - 3; // roomsSum65 − UB3 − WIC3 = 59㎡
+  // トイレ2㎡は「ﾊﾟｳﾀﾞｰ･ﾄｲﾚ」枠として㎡換算から外し、代わりに+4枚（集計表74行方式）
+  const expectedCapped = Math.ceil((correctedCeiling - 2) / CEILING_PB_SQM_PER_SHEET) + 4;
+  check(`誤読200㎡の枚数が層1是正後の実天井面積${correctedCeiling}㎡ベース${expectedCapped}枚`,
+    sheets === expectedCapped, `sheets=${sheets} expected=${expectedCapped}`);
+  const w = warnings.find((x) => x.field === 'floor_area_inflated');
   check('警告に before/after が入っている', w && typeof w.before === 'number' && typeof w.after === 'number',
     `warning=${JSON.stringify(w)}`);
 }
@@ -438,7 +460,11 @@ console.log('--- 9. S-1 抑制時に calculation 欄が抑制後の値に揃う 
   check('絶対上限警告が出る', warnFields.includes('ceiling_pb_absolute_cap'),
     `warnFields=${warnFields.join(',')}`);
 
-  // 9-2. 水増しブランチ（従来から note を書き換えている側の回帰）
+  // 9-2. 【2026-07-24 M-1】天井側の水増しブランチ（ceiling_pb_area_inflated）は撤去された。
+  //   層1（floor_area_inflated）が床面積そのものを是正するため、この時点では
+  //   ceilingArea/sanityBase ≤ 1.0 < 1.3 で構造的に到達不能になったため
+  //   （到達不能なガードを残すと「守られているつもり」の誤報告を生む）。
+  //   ここでは「撤去されていること」と「撤去しても暴走が止まること」を回帰として固定する。
   const misread = {
     layout_type: '3LDK',
     total_floor_area_sqm: 200,
@@ -448,15 +474,19 @@ console.log('--- 9. S-1 抑制時に calculation 欄が抑制後の値に揃う 
       { name: 'リビング・ダイニング', area_sqm: 30, floor_type: 'flooring' },
       { name: '洋室(1)', area_sqm: 20, floor_type: 'flooring' },
       { name: '洋室(2)', area_sqm: 15, floor_type: 'flooring' },
-    ],
+    ], // 合計65㎡
     openings: [], equipment: {},
   };
   const infl = ceilingPb(misread);
-  check('水増しブランチで根拠欄が抑制後の説明になっている',
-    infl.note.includes('抑制'), `note=${infl.note}`);
-  check('水増しブランチの抑制枚数と根拠欄が矛盾しない（枚数=抑制後）',
-    infl.warnings.find((w) => w.field === 'ceiling_pb_area_inflated')?.after === infl.sheets,
-    `sheets=${infl.sheets} warn=${JSON.stringify(infl.warnings)}`);
+  check('天井側の水増しブランチは撤去済み（ceiling_pb_area_inflated は出ない）',
+    !infl.warnFields.includes('ceiling_pb_area_inflated'), `warnFields=${infl.warnFields.join(',')}`);
+  check('代わりに層1 floor_area_inflated が是正を行う',
+    infl.warnFields.includes('floor_area_inflated'), `warnFields=${infl.warnFields.join(',')}`);
+  // 是正後の床面積65㎡（UB・収納なし）→ ceil(65/1.45) = 45枚。ガード無しなら192㎡→133枚
+  check(`層1是正後の実面積ベースで${Math.ceil(65 / CEILING_PB_SQM_PER_SHEET)}枚（暴走133枚が止まる）`,
+    infl.sheets === Math.ceil(65 / CEILING_PB_SQM_PER_SHEET), `sheets=${infl.sheets}`);
+  check('根拠欄も是正後の床面積65.0㎡ベースになっている（数量と矛盾しない）',
+    infl.note.includes('65.0㎡'), `note=${infl.note}`);
 }
 
 console.log(`\n判定: ✅ ${ok} / ✗ ${ng}`);
