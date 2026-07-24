@@ -30,16 +30,68 @@ const KITCHEN_COUNTER_H_M = 0.85;
 // 床まで達する開口（巾木・壁下部から引く）とみなす高さ
 const FLOOR_OPENING_MIN_HEIGHT_MM = 1800;
 
-// 間仕切下地の立上り高さ（下地高）= 現場定数2.57m（標準スラブ間・床仕上げ面〜上階スラブ下端）。
-// 水回りのスラブ下がり(-200)部に立つ壁のみ +0.2 = 2.77m。天井高とは連動しない
-// （居室CH2400の下地も2.57。旧実装のCH+370説はCH2200の水回りで2.57に偶然一致していただけ
-//  = 計算ロジック総監査A-2で両方向誤りと確定・2026-07-19修正）。
-// 出典: XLS 'Ａタイプ'(=Gデータ)シートの間仕切下地行 E123/G123(H)/E177/E231/E284=2.57（居室）、
-//   H339/E340/E393/E394=2.77（便所・洗面の水回り壁）。
+// ============================================================
+// 下地高（間仕切下地・遮音壁・収納内側の立上り高さ）
+// ============================================================
+// 【重要】これは物件不変の業界標準ではなく「アルファステイツ新宮町の実績値」であり、
+// フォールバック専用の既定値である（2026-07-24 物件汎用化で位置づけを明確化）。
+//
+// 定義: 下地高 = 床仕上げ面 〜 上階スラブ下端（＝スラブ間）。天井高(CH)とは連動しない。
+//   居室CH2400の下地も2.57 / 水回りCH2200の下地は2.77（スラブ下がり-200の分だけ高い）。
+//   旧実装のCH+370説はCH2200の水回りで2.57に偶然一致していただけ
+//   = 計算ロジック総監査A-2で両方向誤りと確定・2026-07-19修正。
+//   → よってCHから下地高を導出してはならない（CH連動は既に棄却済みの誤り）。
+//
+// アルファ実績値の出典: XLS 'Ａタイプ'(=Gデータ)シートの間仕切下地行
+//   E123/G123(H)/E177/E231/E284=2.57（居室）、H339/E340/E393/E394=2.77（便所・洗面の水回り壁）。
+//
+// 【物件により異なる（汎用化の根拠）】別府4丁目プロジェクト（木及び建材XLS R7,03,08）の
+//   タイプ別シートを**部位付きで**集計すると、下地高そのものの実出現値は次の3つだけ:
+//     Ａ〜Ｇタイプ: 一般部 2.72 / 水回り 2.82（差+100）
+//     Ｈ・Ｉタイプ: 一般部 2.86 / 水回り 2.86（差0＝スラブ下がりなし）
+//   対象行は「間仕切下地(木)」「遮音壁ＰＢ張り」「軸組」「間仕切ｸﾞﾗｽｳｰﾙ」＝下地高で拾う部位。
+//   **アルファの2.57は別府に1回も出現しない**（スラブ間が物件ごとに違うため）。
+//
+//   ※【誤読注意・2026-07-24訂正】別府シートには 2.5 / 2.4 / 2.2 も頻出するが、これらは
+//     「壁（ボード）」「下地補強合板t9」「スラブ下り床」行の高さであって**下地高ではない**
+//     （2.5はアルファのCH+40=2.44に相当する壁ボードの拾い高さ）。部位を混ぜて
+//     「別府の下地高は2.2〜2.82」と読むのは誤り。下地高の実レンジは 2.72〜2.86。
+//     STUD_HEIGHT_MIN_MM=2200 は物理下限としての安全側マージンであり、
+//     「別府に2.2mの下地高が実在する」という根拠ではない。
+//
+//   ※【一般/水回りの2分法は別府に完全には当てはまらない】別府では押入・物入（水回りでない収納）も
+//     2.82で拾われている。部屋名による2分法（WET_ROOM_NAME_RE）で表現できない物件は
+//     opts.studHeight.by_room で部屋別に指定して吸収すること。
+//
+//   ※ 換算係数（PB 1.4 / 天井1.45 / 界壁1.5）は別府XLSのX列でも同値＝業界標準で物件不変のため
+//     汎用化の対象外（変更しない）。
+//
+// 優先順位（resolveStudHeightM）: ①opts.studHeight.by_room（部屋別の明示入力）
+//   > ②opts.studHeight.default_mm / wet_mm（物件全体の明示入力＝人手・XLS由来）
+//   > ③elevations.rooms[].stud_height_mm（AI読取値）> ④この既定値（+要確認warning）
+//   ②が③より優先なのはZAIRYOの原則「人手/XLS由来の確定値 > AI読取値」に揃えるため
+//   （専有面積がユーザー入力最優先なのと同じ）。
+//
 // ※既知の近似: XLSは水回りブロック内でも標準スラブ上に立つ壁を2.57で拾う（便所D339=2.1×2.57）が、
 //   面単位のスラブ下がり判定情報が図面読取に無いため部屋名（WET_ROOM_NAME_RE）で一律に振る
 const STUD_HEIGHT_M = 2.57;
 const STUD_HEIGHT_WET_M = 2.77;
+
+// 【スラブ下がり量の固定外挿は禁止】水回りの下地高−一般部の下地高（drop）も物件依存である:
+//   アルファG +200（2.57→2.77） / 別府Ａ〜Ｇ +100（2.72→2.82） / 別府Ｈ・Ｉ 0（2.86→2.86）。
+// よって default_mm だけが与えられ wet_mm が無い場合に「default+200」で外挿してはならない
+//   （別府Ａで2720+200=2920＝実測2820に対し+3.5%、別府Ｈで2860+200=3060＝実測2860に対し+7.0%を
+//    レンジ内のためサイレントに誤る）。
+// 対応: wet_mm 未指定時は水回りも default_mm をそのまま使い（drop=0のＨ・Ｉ型と一致、
+//   drop>0の物件では控えめ側に外す）、_warningsで「未指定のため一般部と同値」を明示する。
+
+// 下地高として受け入れる物理レンジ（mm）。マンションのスラブ間は概ね2.2〜3.2m
+// （実測は別府2.72〜2.86・アルファ2.57/2.77がいずれも内側）。範囲外は読取ノイズ（階高2810や
+// CH2400の誤転記・単位違い）とみなして採用せず既定値へフォールバックする。
+// 下限2200は「これ未満は人が立てない＝転記ミス」という物理的な安全側マージン
+// （2.2という実測下地高が存在するという意味ではない。上のコメント参照）
+const STUD_HEIGHT_MIN_MM = 2200;
+const STUD_HEIGHT_MAX_MM = 3200;
 
 // 耐水記号（中間2/5）救済マッチの適用部屋（部屋名ベースの水回り判定）。
 // 面幅の転記は芯々/内法・部分区間で揺れるため、±80mmの第1パスでは取り逃すことがある
@@ -387,6 +439,75 @@ export function normalizeRoomName(name) {
     .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
 }
 
+/**
+ * 下地高リゾルバ（物件汎用化・2026-07-24）
+ *
+ * 下地高（床仕上げ面〜上階スラブ下端）は物件ごとに違う（アルファ2.57/2.77 ↔ 別府2.72/2.82/2.86）。
+ * 人手・XLS由来の明示入力があればそれを使い、無ければ図面読取値、最後にアルファ実績値へ落とす。
+ *
+ * 優先順位:
+ *   ① opts.studHeight.by_room[部屋名]        ← 部屋別の明示入力（最優先）
+ *   ② opts.studHeight.default_mm / wet_mm    ← 物件全体の明示入力（人手・XLS由来の確定値）
+ *   ③ room.stud_height_mm                    ← 展開図AIが読んだ部屋別の値
+ *   ④ STUD_HEIGHT_M / STUD_HEIGHT_WET_M      ← アルファ実績値（+要確認warning）
+ *
+ * 【②が③より先の理由】ZAIRYOの原則「人手/XLS由来の確定値 > AI読取値」に揃える
+ *   （専有面積がユーザー入力最優先なのと同じ）。逆順だと、XLSから確定した wet_mm を渡しても
+ *   展開図AIの幻覚転記（stud_height_mm）が勝ってしまう。
+ *
+ * 【wet_mm未指定時に「default+drop」で外挿しない理由】スラブ下がり量も物件依存で
+ *   アルファ+200 / 別府Ａ〜Ｇ+100 / 別府Ｈ・Ｉ 0 とばらつく。固定値で外挿すると
+ *   別府Ｈで2860→3060（+7.0%）をレンジ内のまま無警告で誤るため、
+ *   未指定時は一般部と同値（＝控えめ側）にして warning で明示する。
+ *
+ * 【CHから導出しない理由】下地高はスラブ間であり天井高と連動しない（総監査A-2で確定）。
+ *   CH+40やCH+370で代用すると居室CH2400→2.44/2.77となり、実測2.57に対して両方向に誤る。
+ *   展開図プロンプトのceiling_height_mmは「天井高」を読ませており下地高の情報源ではない。
+ *
+ * @param room 展開図の部屋 { name, stud_height_mm? }
+ * @param opts { studHeight?: { default_mm?, wet_mm?, by_room?: {部屋名: mm} } }
+ * @param state { usedFallback: boolean, wetFromDefault: boolean }
+ *   フォールバック／水回り未指定の発生を呼び出し側へ伝える観測点
+ * @returns 下地高（m）
+ */
+export function resolveStudHeightM(room, opts = {}, state = null) {
+  const isWet = WET_ROOM_NAME_RE.test(room?.name || '');
+  const sh = opts?.studHeight || {};
+  const valid = (mm) => Number.isFinite(mm) && mm >= STUD_HEIGHT_MIN_MM && mm <= STUD_HEIGHT_MAX_MM;
+
+  // ① 部屋名指定（最優先。物件別に「この部屋だけ2.82」が指定できる。
+  //    別府の押入・物入のように部屋名の一般/水回り2分法で表せない物件はここで吸収する）
+  const byRoom = sh.by_room || {};
+  const key = normalizeRoomName(room?.name);
+  for (const k of Object.keys(byRoom)) {
+    if (normalizeRoomName(k) === key && valid(byRoom[k])) return byRoom[k] / 1000;
+  }
+  // ② 物件全体の明示入力（人手・XLS由来の確定値。AI読取値より優先）
+  if (isWet && valid(sh.wet_mm)) return sh.wet_mm / 1000;
+  if (!isWet && valid(sh.default_mm)) return sh.default_mm / 1000;
+  // ②-b wet_mm未指定の水回り: 一般部の値をそのまま使う（スラブ下がり量は物件依存のため外挿しない）。
+  //   別府Ｈ・Ｉ型（drop=0）と一致し、drop>0の物件では控えめ側に外れる＝過大にしない安全側。
+  //   正確に拾うには wet_mm か by_room の指定が要る旨をwarningで促す
+  if (isWet && valid(sh.default_mm)) {
+    if (state) state.wetFromDefault = true;
+    return sh.default_mm / 1000;
+  }
+  // ③ 展開図から読めた部屋別の値（プロンプトが下地高を返すようになった場合に効く）
+  if (valid(room?.stud_height_mm)) return room.stud_height_mm / 1000;
+
+  // ④ フォールバック: アルファ実績値（物件が違えばずれるため要確認warningを立てる）
+  if (state) state.usedFallback = true;
+  return isWet ? STUD_HEIGHT_WET_M : STUD_HEIGHT_M;
+}
+
+/**
+ * 遮音壁ルール・収納内側など「特定の部屋に紐づかない」拾いに使う下地高（一般部）。
+ * resolveStudHeightMと同じ優先順位だが、部屋別指定は参照しない。
+ */
+function resolveGeneralStudHeightM(opts = {}, state = null) {
+  return resolveStudHeightM({ name: '' }, opts, state);
+}
+
 // ============================================================
 // 住戸内遮音壁の宣言的ルール（記号読みに依存しない数式化・2026-07-19）
 // 確定事実（XLS 'Ａタイプ'(=Gデータ)シートの数式セルで直接確認）:
@@ -525,6 +646,12 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 間仕切下地(木): 部屋間の壁は両部屋の展開図に現れる（ドア開口が両側の面に出ることを実データで確認）
   // ため、面ごとの拾いを合算して最後に÷2し「壁1枚1回」のXLS方式に合わせる。
   // UB隣接面(耐水記号)は反対面がUB内で展開図に現れない → 鏡像分をもう一度足して÷2で相殺する。
+  // 下地高フォールバックの観測点（物件汎用化・2026-07-24）。
+  // 図面・入力から下地高が得られずアルファ実績値(2.57/2.77)を使った場合にwarningを立てる
+  // （別府等では実値2.72/2.82/2.86とずれるため、ユーザーが物件差に気づけるようにする）。
+  // wetFromDefault = wet_mm未指定で水回りにも一般部の値を当てた（スラブ下がり分を外挿していない）
+  const studHeightState = { usedFallback: false, wetFromDefault: false };
+
   let majikiriDouble = 0; // 両面計上の下地面積（後で÷2）
   // D6*（収納内RC面コンパネ）の面幅を展開図の部屋ごとに記録 — 収納推定からの重複控除用。
   // 戸全体の単一アキュムレータだと、平面図の部屋名と一致する（=推定対象外でskip済みの）収納の
@@ -535,8 +662,9 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // UB内部の立面は拾わない（UB_ROOM_NAME_RE参照。読取ノイズで幻出した室のスキップ）
     if (UB_ROOM_NAME_RE.test(normalizeRoomName(room.name))) continue;
     const ch = (room.ceiling_height_mm || 2400) / 1000;
-    // 下地高: 現場定数2.57（水回りのみ2.77）。CH非連動（STUD_HEIGHT_M定義の出典コメント参照）
-    const studH = WET_ROOM_NAME_RE.test(room.name || '') ? STUD_HEIGHT_WET_M : STUD_HEIGHT_M;
+    // 下地高: 物件別入力 > 展開図の部屋別実値 > アルファ実績値（2.57/水回り2.77）。
+    // CH非連動（resolveStudHeightM / STUD_HEIGHT_M定義のコメント参照）
+    const studH = resolveStudHeightM(room, opts, studHeightState);
     const faces = Array.isArray(room.faces) ? room.faces : [];
     let perimeter = 0;
     let floorOpeningWidth = 0;
@@ -944,13 +1072,17 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 遮音壁ルールの計上（DEFAULT_SOUND_WALL_PAIRS参照）:
   //   PBは両面（XLSは隣接する各室ブロックの面で両側を拾う: 12.9785㎡/戸）= 2×幅×2.57
   //   GWは壁1枚1回（玄関ブロックP81/P82: 6.425㎡/戸）= 幅×2.57
-  // 高さは下地高2.57固定（遮音壁はLDK↔居室間=標準スラブ部。開口は無い壁のため控除なし）。
+  // 高さは下地高（遮音壁はLDK↔居室間=標準スラブ部＝一般部の下地高。開口は無い壁のため控除なし）。
+  // 物件別入力があればそれを使い、無ければアルファ実績値2.57（resolveStudHeightM参照）。
   // 対応する面が展開図で特定できた場合は上のsoundConsumedで面側の計上を止めており、
   // 特定できない場合（面が大きな面に合算されている読取等）もルール値だけが立つ
+  // ※ フォールバック観測はペアが実在する場合のみ記録する（遮音壁が無い物件で
+  //   使いもしない高さのwarningを出さないため、stateはsoundPairs>0のときだけ渡す）
+  const soundStudH = resolveGeneralStudHeightM(opts, soundPairs.length > 0 ? studHeightState : null);
   for (const p of soundPairs) {
     const w = p.width_mm / 1000;
-    t.sound_wall_pb_sqm += 2 * w * STUD_HEIGHT_M;
-    t.gw_sqm += w * STUD_HEIGHT_M;
+    t.sound_wall_pb_sqm += 2 * w * soundStudH;
+    t.gw_sqm += w * soundStudH;
   }
   t.sound_rule_pairs = soundPairs.length; // 観測点（テスト・デバッグ用）
 
@@ -997,11 +1129,43 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     if (!planRoomNames.has(rn)) d6DeductWidth += wsum;
   }
   closetEstWidth = Math.max(0, closetEstWidth - d6DeductWidth);
-  // 収納内側の下地高も現場定数2.57（収納は標準スラブ上=居室と同じ。XLSに収納別の下地高行は無い）
-  majikiriDouble += (closetActualWidth + closetEstWidth) * STUD_HEIGHT_M;
+  // 収納内側の下地高は一般部と同じ（収納は標準スラブ上=居室と同じ。XLSに収納別の下地高行は無い）。
+  // 物件別入力があればそれを使い、無ければアルファ実績値2.57（resolveStudHeightM参照）
+  const closetWidthTotal = closetActualWidth + closetEstWidth;
+  const closetStudH = resolveGeneralStudHeightM(opts, closetWidthTotal > 0 ? studHeightState : null);
+  majikiriDouble += closetWidthTotal * closetStudH;
 
   // 両面計上 → 壁1枚換算（XLSの拾い方に一致。検証: Gタイプ 77.6 vs XLS正解84.082 = −7.7%）
   t.majikiri_shitaji_m = majikiriDouble / 2;
+
+  // 下地高フォールバックの要確認warning（物件汎用化・2026-07-24）。
+  // 下地高は物件ごとに違う（アルファ2.57/2.77 ↔ 別府2.72/2.82/2.86）ため、図面・入力から
+  // 実値が取れず既定値を使った場合は「別物件なら数%ずれる」ことをユーザーに明示する。
+  t.stud_height_fallback = studHeightState.usedFallback; // 観測点（テスト・デバッグ用）
+  t.stud_height_wet_from_default = studHeightState.wetFromDefault; // 同上（水回り未指定の観測点）
+  if (studHeightState.usedFallback) {
+    t._warnings.push({
+      field: 'stud_height',
+      message: `下地高が図面から読めなかったため既定値${STUD_HEIGHT_M}m（水回り${STUD_HEIGHT_WET_M}m）を使用しました。`
+        + 'この値はアルファステイツ新宮町の実績値です（下地高＝床〜上階スラブ下端はスラブ間の寸法で'
+        + '物件ごとに異なり、例: 別府4丁目は2.72/2.82/2.86m）。'
+        + '別物件では間仕切下地・遮音壁の数量が数%ずれる可能性があります（要確認）',
+      before: null, after: null,
+    });
+  }
+  // 水回りの下地高が未指定のまま一般部と同値で計算した場合の明示（must-fix・2026-07-24）。
+  // 水回りのスラブ下がり量は物件依存（アルファ+200 / 別府Ａ〜Ｇ+100 / 別府Ｈ・Ｉ 0）のため
+  // 一般部からの外挿はせず、控えめ側（同値）で計算していることを伝える
+  if (studHeightState.wetFromDefault) {
+    t._warnings.push({
+      field: 'stud_height_wet',
+      message: '水回りの下地高が指定されていないため、一般部と同じ下地高で計算しました。'
+        + '水回りは配管のスラブ下がり分だけ下地高が高い物件があり（実測: アルファ+200mm・'
+        + '別府Ａ〜Ｇ+100mm・別府Ｈ/Ｉ 0mm＝物件ごとに異なる）、その場合は水回りの'
+        + '間仕切下地・遮音壁が少なめに出ます。XLS等で確定値が分かる場合は指定してください（要確認）',
+      before: null, after: null,
+    });
+  }
 
   // 丸め
   for (const k of Object.keys(t)) {
@@ -1095,9 +1259,13 @@ export function applyElevationTakeoff(result, takeoff) {
     Math.round(takeoff.skirting_m.樹脂 * 10) / 10, `Σ周長−開口幅（樹脂巾木の部屋）`);
 
   // 間仕切下地(木): XLSの拾い量（壁1枚あたり片面の下地面積。"m"表記はXLS慣行）を実測で上書き
+  // 根拠文言は実際に使った下地高の出所を反映する（既定値フォールバック時のみ数値を明記。
+  // 物件別入力・図面実値を使った場合は部屋ごとに高さが異なりうるため数値を書かない）
   set((m) => m.name === '間仕切下地(木)',
     Math.round(takeoff.majikiri_shitaji_m * 10) / 10,
-    `間仕切面 Σ幅×下地高(2.57m/水回り2.77m)−開口 の壁1枚換算`);
+    takeoff.stud_height_fallback === false
+      ? `間仕切面 Σ幅×下地高(図面・物件別入力)−開口 の壁1枚換算`
+      : `間仕切面 Σ幅×下地高(既定値${STUD_HEIGHT_M}m/水回り${STUD_HEIGHT_WET_M}m)−開口 の壁1枚換算`);
   // 間仕切木軸の材積: 拾い面積 → 両面×縦横@450の実材長 → 断面45×30で材積化（timberVolume.js）
   const majikiriLen = majikiriTimberLengthM(takeoff.majikiri_shitaji_m);
   set((m) => m.name === '間仕切木軸',
