@@ -82,6 +82,7 @@
 
 import {
   TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, ceilingFrameLengthM,
+  majikiriVolumeM3, MAJIKIRI_M3_PER_SQM, ceilingFrameVolumeM3, CEILING_M3_PER_SQM,
   dobuchiVolumeM3, DOBUCHI_M3_PER_SQM,
 } from './timberVolume.js';
 // 窓判定は buildupCalculator.js の isWindow に一本化（2026-07-21共通化）。
@@ -657,6 +658,159 @@ export function resolveKiwanetaProfile(overrides = {}) {
   }
 
   return { ratio, min_m, spec, volume, source, invalid };
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 【物件固有の追加部位行（extra parts）・2026-07-25】
+//
+//  ■ なぜ定数のoverrideでは足りないのか
+//    これまでの override（kiwaneta_* / kaibe_wall_* / stud_height 等）はすべて
+//    「エンジンに**行は存在する**が値が物件で違う」ケースを吸収するものだった。
+//    ところが物件によっては **行そのものが存在しない部位** がある。
+//    実例（第1号）: 別府4丁目 集計表 r10「ｽﾗﾌﾞ下り際根太 H=210」
+//      A10 v='ｽﾗﾌﾞ下り際根太 ' f="'Ａタイプ'!B104"   ← 部位名
+//      B10 v='H=210'          f="'Ａタイプ'!C104"   ← 規格（際根太本体r9の H110 とは**別材**）
+//      C10 v=23.3             f="'Ａタイプ'!$P104"  ← Aタイプ戸当 m
+//      X10 = 0 / Y10 {=X10*X$11} = 0                ← **材積換算しない**（m のまま発注）
+//      タイプ別戸当: Ａ23.3 Ｂ24.1 Ｃ25.7 Ｄ17.9 Ｅ17.3 Ｆ17.4 Ｇ24.3 Ｈ0 Ｉ0
+//      （Ｈ・Ｉは P104=0 ＝ この物件でもタイプによっては部位が存在しない）
+//    アルファ側は B10='' / C10=0 ＝ **行そのものが無い**。よって
+//    「際根太の規格を H=210 に差し替える」では表現できない（際根太本体と数量も材も別）。
+//
+//  ■ 設計: 部位名・規格・単位・数量・材積換算の有無を**外から丸ごと与える器**にする
+//    スラブ下り際根太**専用**の定数やキーは作らない（将来ほかの物件固有部位が出ても同じ器に載る）。
+//    受け口は既存 override と同じ「Overrideテーブル itemKey→value（すべて文字列・1件200字まで）」で、
+//    行ごとにインデックスを振った平坦なキーにする（JSON1本にしないのは200字上限と、
+//    UIが1項目=1入力欄で素直に作れることを優先したため）:
+//      extra_part_1_name    部位名（必須。空なら行は作られない）
+//      extra_part_1_qty     数量（必須。**0を指定したら行そのものを出さない**）
+//      extra_part_1_unit    単位（既定 'm'）
+//      extra_part_1_spec    規格・摘要（任意。例 'H=210'）
+//      extra_part_1_category カテゴリ（既定 '下地材'）
+//      extra_part_1_volume  材積(m³)行も併せて出すか（既定=出さない。'あり'で出す＋
+//                           extra_part_1_volume_m3_per_unit に係数 m³/単位 が必要）
+//      extra_part_1_volume_m3_per_unit 材積係数（例 アルファ際根太のX9=0.00135 m³/m）
+//    2行目以降は extra_part_2_*, extra_part_3_* … と続ける（EXTRA_PART_MAX_ROWS まで）。
+//
+//  ■ 「0なら行を出さない」を必須仕様にする理由
+//    0mの行は「存在しない材の発注行」になり、拾い出し表と行単位で照合するときに
+//    実在しない部位が並ぶ。木胴縁（kaibe_wall_sqm='0'）・際根太材積（kiwaneta_volume='なし'）で
+//    既に採った方針と同じ（0で行を残さない）。別府Ｈ・Ｉタイプ（P104=0）がまさにこれに当たる。
+//
+//  ■ 未指定なら1行も増えない（後方互換）
+//    extra_part_* が1つも無ければ resolveExtraParts は空配列を返し、materials は一切変わらない。
+const EXTRA_PART_MAX_ROWS = 10;          // 1物件あたりの追加部位行の上限（Override 100件の枠を食い潰さない）
+const EXTRA_PART_QTY_MAX = 100000;       // 数量の入力ガード（桁違い入力を弾く。m/㎡/枚/本のいずれでも非現実）
+const EXTRA_PART_NAME_MAX_LEN = 60;      // 部位名の桁（資材名列。既存 spec の50字に合わせた運用上限）
+const EXTRA_PART_SPEC_MAX_LEN = 50;      // 規格・摘要（kiwaneta_spec と同じ50字）
+const EXTRA_PART_UNIT_MAX_LEN = 8;       // 単位（'m' '㎡' '枚' '本' '箇所' 程度）
+const EXTRA_PART_CATEGORY_MAX_LEN = 20;  // カテゴリ（'下地材' '造作材' 等）
+const EXTRA_PART_DEFAULT_UNIT = 'm';     // 既定の単位（第1号のスラブ下り際根太が m。XLS C列も m）
+const EXTRA_PART_DEFAULT_CATEGORY = '下地材';
+const EXTRA_PART_VOL_COEF_MAX = 1;       // 材積係数 m³/単位 の上限（際根太0.00135・木胴縁0.0098 に対し十分広い）
+
+/**
+ * 物件固有の追加部位行を解決する（2026-07-25）
+ *
+ * **数量を推定しない**（図面から「この物件にはこの部位がある」と当てるのは不可能）。
+ * 人がXLS等を見て指定した値をそのまま行にする転記層であり、係数もモデルも持たない。
+ *
+ * 【値の検証方針】resolveKiwanetaProfile / resolveKaibeWallSqm と同じ。
+ *   数字以外の暗黙除去はしない（'23.3m'→233 の10倍化を起こさない）。
+ *   不正値の行は**採用せず**（黙って0や既定値の行を作らない）invalid に積み、
+ *   呼び出し側が警告を出せるようにする。
+ *
+ * @param overrides { [itemKey]: string }
+ * @returns { rows: Array<{name, spec, unit, category, quantity, volume, volume_m3_per_unit, index}>,
+ *            skipped: Array<{index, name, reason}>, invalid: Array<{index, key, value, reason}> }
+ *          rows = 実際に出力する行（数量>0のみ）／skipped = 0指定等で意図的に出さなかった行
+ */
+export function resolveExtraParts(overrides = {}) {
+  const rows = [];
+  const skipped = [];
+  const invalid = [];
+
+  // 0以上の数値のみ許可（'0' / '23.3' / '.5'）。空文字・null・undefined＝未設定
+  const num = (raw, max) => {
+    if (raw === null || raw === undefined) return undefined;
+    const s = String(raw).trim();
+    if (s === '') return undefined;
+    const n = /^\d*\.?\d+$/.test(s) ? Number(s) : Number.NaN;
+    if (Number.isFinite(n) && n >= 0 && n <= max) return n;
+    return { bad: s };
+  };
+  const str = (raw, maxLen) => {
+    if (raw === null || raw === undefined) return undefined;
+    const s = String(raw).trim();
+    return s === '' ? undefined : s.slice(0, maxLen);
+  };
+
+  for (let i = 1; i <= EXTRA_PART_MAX_ROWS; i++) {
+    const p = `extra_part_${i}_`;
+    const name = str(overrides[`${p}name`], EXTRA_PART_NAME_MAX_LEN);
+    const rawQty = overrides[`${p}qty`];
+    const hasQty = rawQty !== null && rawQty !== undefined && String(rawQty).trim() !== '';
+    // 名前も数量も無い＝この番号は未使用（欠番も許す。UIで途中の行を消しても後続が消えないように）
+    if (!name && !hasQty) continue;
+
+    if (!name) {
+      invalid.push({ index: i, key: `${p}name`, value: '', reason: '部位名が未入力です' });
+      continue;
+    }
+    const qty = num(rawQty, EXTRA_PART_QTY_MAX);
+    if (qty === undefined) {
+      invalid.push({ index: i, key: `${p}qty`, value: '', reason: `「${name}」の数量が未入力です` });
+      continue;
+    }
+    if (typeof qty !== 'number') {
+      invalid.push({ index: i, key: `${p}qty`, value: qty.bad,
+        reason: `「${name}」の数量（${qty.bad}）が数値として読めません` });
+      continue;
+    }
+    // 【0は「行を出さない」の明示指定】別府Ｈ・Ｉタイプ（P104=0＝この部位が存在しない）。
+    //   0mの発注行を出すと存在しない材が並ぶため、行ごと作らない（木胴縁0㎡・際根太材積なしと同方針）
+    if (qty === 0) {
+      skipped.push({ index: i, name, reason: '数量0のため行を出力しません（この物件・タイプには存在しない部位）' });
+      continue;
+    }
+
+    // 材積(m³)行の併記。既定は「出さない」（第1号の別府スラブ下り際根太はX10=0＝材積換算しない）。
+    // 'あり' を指定する場合は係数（m³/単位）が必須。係数が無い/不正なら材積行は作らず本体行だけ出す
+    let volume = false;
+    let volumeCoef = null;
+    const rawVol = overrides[`${p}volume`];
+    if (rawVol !== null && rawVol !== undefined && String(rawVol).trim() !== '') {
+      const s = String(rawVol).trim();
+      if (/^(あり|有|yes|true|1|on)$/i.test(s)) volume = true;
+      else if (/^(なし|無|no|false|0|off)$/i.test(s)) volume = false;
+      else invalid.push({ index: i, key: `${p}volume`, value: s,
+        reason: `「${name}」の材積換算の有無（${s}）が読めないため材積行を出しません` });
+    }
+    if (volume) {
+      const c = num(overrides[`${p}volume_m3_per_unit`], EXTRA_PART_VOL_COEF_MAX);
+      if (typeof c === 'number' && c > 0) {
+        volumeCoef = c;
+      } else {
+        volume = false;
+        invalid.push({ index: i, key: `${p}volume_m3_per_unit`,
+          value: c && c.bad !== undefined ? c.bad : '',
+          reason: `「${name}」の材積係数（m³/単位）が未入力または不正のため材積行を出しません` });
+      }
+    }
+
+    rows.push({
+      index: i,
+      name,
+      spec: str(overrides[`${p}spec`], EXTRA_PART_SPEC_MAX_LEN) || '',
+      unit: str(overrides[`${p}unit`], EXTRA_PART_UNIT_MAX_LEN) || EXTRA_PART_DEFAULT_UNIT,
+      category: str(overrides[`${p}category`], EXTRA_PART_CATEGORY_MAX_LEN) || EXTRA_PART_DEFAULT_CATEGORY,
+      quantity: qty,
+      volume,
+      volume_m3_per_unit: volumeCoef,
+    });
+  }
+
+  return { rows, skipped, invalid };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2033,6 +2187,59 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       + (kiwaneta.source.ratio === 'override' ? '［物件別指定］' : '（アルファ実績18.2m/戸）')
   });
 
+  // 物件固有の追加部位行（2026-07-25・resolveExtraParts）
+  //   「その物件にしか無い部位」を人が指定して行として足す器。エンジンは数量を推定しない。
+  //   第1号: 別府4丁目「ｽﾗﾌﾞ下り際根太 H=210」（集計表r10。Ａ23.3〜Ｇ24.3m/戸・Ｈ/Ｉは0＝行なし）。
+  //   ここ（際根太の直後）に置くのは、第1号が木下地ブロックの部位であり
+  //   XLS集計表でも r9 際根太 → r10 スラブ下り際根太 と隣り合うため（行単位で照合しやすい）。
+  //   ※ 追加部位は**際根太のプロファイル（kiwaneta_*）とは完全に独立**。
+  //     H=210 は際根太H110と別材で数量も別に拾うため、kiwaneta_spec を流用してはいけない。
+  const extraParts = resolveExtraParts(overrides);
+  for (const bad of extraParts.invalid) {
+    calcWarnings.push({
+      field: `extra_part_${bad.index}_invalid`,
+      message: `追加部位${bad.index}の指定に問題があるため${
+        bad.key.endsWith('_volume') || bad.key.endsWith('_volume_m3_per_unit') ? '材積行を' : '行を'
+      }出力しませんでした（${bad.reason}）`,
+      before: bad.value || null,
+      after: null,
+    });
+  }
+  for (const row of extraParts.rows) {
+    materials.push({
+      category: row.category,
+      name: row.name,
+      spec: row.spec,
+      unit: row.unit,
+      quantity: row.quantity,
+      calculation: `物件別指定 ${row.quantity}${row.unit}（この物件固有の追加部位）`,
+      // 単価は未整備（0）。**部分一致の単価検索に載せない**ことが重要:
+      //   UNIT_PRICES の検索は `item.name.includes(key) || key.includes(item.name)` の部分一致で、
+      //   'ｽﾗﾌﾞ下り際根太' は '際根太'(350円/m) を拾ってしまう。追加部位は物件固有＝
+      //   既存資材の単価と同じである保証がどこにも無いので、既存材の単価を勝手に継承させない
+      //   （材積行が同名のm単価を誤って拾うのを unit_price 明示で防いでいるのと同じ手当て）。
+      //   単価は単価設定画面（名称+規格）で登録された時点で適用される。
+      unit_price: 0,
+      // 表示スコープ（建材14項目・filterKenzaiScope）を通すための明示フラグ。
+      // ユーザーが自分で入力した行なので落とさない（名称パターンは広げない）
+      extra_part: true,
+    });
+    // 材積(m³)行は「あり」指定＋係数がある場合のみ。既定は出さない
+    //   （第1号の別府スラブ下り際根太は集計表X10=0＝材積換算せず m のまま発注する）
+    if (row.volume && row.volume_m3_per_unit > 0) {
+      materials.push({
+        category: row.category,
+        name: row.name,
+        spec: row.spec,
+        unit: 'm³',
+        quantity: Math.round(row.quantity * row.volume_m3_per_unit * 10000) / 10000,
+        unit_price: 0, // 単価未整備（材積行は既存の際根太/木胴縁と同じ扱い）
+        calculation: `物件別指定 ${row.quantity}${row.unit} × ${row.volume_m3_per_unit}m³/${row.unit}`,
+        extra_part: true,
+      });
+    }
+  }
+
   // 吊戸下地 30×40
   // 実績: 9本/戸
   materials.push({
@@ -2100,15 +2307,17 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
       calculation: `際根太 ${kiwanetaLength}m × 断面45×30（実績0.027m³/戸）`
     });
   }
+  // 間仕切木軸の材積: XLS集計表 Y52{=W52*X52}＝拾い面積 × 材積係数0.0116m³/㎡ で直接算出（2026-07-25・案B）。
+  //   材長（両面縦横@450）は発注実態の表示としてcalculation欄に残すが、材積は材長経由しない。
   const majikiriTimberLen = majikiriTimberLengthM(majikiriLength);
   materials.push({
     category: '下地材',
     name: '間仕切木軸',
     spec: 'LVL 30×45',
     unit: 'm³',
-    quantity: timberVolumeM3(TIMBER_SECTIONS.majikiri, majikiriTimberLen),
+    quantity: majikiriVolumeM3(majikiriLength),
     unit_price: 0,
-    calculation: `間仕切下地 ${majikiriLength} × 両面縦横@450 = ${Math.round(majikiriTimberLen)}m × 断面45×30（実績1.15m³/戸）`
+    calculation: `間仕切下地 ${majikiriLength}㎡ × ${MAJIKIRI_M3_PER_SQM}m³/㎡（XLS集計表X52・両面縦横@450 ≒${Math.round(majikiriTimberLen)}m）`
   });
   // 木胴縁（一部界壁面）: 拾い面積は**界壁面のみ**（収納内RC面・EV面は含めない）。
   // 【XLS原典 2026-07-24】見積明細「木胴縁（一部界壁面）」3.6m³/67戸 の実体は
@@ -2149,15 +2358,17 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
     calculation: `界壁面 ${dobuchiSqm.toFixed(2)}㎡ × ${DOBUCHI_M3_PER_SQM}m³/㎡`
       + (kaibeResolved.source === 'override' ? '（物件別指定）' : '（XLS集計表X86・実績0.054m³/戸）')
   });
+  // 天井下地の材積: XLS集計表 Y77{=W77*X78}＝天井面積 × 材積係数0.0081m³/㎡ で直接算出（2026-07-25・案B）。
+  //   野縁@303格子+吊木の材長は発注実態の表示としてcalculation欄に残すが、材積は材長経由しない。
   const ceilingFrameLen = ceilingFrameLengthM(ceilingArea);
   materials.push({
     category: '下地材',
     name: '天井下地',
     spec: 'LVL 30×40',
     unit: 'm³',
-    quantity: timberVolumeM3(TIMBER_SECTIONS.ceiling, ceilingFrameLen),
+    quantity: ceilingFrameVolumeM3(ceilingArea),
     unit_price: 0,
-    calculation: `天井 ${ceilingArea.toFixed(1)}㎡ × 野縁@303格子+吊木 = ${Math.round(ceilingFrameLen)}m × 断面40×30（実績0.57m³/戸）`
+    calculation: `天井 ${ceilingArea.toFixed(1)}㎡ × ${CEILING_M3_PER_SQM}m³/㎡（XLS集計表X78・野縁@303格子+吊木 ≒${Math.round(ceilingFrameLen)}m）`
   });
 
   // 遮音壁PB張り

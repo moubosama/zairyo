@@ -14,7 +14,8 @@
  */
 
 import {
-  TIMBER_SECTIONS, timberVolumeM3, majikiriTimberLengthM, dobuchiVolumeM3, DOBUCHI_M3_PER_SQM,
+  majikiriTimberLengthM, majikiriVolumeM3, MAJIKIRI_M3_PER_SQM,
+  dobuchiVolumeM3, DOBUCHI_M3_PER_SQM,
 } from './timberVolume.js';
 
 const PB_SQM_PER_SHEET = 1.4; // XLS集計表の換算係数（3×6板・ロス込み。壁X56/耐水X58/遮音X54=1.4）
@@ -1544,7 +1545,15 @@ const KENZAI_SCOPE_PATTERNS = [
 
 export function filterKenzaiScope(materials) {
   return materials.filter((m) =>
-    m.category === '下地材' && KENZAI_SCOPE_PATTERNS.some((p) => String(m.name).includes(p))
+    // 【物件固有の追加部位（2026-07-25）】ユーザーが Override で明示的に指定した行は
+    //   建材14項目のパターンに一致しなくても落とさない。理由:
+    //   ①この行はエンジンの推定ではなく**利用者が自分で入力した数量**であり、
+    //     表示から消すと入力しても画面に出ない＝override機能そのものが成立しない
+    //   ②パターン（名称の部分一致）を広げるのではなく行に付いた明示フラグで通すので、
+    //     既定の14項目スコープ（ユーザー指定の表示範囲）は一切変わらない
+    //     ＝追加部位を指定しない限り出力は従来と完全に同一
+    m.extra_part === true
+    || (m.category === '下地材' && KENZAI_SCOPE_PATTERNS.some((p) => String(m.name).includes(p)))
   );
 }
 
@@ -1640,11 +1649,12 @@ export function applyElevationTakeoff(result, takeoff) {
     takeoff.stud_height_fallback === false
       ? `間仕切面 Σ幅×下地高(図面・物件別入力)−開口 の壁1枚換算`
       : `間仕切面 Σ幅×下地高(既定値${STUD_HEIGHT_M}m/水回り${STUD_HEIGHT_WET_M}m)−開口 の壁1枚換算`);
-  // 間仕切木軸の材積: 拾い面積 → 両面×縦横@450の実材長 → 断面45×30で材積化（timberVolume.js）
+  // 間仕切木軸の材積: XLS集計表 Y52{=W52*X52}＝拾い面積 × 材積係数0.0116m³/㎡ で直接算出（2026-07-25・案B）。
+  //   材長（両面縦横@450）は発注実態の表示として残すが、材積は材長経由しない（materialCalculatorと同一方式）。
   const majikiriLen = majikiriTimberLengthM(takeoff.majikiri_shitaji_m);
   set((m) => m.name === '間仕切木軸',
-    timberVolumeM3(TIMBER_SECTIONS.majikiri, majikiriLen),
-    `間仕切下地 ${Math.round(takeoff.majikiri_shitaji_m * 10) / 10} × 両面縦横@450 = ${Math.round(majikiriLen)}m × 断面45×30`);
+    majikiriVolumeM3(takeoff.majikiri_shitaji_m),
+    `間仕切下地 ${Math.round(takeoff.majikiri_shitaji_m * 10) / 10}㎡ × ${MAJIKIRI_M3_PER_SQM}m³/㎡（XLS集計表X52・両面縦横@450 ≒${Math.round(majikiriLen)}m）`);
   // 木胴縁（一部界壁面）: 界壁面の実測面積 × XLS材積係数（timberVolume.js の DOBUCHI_M3_PER_SQM）。
   // 【拾い対象は界壁面のみ】旧実装は rc_furring_sqm（D下地=EV面+収納内RC面）を投入していたが、
   //   XLSではそれらは木胴縁とは別行（集計表r73/r26）に集計される別部位で、対象が誤っていた。

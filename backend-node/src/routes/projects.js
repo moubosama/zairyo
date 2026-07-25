@@ -984,6 +984,13 @@ router.post('/:id/calculate', async (req, res) => {
     });
 
     // 資材計算（パッケージは空のオブジェクトで代用）
+    // 【物件固有の追加部位行（2026-07-25）】overridesObj には itemKey='extra_part_N_name' /
+    //   '_qty' / '_unit' / '_spec' / '_category' / '_volume' / '_volume_m3_per_unit' も入りうる。
+    //   これらは resolveKiwanetaProfile 等と同じく calculateMaterials(overrides) の中で
+    //   resolveExtraParts が解決するため、ここでの専用パースは不要（下地高・界壁面のように
+    //   buildupCalculator の opts へ形を変えて渡す必要が無い＝素の overridesObj で完結する）。
+    //   例（別府Ａタイプ）: extra_part_1_name='ｽﾗﾌﾞ下り際根太' / _spec='H=210' / _qty='23.3' / _unit='m'
+    //   Ｈ・Ｉタイプは _qty='0' を指定すると行そのものを出力しない。
     const packageSpecs = project.package ? JSON.parse(project.package.specs) : {};
     console.log('Calculating materials with aiReading:', project.aiReadings[0].parsedData);
     const result = calculateMaterials(

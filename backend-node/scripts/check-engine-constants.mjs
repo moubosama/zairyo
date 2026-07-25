@@ -32,7 +32,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import {
-  MAJIKIRI_TIMBER_M_PER_SQM, CEILING_FRAME_M_PER_SQM, DOBUCHI_M3_PER_SQM, TIMBER_SECTIONS,
+  MAJIKIRI_M3_PER_SQM, CEILING_M3_PER_SQM, DOBUCHI_M3_PER_SQM, TIMBER_SECTIONS,
 } from '../src/services/timberVolume.js';
 import {
   DEFAULT_SOUND_WALL_PAIRS, KAIBE_FACE_HEIGHT_M, KAIBE_WALL_SQM_ALPHA,
@@ -145,8 +145,11 @@ const SOURCE_XLS = (() => {
 // ============================================================
 // エンジンの実値（importして計算・定数表の写しではない）
 // ============================================================
-const engineMajikiriM3PerSqm = MAJIKIRI_TIMBER_M_PER_SQM * TIMBER_SECTIONS.majikiri.h * TIMBER_SECTIONS.majikiri.d * 1e-6;
-const engineCeilingM3PerSqm = CEILING_FRAME_M_PER_SQM * TIMBER_SECTIONS.ceiling.h * TIMBER_SECTIONS.ceiling.d * 1e-6;
+// 間仕切下地・天井下地の材積は「材長×断面」ではなくXLSの材積係数(m³/㎡)を直接持つ（2026-07-25・案B）。
+// 旧: MAJIKIRI_TIMBER_M_PER_SQM(8.89)×断面=0.0120 / CEILING_FRAME_M_PER_SQM(7.05)×断面=0.008457 で
+//   XLS 0.0116/0.0081 に対し +3.4%/+4.4% だった → 木胴縁と同じ「拾い面積×材積係数」方式に統一。
+const engineMajikiriM3PerSqm = MAJIKIRI_M3_PER_SQM;
+const engineCeilingM3PerSqm = CEILING_M3_PER_SQM;
 // 木胴縁は「材長×断面」ではなくXLSの材積係数(m³/㎡)を直接持つ（2026-07-24是正）。
 // 旧: DOBUCHI_M_PER_SQM(1/0.455)×断面=0.00297 でXLS 0.0098 に対し-69.7%だった
 const engineDobuchiM3PerSqm = DOBUCHI_M3_PER_SQM;
@@ -183,8 +186,8 @@ const CONSTANTS = [
   // XLS X62(=1.5・アルファ「防露壁面」/ 別府「防露ふかし壁（ＰＢ）」)と一致させた（旧: PB_SQM_PER_SHEET 1.4 流用）
   { key: 'EV廻り壁PB 換算', engineName: 'EV_WALL_PB_SQM_PER_SHEET 1.5 (buildupCalculator.js applyElevationTakeoff)', engineValue: 1.5, override: null },
 
-  { key: '間仕切下地 材積係数', engineName: 'MAJIKIRI_TIMBER_M_PER_SQM×断面 (timberVolume)', engineValue: engineMajikiriM3PerSqm, override: null },
-  { key: '天井下地 材積係数', engineName: 'CEILING_FRAME_M_PER_SQM×断面 (timberVolume)', engineValue: engineCeilingM3PerSqm, override: null },
+  { key: '間仕切下地 材積係数', engineName: 'MAJIKIRI_M3_PER_SQM (timberVolume・XLS X52直接)', engineValue: engineMajikiriM3PerSqm, override: null },
+  { key: '天井下地 材積係数', engineName: 'CEILING_M3_PER_SQM (timberVolume・XLS X78直接)', engineValue: engineCeilingM3PerSqm, override: null },
   { key: '木胴縁 材積係数', engineName: 'DOBUCHI_M3_PER_SQM (timberVolume)', engineValue: engineDobuchiM3PerSqm, override: null },
   // 別府はX9=0＝**材積換算そのものをしない**（mのまま発注）。係数を0にするのではなく
   // 材積(m³)行を出さないのが正 → overrides.kiwaneta_volume='なし' で行ごと抑止できる（2026-07-24）
@@ -218,17 +221,25 @@ const SOUND_RULE_NOTE = {
 
 // 別府にしか存在しない部位行（アルファ基準で作られたエンジンに対応行が無い）。
 // 「際根太本体はoverride対応済み」で片付けると**この行の丸ごと欠落**が見えなくなるため別項目で立てる。
+//
+// 【2026-07-25 対応】定数のoverrideでは埋まらない（＝行そのものが無い）ケースのために、
+//   物件固有の**追加部位行**を外から与える汎用の器 resolveExtraParts を新設した。
+//   スラブ下り際根太はその第1号であり、専用のハードコードは作っていない
+//   （将来ほかの物件固有部位が出ても extra_part_N_* の指定だけで載る）。
 const BEPPU_ONLY_PARTS = [
   {
     key: 'スラブ下り際根太 H=210',
-    engineName: '（エンジンに対応行なし）',
-    finding: '別府タイプ別シート r10「スラブ下り際根太 H=210」戸当 約23.3m。'
-      + '際根太本体（r9・H110）とは別の材で、水回り等のスラブ下がり部の立ち上がりに入る',
-    alpha: 'アルファには存在しない部位（集計表9行=際根太のみ）',
-    status: '❌ **未対応**（際根太本体のoverrideは別部位なのでこの行は出ない）',
-    action: '別府を計算すると本行が丸ごと欠落する。追加部位のoverride（任意行の追加指定）または'
-      + '別府プロファイルの整備が必要 → 次サイクル。断面H=210は際根太H110と別材のため'
-      + 'kiwaneta_spec で兼用してはいけない（数量も別に拾う必要がある）',
+    engineName: 'resolveExtraParts (materialCalculator・物件固有の追加部位行)',
+    finding: '別府タイプ別シート r10「スラブ下り際根太 H=210」戸当 Ａ23.3 Ｂ24.1 Ｃ25.7 Ｄ17.9 '
+      + 'Ｅ17.3 Ｆ17.4 Ｇ24.3 Ｈ0 Ｉ0 m。際根太本体（r9・H110）とは別の材で、'
+      + '水回り等のスラブ下がり部の立ち上がりに入る。集計表X10=0＝材積換算せずmのまま発注',
+    alpha: 'アルファには存在しない部位（集計表9行=際根太のみ・B10="" C10=0＝行そのものが無い）',
+    status: '✅ override対応済み: overrides.extra_part_1_name/_spec/_qty/_unit'
+      + "（別府='ｽﾗﾌﾞ下り際根太'/'H=210'/'23.3'/'m'。Ｈ・Ｉタイプは _qty='0' で行を出力しない）",
+    action: 'kiwaneta_spec の流用ではなく独立した追加部位行として実装（H=210は際根太H110と別材・'
+      + '数量も別拾いのため兼用してはいけない）。材積は既定で出さず、必要な物件だけ '
+      + '_volume=あり + _volume_m3_per_unit で出せる（別府はX10=0なので指定しない）',
+    resolved: true,
   },
 ];
 
@@ -339,15 +350,55 @@ for (const r of mism) {
   }
 }
 
-// ---- 片方の物件にしか存在しない部位行（overrideでは埋まらない・行の欠落）----
+// ---- 片方の物件にしか存在しない部位行（定数のoverrideでは埋まらない・行の欠落）----
+// 【重要】ここのステータスは**手書きの文字列を信じない**。resolved:true と主張する項目は
+//   実際に calculateMaterials を走らせ「指定すると行が出る／0なら出ない／未指定なら出ない」を
+//   実測して✅を出す（表の更新忘れ・実装の後退で嘘の✅が残るのを防ぐ）。
 console.log('\n=== 片方の物件にしか存在しない部位行（定数のoverrideでは埋まらない） ===');
+let onlyPartsNg = 0;
+// 検証用の最小入力（別府規模の住戸1戸。数量はoverride指定値がそのまま出るので図面精度に依存しない）
+const extraPartPlan = {
+  _validated: true, document_type: 'floor_plan', layout_type: '3LDK',
+  total_floor_area_sqm: 75.9, total_area_source: 'user_input',
+  partition_wall_length_m: 30, ceiling_height_mm: 2400,
+  rooms: [{ name: 'リビング・ダイニング', area_sqm: 60, floor_type: 'flooring' },
+    { name: 'トイレ', area_sqm: 3 }],
+  openings: [], equipment: {},
+};
+const findRow = (ov, name) => calculateMaterials(extraPartPlan, {}, ov)
+  .materials.find((m) => m.name === name && m.unit !== 'm³');
 for (const p of BEPPU_ONLY_PARTS) {
   console.log(`  ・${p.key}  ${p.engineName}`);
   console.log(`      所見: ${p.finding}`);
   console.log(`      アルファ: ${p.alpha}`);
-  console.log(`      ${p.status}`);
+  if (p.resolved) {
+    // 実測1: 指定すると行が出て、数量が指定値どおり（丸めなし）
+    const NAME = 'ｽﾗﾌﾞ下り際根太';
+    const spec = { extra_part_1_name: NAME, extra_part_1_spec: 'H=210', extra_part_1_unit: 'm' };
+    const got = findRow({ ...spec, extra_part_1_qty: '23.3' }, NAME);
+    // 実測2: 0指定なら行そのものが出ない（別府Ｈ・Ｉタイプ＝P104=0）
+    const zero = findRow({ ...spec, extra_part_1_qty: '0' }, NAME);
+    // 実測3: 未指定なら行が増えない（アルファの既定動作）
+    const none = findRow({}, NAME);
+    const ok = got && got.quantity === 23.3 && got.spec === 'H=210' && got.unit === 'm'
+      && !zero && !none;
+    if (ok) {
+      console.log(`      ${p.status}`);
+      console.log(`      実測: 指定23.3m→行あり(${got.quantity}${got.unit} ${got.spec}) / `
+        + '0指定→行なし / 未指定→行なし ✅');
+    } else {
+      onlyPartsNg++;
+      console.log('      ❌ **実測NG**（表では対応済みだが実装が伴っていない）: '
+        + `指定=${got ? `${got.quantity}${got.unit}` : 'なし'} / 0指定=${zero ? 'あり' : 'なし'} / `
+        + `未指定=${none ? 'あり' : 'なし'}`);
+    }
+  } else {
+    onlyPartsNg++;
+    console.log(`      ${p.status}`);
+  }
   console.log(`      → ${p.action}`);
 }
+console.log(`\n  片方の物件にしか無い部位行の判定: ❌ ${onlyPartsNg} 件（0件が完了条件）`);
 
 // ---- 木製巾木 高さ（物件依存ではない別論点）----
 console.log('\n=== 木製巾木の高さ（物件依存ではない・集計表ラベルと拾い実態の食い違い） ===');

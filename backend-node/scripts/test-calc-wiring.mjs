@@ -989,6 +989,108 @@ await testAsync('正常なkiwaneta_* override: 不正値警告は出ない（採
   }
 });
 
+console.log('■ POST /:id/calculate: overrides → 物件固有の追加部位行（extra_part_N_*）');
+
+// 【2026-07-25】定数のoverrideでは埋まらない「行そのものが無い部位」を追加する経路。
+//   第1号: 別府 集計表r10「ｽﾗﾌﾞ下り際根太 H=210」（Ａ23.3〜Ｇ24.3m/戸・Ｈ/Ｉは0＝存在しない）。
+//   配線は Override → overridesObj → calculateMaterials(overrides) → resolveExtraParts。
+//   ※ 際根太・木胴縁と違い、この行は**レスポンスの materials に出る**（filterKenzaiScope を
+//     明示フラグで通す設計＝ユーザーが入力した行を画面から消さない）。よって数量まで直接観測できる。
+const SLAB_NAME = 'ｽﾗﾌﾞ下り際根太';
+const slabRow = (data) => data.materials.find((m) => m.name === SLAB_NAME);
+
+await testAsync('extra_part_1_*（別府Ａ 23.3m）: ルート経由で行が出る・数量は指定値そのまま', async () => {
+  const initial = structuredClone(baseParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [
+      { itemKey: 'extra_part_1_name', value: SLAB_NAME },
+      { itemKey: 'extra_part_1_spec', value: 'H=210' },
+      { itemKey: 'extra_part_1_qty', value: '23.3' },
+      { itemKey: 'extra_part_1_unit', value: 'm' },
+    ],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    const row = slabRow(data);
+    assert.ok(row, `追加部位の行がレスポンスに出る（materials=${data.materials.map((m) => m.name).join(',')}）`);
+    assert.equal(row.quantity, 23.3, '指定値がそのまま（丸め・単位変換なし）');
+    assert.equal(row.spec, 'H=210');
+    assert.equal(row.unit, 'm');
+    assert.equal(row.unitPrice, 0, '未登録の単価は0（既存材の単価を継承しない）');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('extra_part_1_qty=0（別府Ｈ・Ｉ）: 行そのものが出ない', async () => {
+  const initial = structuredClone(baseParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [
+      { itemKey: 'extra_part_1_name', value: SLAB_NAME },
+      { itemKey: 'extra_part_1_qty', value: '0' },
+    ],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(slabRow(data), undefined, '0指定は存在しない材の発注行を作らない');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('未指定（アルファ）: 追加部位の行は1つも増えない', async () => {
+  const initial = structuredClone(baseParsed);
+  const { prisma } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(data.materials.some((m) => m.extra_part === true), false,
+      '追加部位フラグの行が存在しない');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('不正値: 行を作らず extra_part_1_invalid 警告がwarningsに出る', async () => {
+  const initial = structuredClone(baseParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [
+      { itemKey: 'extra_part_1_name', value: SLAB_NAME },
+      { itemKey: 'extra_part_1_qty', value: '23.3m' }, // 単位付き＝数値として読めない
+    ],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(slabRow(data), undefined, '不正値で行は作らない');
+    assert.ok(findWarn(data, 'extra_part_1_invalid'),
+      `警告が出る（warnings=${JSON.stringify(data.warnings)}）`);
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('無関係なoverride（天井高）だけなら追加部位は増えない（回帰なし）', async () => {
+  const initial = structuredClone(baseParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'ceiling_height', value: '2400mm' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(data.materials.some((m) => m.extra_part === true), false);
+  } finally {
+    server.close();
+  }
+});
+
 // 供給経路の等価性: ルート経由で流した結果が、リゾルバを直接叩いた値と一致することの裏取り
 test('parseStudHeightOverridesの出力がそのままcomputeElevationTakeoffのoptsとして機能する', () => {
   const studHeight = parseStudHeightOverrides({ stud_height: '2720', stud_height_wet: '2820' });
