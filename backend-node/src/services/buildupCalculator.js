@@ -1027,6 +1027,9 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 遮/G枠を棄却した件数（2026-07-25）。別府でGeminiがバルコニー・倉庫・収納・水回り内部へ
   // 系統的に遮/G枠を誤付与し遮音壁PBが暴走していたのを物理制約で削る。下で_warningsへ集約。
   t.beppu_sound_nonparty_dropped = 0;
+  // 面ラベル混同（面記号の遮/G枠を「同一face-label × 同一記号」でN室以上に一律付与）を
+  // 系統誤読とみなして棄却した件数（2026-07-25）。下で_warningsへ集約。
+  t.beppu_sound_face_label_dropped = 0;
 
   // 高さ誤転記の疑い寸法（2026-07-19 Gemini読取ノイズ対策）: 平面図タイルの壁寸法(wall_length_mm)に
   // 天井高（2,400/2,200等の図面内の高さ表記）が混入する実例があるため、いずれかの部屋のCHと
@@ -1036,6 +1039,82 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // ただし耐水記号（中間2/5）は誤爆時の増幅が大きい（耐水過大+間仕切鏡像加算+第2パス救済が連鎖）
   // ため、疑い寸法は割付に使わない（実例: パウダーのG24@2400=居室CHの誤転記が面幅2360に化けて耐水+5.3㎡）
   const suspectHeights = new Set(rooms.map((r) => r.ceiling_height_mm).filter(Boolean));
+
+  // ============================================================
+  // 面ラベル混同（column-label confusion）の系統誤読を検出して棄却する（2026-07-25）
+  // ============================================================
+  // 【指紋】別府DのGemini実読み（3回読み多数決・既定）では、展開図の**全8室のD面すべてに**
+  //   face.wall_code='遮' が付く（玄関/LDK/洋室1/2/3/WCL/洗面/トイレ の D:遮×8）。他タイプ
+  //   （A/B/C/E/F）は面記号に遮/G枠を持たない。これは Gemini が展開図の**列ラベル「D面」**を
+  //   壁記号「遮」と取り違え、D列全体（＝全部屋のD面）へ遮音を貼った系統誤読の指紋。
+  //
+  // 【物理規則（答え合わせでない削り方）】戸境二重壁＝隣接する別住戸との境界（住戸外周の
+  //   隣戸接触面）にのみ存在する。1住戸の外周のうち隣戸に接するのはせいぜい1〜2面で、
+  //   住戸内の全部屋が同一方向（同一face-label）で戸境に接することは物理的にありえない。
+  //   よって「**同一face-label（A/B/C/D）× 同一遮音記号（遮 or G枠）が N室以上に一律付与**」
+  //   されている(face-label, code)の組は面ラベル混同とみなし、該当する全面の面記号経由の
+  //   遮/G枠計上を棄却する。
+  //
+  // 【閾値 N=3 の物理的根拠（特定タイプの正解面数に寄せない）】
+  //   ・正当に「同一face-labelに遮」が2室で出るケースが存在する: 隣接する2室が同一の戸境壁を
+  //     共有し、両室の展開図でその壁が偶然どちらもA〜D面ラベルのうち同じ面（例: 両室ともD面）に
+  //     割り当たると、2室のD面に遮が並ぶ（正当な戸境壁の両面計上）。この本物を潰さないため
+  //     2室までは保持する。
+  //   ・3室以上が同一face-labelで戸境二重壁を持つには、住戸の3辺以上が別々の隣戸に接し、
+  //     かつ作図者が全て同じ面ラベルを振る必要がある。戸境接触面が3辺以上ある住戸自体が稀で、
+  //     さらに全て同一ラベルになるのは作図規則上ほぼ起きない → 3室以上の一律付与は
+  //     「面ラベル混同」の指紋とみなすのが妥当。閾値は「物理的に戸境壁が付きうる面数の上限」の
+  //     観点で選んでおり、別府Dの正解面数（遮音壁PB 24枚相当）へ寄せた値ではない。
+  //     （別府Dは8室一律なので N=3 でも N=8 でも棄却されるが、根拠は上記の物理上限）
+  //
+  // 【NON_PARTY_WALL_ROOM_RE との順序（二重カウント回避）】前サイクルの物理制約フィルタで
+  //   既に棄却対象（バルコニー/倉庫/収納/水回り内部）の部屋は、そちらで beppu_sound_nonparty_dropped
+  //   として個別に落ちる。ここの集計は**非該当部屋（居室・動線）のみ**を数える（NON_PARTY部屋を
+  //   数に入れると、水回り込みで容易に3室を超えて閾値が甘くなるため）。棄却実行時も
+  //   「NON_PARTY部屋でない × このface-label混同集合に該当」の面だけを face_label_dropped として
+  //   落とし、NON_PARTY部屋は従来どおり nonparty_dropped で落とす（同じ面を二重に数えない）。
+  //
+  // 【対象は面記号（face.wall_code）経路のみ】別府A/B/Cの plan_placements 経由の遮/G枠は
+  //   セグメント長で正当に計上される（soundSegments）。それらは面ラベルを持たないため
+  //   この集計の対象外＝別府A/B/Cの遮音壁PBは本修正で不変。
+  //
+  // 【アルファ非発火】アルファの記録に遮/G枠は1件も無い（isBeppuSoundCode/code.beppuが
+  //   別府マーカー付きのみ真）→ 混同集合は常に空＝アルファGは1バイトも変わらない。
+  const FACE_LABEL_CONFUSION_MIN_ROOMS = 3;
+  const faceLabelConfusionSet = (() => {
+    const counts = new Map(); // "faceLabel|code" -> 該当室数（居室・動線のみ）
+    for (const room of rooms) {
+      if (UB_ROOM_NAME_RE.test(normalizeRoomName(room.name))) continue;
+      // NON_PARTY部屋（水回り・収納・倉庫・バルコニー）は個別フィルタで落ちるため集計から除外
+      if (NON_PARTY_WALL_ROOM_RE.test(normalizeRoomName(room.name))) continue;
+      const faces = Array.isArray(room.faces) ? room.faces : [];
+      // 1室内で同一(face-label, code)を重複カウントしない（同じ面ラベルが複数面に付く読取ノイズ対策）
+      const seenInRoom = new Set();
+      for (const face of faces) {
+        const label = face?.face; // A/B/C/D の面ラベル
+        if (!label) continue;
+        const c = parseWallCode(face.wall_code);
+        if (!c || !(c.beppu === '遮' || c.beppu === 'G枠')) continue;
+        const key = `${String(label).trim().toUpperCase()}|${c.beppu}`;
+        if (seenInRoom.has(key)) continue;
+        seenInRoom.add(key);
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+    }
+    const set = new Set();
+    for (const [key, n] of counts) {
+      if (n >= FACE_LABEL_CONFUSION_MIN_ROOMS) set.add(key);
+    }
+    return set;
+  })();
+  // 面ラベル混同集合に該当する面かどうか（NON_PARTY部屋は上流フィルタが優先＝ここでは判定に使わない）
+  const isFaceLabelConfused = (room, face, code) => {
+    if (!code || !(code.beppu === '遮' || code.beppu === 'G枠')) return false;
+    if (NON_PARTY_WALL_ROOM_RE.test(normalizeRoomName(room.name))) return false;
+    const label = face?.face;
+    if (!label) return false;
+    return faceLabelConfusionSet.has(`${String(label).trim().toUpperCase()}|${code.beppu}`);
+  };
 
   // 間仕切下地(木): 部屋間の壁は両部屋の展開図に現れる（ドア開口が両側の面に出ることを実データで確認）
   // ため、面ごとの拾いを合算して最後に÷2し「壁1枚1回」のXLS方式に合わせる。
@@ -1543,6 +1622,15 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
         continue;
       }
+      // 物理制約その2: 面記号の遮/G枠が「同一face-label × 同一記号でN室以上に一律付与」＝
+      // 面ラベル混同（列ラベルを壁記号と取り違えた系統誤読）と判定された組に該当する面は棄却する
+      // （faceLabelConfusionSet参照）。NON_PARTY部屋は上のブランチで先に落ちるため、ここへ来るのは
+      // 居室・動線の面のみ＝二重カウントしない。棄却の扱いはNON_PARTYと同じ「丸ごと落とす」過少側。
+      if (isFaceLabelConfused(room, face, code)) {
+        t.beppu_sound_face_label_dropped += 1;
+        if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
+        continue;
+      }
       // 下地
       if (['L', 'O', 'W'].includes(code.base)) {
         // 遮音壁はボードをスラブ下まで張る（図面注意書き「遮音壁はボードをスラブ下まで+GW24kg充填」・
@@ -1736,6 +1824,24 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         + '戸境壁を物理的に持ち得ない部屋（バルコニー・倉庫・収納内部・水回り内部）で'
         + '検出したため誤読とみなして棄却しました。'
         + '戸境壁は隣接する別住戸との境界にのみ存在します。'
+        + '該当部屋に本当に戸境壁がある場合は手動で追加してください（要確認）',
+      before: null, after: null,
+    });
+  }
+
+  // 面ラベル混同（列ラベルと壁記号の取り違え）の棄却の明示（2026-07-25）。
+  // 別府DのGemini実読みで、展開図の全室のD面に face.wall_code='遮' が一律付与される
+  // （列ラベル「D面」を壁記号「遮」と誤認）系統誤読が観測された。同一face-labelに同一遮音記号が
+  // N室（=3室）以上一律で付くのは物理的に起こり得ない（戸境壁は住戸外周の隣戸接触面1〜2面のみ）
+  // ため、その組を面ラベル混同とみなして棄却した。黙って消さず件数を可視化する。
+  // アルファは記号が3桁でここに掛からない（遮/G枠が無い）＝通常運用では出ない。
+  if (t.beppu_sound_face_label_dropped > 0) {
+    t._warnings.push({
+      field: 'sound_wall_face_label_confusion',
+      message: `戸境二重壁（遮 / G枠）の面記号読み取り${t.beppu_sound_face_label_dropped}件を、`
+        + '同一の面ラベル（A/B/C/D面）に同一記号が3室以上へ一律付与されていたため'
+        + '面ラベルと壁記号の取り違え（系統誤読）とみなして棄却しました。'
+        + '住戸内の全部屋が同一方向で戸境に接することは物理的にありません。'
         + '該当部屋に本当に戸境壁がある場合は手動で追加してください（要確認）',
       before: null, after: null,
     });
