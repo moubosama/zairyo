@@ -13,6 +13,26 @@ AI（Gemini + Claude API）による図面解析で、資材リスト作成を�
 
 ユーザー方針: 読み取らせる図面を**平面詳細図・展開図・建具表の3枚**にし、ロジック計算する。
 
+**別府AのGemini実読みE2E＋遮/G枠のセグメント計上（2026-07-25・coder/reviewer分離・承認済み・push済み・実費約10円）**:
+別府Aタイプの3図面をGeminiで実読み（`e2e-beppu-a.mjs`新規・記録`recordings/beppu-a-gemini-read-gemini-2.5-flash.json`）。
+**別府の壁記号（丸囲み1文字 遮/G枠/A/C04）はGeminiが寸法mm付きで正しく読めている**（読み取り14部屋・展開図9室・建具20件・
+タイル失敗0）＝プロンプトは別府方式に対応済み（条件(3)合格）。ズレの原因はロジックと確定（条件(2)）。
+- **根本原因（私の当初診断を訂正）**: 記号はplan_placementsに結合済みだった。真因は**別府展開図が面幅を合算**（LDK-A面=8200mm）する一方、
+  タイル記号は**per-segment長**（遮@3250）で読まれ、既存の「placement寸法≒面幅±80mm」マッチが合算面で成立しなかったこと
+- **修正**: 遮/G枠（`isBeppuSoundCode`=beppuマーカー付きW系）を面幅マッチから除外し**セグメント長で直接計上**
+  （sound_wall_pb += len×下地高・GW・遮音シートも）。セグメント幅分を既定G14へ落ちる面の壁PBから差し引く（soundDeductByFace）。
+  周長・巾木・開口はfull width維持（戸境壁も物理的にその部屋の壁のため）。両面計上は各室placementが両側を持つことで自然成立
+- **別府A before→after**: 遮音壁PB -76%→**+26%**（符号反転）/ GW -86%→**-29%** / 壁PB +98%→+82%（方向改善）/ 天井PB+11%✅。
+  **壁PB+82%残差は面のper-wall合算 vs placementのper-segmentのgranularity差**（面レベル記号無しでは安全に解決不能・次サイクル候補）
+- **答え合わせでない（reviewer手計算で確認）**: 遮2面×3.25×2.57+G枠(LDK/洋室3=2.57・洗面室=2.77)×2.25=34.5025㎡=エンジン出力。
+  正解40.5に対し-14.8%（正解を上回らない=逆算でない直接証拠）。係数調整ゼロ・placementのwall_length_mmをそのまま拾うだけ
+- **C04差し引き却下が正しい（reviewer確認）**: 打放しC04差し引きも試作したがアルファのノイズC04で92枚→54枚(-38%)退行→撤回。別府の数字を追わずアルファを守った
+- **アルファG完全不変（最重要・reviewerがバイト一致証明）**: 遮/G枠placementはアルファ記録に0件＝新分岐非発火。
+  eval-gtype 20✅⏳0✗0 / replay3記録とも壁92枚不変 / computeElevationTakeoff全出力DEEP IDENTICAL
+- should-fix繰越: SF-1 同一戸境壁が3室以上でマッチすると両面超の計上リスク（現状は過少側で実害なし）/ SF-2 partition_face_length参考値がdeduct面でwPb使用
+- 検証: eval-gtype 20✅⏳0✗0 / eval-beppu 453✅ / eval-alpha-af 567✅ / replay3記録✅10✗0 / test-buildup-placement 69✅（別府5件追加）/ 全20ユニット緑
+- **未実施（次サイクル）**: 遮音壁耐水PB35㎡（別府独立部位・zairyo_itemマッピング無し・けいとさん確認）/ B〜Fの実読み（壁PB残差が他タイプでも同じか）/ 実AI読み取りで残る戸境壁を拾えるか
+
 **EV廻り壁PBの丸めをceil→roundに（2026-07-25・coder/reviewer分離・承認済み・push済み）**:
 面積換算部位の丸め横断調査で、per-戸ceilが総量方式（XLS AB列=W/X・全戸合算÷係数）から**±8%以上乖離するのは
 EV廻り壁PBのみ（+38%）**と確定（耐水/遮音+7%・壁PB/天井PB+1%は対象外）。EV実測2.16㎡→ceil(1.44)=2枚→**round=1枚**。

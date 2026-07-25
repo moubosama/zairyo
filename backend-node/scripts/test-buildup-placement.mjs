@@ -776,5 +776,70 @@ console.log('--- 開口の幻覚読取ガード: 大窓の水回り誤配置・�
   check('cross_face_door_dropped=1 が計上される', t.opening_guard.cross_face_door_dropped, 1);
 }
 
+// ============ 別府: 戸境二重壁（遮/G枠）のセグメント計上 ============
+// 別府の展開図は面幅が壁全体で合算される（例 LDK-A面8200）ため、平面図タイルの
+// 戸境壁セグメント（遮@3250/G枠@2250）は面幅と±80mmで一致しない。面幅マッチに頼ると
+// 遮/G枠が面に載らず遮音壁PBが過少、その面が既定G14へ落ちて壁PBが過大化する
+// （別府実読みで壁PB+98%/遮音壁-80%）。セグメント長で直接計上し、同幅を壁PB本体から差し引く。
+console.log('--- 別府: 遮/G枠のセグメント計上（合算面でも面幅マッチに依存しない） ---');
+{
+  // LDK相当: A面8200に遮3250・G枠2250が含まれる（面幅と一致しない）。
+  //   遮音壁PB = (3.25 + 2.25) × 下地高2.72 = 14.96（GWも同値）。遮音シート = 3.25 × 2.72 = 8.84。
+  //   壁PB本体 = 8.2×h − 差し引き(3.25+2.25=5.5) → (8.2−5.5)×h + 他面。
+  const elevations = { rooms: [
+    { name: 'LDK', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 8200, openings: [] },
+      { face: 'B', width_mm: 3600, openings: [] },
+    ], plan_codes: ['遮', 'G枠', 'A'], plan_placements: [
+      { code: '遮', wall_length_mm: 3250 },
+      { code: 'G枠', wall_length_mm: 2250 },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, [], { studHeight: { default_mm: 2720 } });
+  check('遮/G枠をセグメント長で遮音壁PBに計上（(3.25+2.25)×2.72=14.96）',
+    Math.round(t.sound_wall_pb_sqm * 100) / 100, 14.96);
+  check('遮/G枠のGWも同値で計上（14.96）',
+    Math.round(t.gw_sqm * 100) / 100, 14.96);
+  check('遮のみ遮音シート（3.25×2.72=8.84）',
+    Math.round(t.sound_sheet_sqm * 100) / 100, 8.84);
+  // A面8200から遮3250+G枠2250=5500を差し引き→残余2700がPB。B面3600はデフォルトG14でPB。
+  // (2.7 + 3.6) × 2.44(=CH2400+40) = 15.372
+  check('戸境壁分は壁PB本体から差し引かれる（残余のみPB: 15.37）',
+    Math.round(t.wall_pb_sqm * 100) / 100, 15.37);
+}
+{
+  // 面幅がセグメントと一致する部屋（洋室3相当）でも二重計上しない:
+  //   面Cが3250、遮placement3250。従来は面Cが遮音(W)に振られ計上、今回はセグメントで計上。
+  //   どちらでも遮音壁PBは1面分（3.25×2.72=8.84）で、面Cは壁PB本体に載らない。
+  const elevations = { rooms: [
+    { name: '洋室3', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 3240, openings: [] },
+      { face: 'C', width_mm: 3250, openings: [] },
+    ], plan_codes: ['遮', 'A'], plan_placements: [
+      { code: '遮', wall_length_mm: 3250 },
+    ] },
+  ]};
+  const t = computeElevationTakeoff(elevations, [], { studHeight: { default_mm: 2720 } });
+  check('面幅一致でも遮はセグメント計上（遮音壁PB 8.84・二重計上なし）',
+    Math.round(t.sound_wall_pb_sqm * 100) / 100, 8.84);
+  // 面C(3250)から遮3250を差し引き→0。A面3240はG14でPB。3.24×2.44=7.9056
+  check('面幅一致面は壁PB本体から差し引かれA面のみPB（7.91）',
+    Math.round(t.wall_pb_sqm * 100) / 100, 7.91);
+}
+{
+  // アルファ回帰ガード: 遮/G枠が無い（3桁記号のみ）部屋では新分岐は非発火。
+  //   C04実測@2000（面A）+ G14デフォルト面 → 従来どおりの結果（sound_wall_pb=0）。
+  const elevations = { rooms: [
+    { name: '洋室(Z)', ceiling_height_mm: 2400, faces: [
+      { face: 'A', width_mm: 2000, wall_code: 'C04', openings: [] },
+      { face: 'B', width_mm: 1000, openings: [] },
+    ], plan_placements: [{ code: 'C04', wall_length_mm: 2000 }] },
+  ]};
+  const t = computeElevationTakeoff(elevations, []);
+  check('アルファ（3桁のみ）は遮音壁分岐が非発火（sound_wall_pb=0）', t.sound_wall_pb_sqm, 0);
+  check('アルファ（3桁のみ）壁PBは従来どおり（B面のみ 1.0×2.44=2.44）',
+    Math.round(t.wall_pb_sqm * 100) / 100, 2.44);
+}
+
 console.log(`\n合計: ✅ ${pass} / ✗ ${fail}`);
 process.exit(fail > 0 ? 1 : 0);

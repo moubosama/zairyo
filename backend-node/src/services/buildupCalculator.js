@@ -1054,6 +1054,17 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // これでC04（打放・PBなし）等の面がデフォルトPB扱いで過大計上されるのを防ぐ。
     const PLACEMENT_TOL_MM = 80; // 平面図の壁寸法と展開図の面幅の許容差（芯/内法の差を吸収）
     const placementByFace = new Map(); // faceIndex -> parsed code
+    // 別府の戸境二重壁（遮/G枠）はセグメント長で直接計上する（下記soundSegments）。
+    // これらは面幅マッチ（placementByFace）から除外する — 別府の展開図は面が壁全体で
+    // 合算されており（例 LDK-A面=8200mm）、平面図タイルのセグメント長（遮@3250/G枠@2250）と
+    // ±80mmで一致しない。マッチに頼ると①遮/G枠が面に載らず遮音壁PBが過少
+    // ②その面が既定G14へ落ちて壁PBが過大、という別府の実害（壁PB+98%/遮音壁-80%）が出る。
+    // セグメント長そのものが「その戸境壁の実長」なので、面幅と突合せず長さで拾うのが正しい
+    // （XLSも部屋ブロックの面をセグメント単位で拾う）。両面計上は各室のplacementが両側を
+    // 持つことで自然に成立する（遮@3250はLDKと洋室3の両方に出る）。
+    // ※ アルファの記録に遮/G枠 placementは1件も無い（3桁記号のみ）＝この分岐は非発火＝回帰なし。
+    const soundSegments = []; // { c, len(m) } — 遮/G枠のセグメント（面幅マッチ対象外）
+    const isBeppuSoundCode = (c) => c && c.beppu && ['遮', 'G枠'].includes(c.beppu);
     if (Array.isArray(room.plan_placements) && faces.length >= 1) {
       // 二重転記ノイズの縮退（保存済み記録にもノイズが残るため読取時と再計算時の両方で適用）
       const planPlacements = collapseDoubledPlacements(room.plan_placements);
@@ -1075,6 +1086,7 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         const c = parseWallCode(pl?.code);
         const len = pl?.wall_length_mm;
         if (!c || !Number.isFinite(len) || len <= 0) continue;
+        if (isBeppuSoundCode(c)) continue; // 遮/G枠はセグメント長で別途計上（面幅マッチしない）
         for (let i = 0; i < faces.length; i++) {
           const fc = parseWallCode(faces[i].wall_code);
           if (!fc || fc.base !== c.base || fc.mid !== c.mid || fc.surf !== c.surf) continue;
@@ -1097,6 +1109,9 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         const c = parseWallCode(pl?.code);
         const len = pl?.wall_length_mm;
         if (!c || !Number.isFinite(len) || len <= 0) continue;
+        // 別府の戸境二重壁（遮/G枠）: 面幅マッチせずセグメント長で計上する。
+        // 面幅マッチ（±80mm）は合算面（LDK-A面8200等）で外れて過少/過大化するため。
+        if (isBeppuSoundCode(c)) { soundSegments.push({ c, len: len / 1000 }); continue; }
         const susp = suspectHeights.has(len) ? 1 : 0; // 高さ誤転記疑い（suspectHeights参照）
         if (susp && (c.mid === 2 || c.mid === 5)) continue; // 耐水記号×疑い寸法は割付しない（増幅遮断）
         // 遮音壁ルール適用時、遮音記号（L/O/W）placementの採用は
@@ -1195,6 +1210,37 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       }
     }
 
+    // 別府の戸境二重壁（遮/G枠）のセグメント計上（面幅マッチしない・上のsoundSegments参照）。
+    //   ・遮音壁PB … セグメント長×下地高（各室のplacementが両側を持つため両面が自然に揃う）
+    //   ・GW … 同上（遮・G枠とも胴縁+PB+GW24K充填）
+    //   ・遮音シート … 遮のみ（G枠は遮音シートなし）
+    // 高さは下地高（遮音壁はスラブ下までボードを張る＝一般部の下地高。図面注意書き準拠）。
+    // 併せて「セグメント幅の合計」を、この面がその戸境壁を含む面（記号なし=既定G14へ落ちる面）から
+    // 差し引く予算（soundDeductByFace）として登録し、同じ壁が壁PB本体に二重計上されるのを防ぐ。
+    // faceIndex -> 壁PB本体の面積計上から差し引く幅(m)。
+    const soundDeductByFace = new Map();
+    // 遮/G枠（戸境二重壁）: 遮音壁PB・GW（・遮のみ遮音シート）をセグメント長×下地高で計上し、
+    //   同幅を壁PB本体から差し引く。両面計上は各室のplacementが両側を持つことで自然に成立。
+    //   差し引き先の面: 記号未確定（面記号なし・placementByFace未割付）で残余幅が
+    //   セグメント長を収容でき、幅が最小の面（合算面 8200 に 遮3250 が含まれる想定）を1件選ぶ。
+    for (const seg of soundSegments) {
+      t.sound_wall_pb_sqm += seg.len * studH;
+      t.gw_sqm += seg.len * studH;
+      if (seg.c.sound_sheet === true) t.sound_sheet_sqm += seg.len * studH;
+      let best = -1;
+      let bestW = Infinity;
+      for (let i = 0; i < faces.length; i++) {
+        if (parseWallCode(faces[i].wall_code) || placementByFace.get(i)) continue;
+        const fw = (faces[i].width_mm || 0) / 1000;
+        const already = soundDeductByFace.get(i) || 0;
+        if (fw - already + 1e-6 < seg.len) continue; // 残余幅がセグメントを収容できない面は不可
+        if (fw < bestW) { bestW = fw; best = i; }
+      }
+      if (best >= 0) soundDeductByFace.set(best, (soundDeductByFace.get(best) || 0) + seg.len);
+      // 収容できる面が無い場合はPB本体からの差し引きをしない（過少側で安全）。
+      // 戸境壁の計上自体はセグメント長で済んでいるため遮音壁PBは正しく立つ。
+    }
+
     // 遮音壁ルールと同じ壁を指す面の消費（面単位のused管理・二重計上防止）:
     // この部屋が関与するペアごとに、幅がpair.width_mm±80mmの面を最大1面
     // 「ルール側で計上済み」としてマークする。対象は遮音記号（L/O/W）の面と
@@ -1246,6 +1292,11 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       const face = faces[faceIdx];
       const w = (face.width_mm || 0) / 1000;
       if (w <= 0) continue;
+      // 別府の戸境壁セグメント分は、この面の「壁PB/GW等の面積計上」からのみ差し引く
+      // （上のsoundDeductByFace参照）。差し引かれた幅の壁は既に遮音壁PB/GWとしてセグメント長で
+      // 計上済みのため壁PB本体に載せると二重計上になる。周長・巾木・開口はその戸境壁も
+      // 物理的にこの部屋の壁なので full width（w）のまま拾う（wPb=面積計上用の残余幅）。
+      const wPb = Math.max(0, w - (soundDeductByFace.get(faceIdx) || 0));
       // 面の高さ: 展開図の実測(height_mm)があればそのまま、無ければCH+40mm（XLSの壁拾い高さ）
       const h = (face.height_mm ? face.height_mm : (room.ceiling_height_mm || 2400) + WALL_PICKUP_EXTRA_MM) / 1000;
       perimeter += w;
@@ -1329,6 +1380,11 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       }
 
       const net = Math.max(0, w * h - openingArea);
+      // netPb: 戸境壁セグメント分を除いた残余幅での正味面積（壁PB/耐水/GW等の面積計上に使う）。
+      // soundDeductが無い通常面では wPb===w のため netPb===net（＝別府以外・別府の非戸境面は不変）。
+      const netPb = soundDeductByFace.get(faceIdx)
+        ? Math.max(0, wPb * h - Math.min(openingArea, wPb * h))
+        : net;
       t.opening_area_sqm += openingArea;
       roomWallNet += net;
 
@@ -1345,15 +1401,16 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       }
 
       // 間仕切下地(木)の拾い（XLS方式: G下地のみ。遮音壁L/O/Wは「遮音壁PB張り」の部位で別拾い）
+      // ※ wPb=戸境壁セグメント分を除いた残余幅（別府以外・非戸境面では w と一致）
       if (code.base === 'G') {
-        majikiriDouble += Math.max(0, w * studH - openingAreaStud);
+        majikiriDouble += Math.max(0, wPb * studH - openingAreaStud);
         // 鏡像加算: 「耐水記号(中間2/5)の面=UB隣接で、反対面はUB内=展開図に現れない」という
         // Gタイプ実測に基づく仮定で、不可視の反対面分を足す（÷2で壁1枚に戻る）。
         // ※ 既知の限界: 両面とも展開図に現れる耐水壁（トイレ−洗面間等）ではこの加算が
         //   壁2枚分の二重計上になる。面の隣接情報が無く反対面の可視判定はできないため、
         //   開口分を鏡像からも控除して過大側を抑える（開口はUB側の面にも同様に無い想定）。
         if (code.mid === 2 || code.mid === 5) {
-          majikiriDouble += Math.max(0, w * studH - openingAreaStud);
+          majikiriDouble += Math.max(0, wPb * studH - openingAreaStud);
         }
       }
       // RC面木(D下地)の面積（D14=防露/EV面、D64=収納内コンパネ）。
@@ -1361,10 +1418,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       //   木胴縁の行(r85)とは**別行**（別の発注行）に集計される。係数は3行とも0.0098で同じであり、
       //   分離の根拠は係数差ではなく集計先の違い（timberVolume.js / materialCalculator.js の注記参照）
       if (code.base === 'D') {
-        t.rc_furring_sqm += net;
+        t.rc_furring_sqm += netPb;
         if (code.mid === 6) {
           const rn = normalizeRoomName(room.name);
-          d6ByElevRoom.set(rn, (d6ByElevRoom.get(rn) || 0) + w);
+          d6ByElevRoom.set(rn, (d6ByElevRoom.get(rn) || 0) + wPb);
         }
       }
       // 界壁面（一部界壁）: 面に界壁の明示がある場合のみ、界壁高さ(既定2.45m)で拾う。
@@ -1390,8 +1447,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         // sound_sheetフラグは parseBeppuWallCode が付与する（3桁コードには付かない＝アルファ不変）
         if (code.base === 'O' || code.sound_sheet === true) t.sound_sheet_sqm += netSlab;
       } else {
-        if (code.base === 'G') t.partition_face_length_m += w;
-        if (code.base === 'S') t.gw_sqm += net;
+        if (code.base === 'G') t.partition_face_length_m += wPb;
+        if (code.base === 'S') t.gw_sqm += netPb;
         // 中間材（遮音壁系はPB込みのためelse側のみ）
         switch (code.mid) {
           case 1: case 4:
@@ -1401,12 +1458,12 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
             //   GのD14がEV側1面だけのため成立している。他タイプで窓廻り防露壁面や収納内のD14が
             //   ある場合もEV行に積まれてしまう（防露壁面/EV面の区別には部屋名や面の位置情報が必要）。
             //   他タイプの正解データで検証する際に部屋名/面情報での分岐を検討すること。
-            if (code.base === 'D') t.ev_wall_pb_sqm += net;
-            else t.wall_pb_sqm += net;
+            if (code.base === 'D') t.ev_wall_pb_sqm += netPb;
+            else t.wall_pb_sqm += netPb;
             break;
-          case 2: case 5: t.waterproof_pb_sqm += net; break;
-          case 3: t.rawan_veneer_sqm += net; break;
-          case 6: t.konpane_sqm += net; break;
+          case 2: case 5: t.waterproof_pb_sqm += netPb; break;
+          case 3: t.rawan_veneer_sqm += netPb; break;
+          case 6: t.konpane_sqm += netPb; break;
           default: break; // 0=ナシ（打放し等）
         }
       }
