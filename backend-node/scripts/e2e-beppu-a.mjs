@@ -43,11 +43,24 @@ const { analyzeDrawing, analyzeAuxDrawing } = await import('../src/services/clau
 // 組み立てロジックは本番ルートの関数をそのまま再利用（重複実装しない）
 const { attachElevationData, mergeDoorSchedule } = await import('../src/routes/projects.js');
 
-// 入力図面（別府4丁目 Aタイプ・PDFページ p036/p037/p069）
+// 入力図面（別府4丁目・--type A〜F で切替。PDFページと専有面積はタイプ別）
 // 別府は建具表が1枚に集約（木製建具表 p069・全タイプ共通）。アルファのようにSD/AW/WDに分かれない。
-const SRC = 'C:/Users/81804/Pictures/zairyoの資料/02_別府4丁目/アップロード用/Aタイプ';
-const PLAN = path.join(SRC, '①平面詳細図_p036.png');
-const ELEV = path.join(SRC, '②展開図_p037.png');
+// 専有面積は各平面図の「住戸面積」記載値（p036等）。合計面積でなく住戸面積を採る。
+const TYPE_MAP = {
+  A: { plan: '①平面詳細図_p036.png', elev: '②展開図_p037.png', area: 83.43 },
+  B: { plan: '①平面詳細図_p038.png', elev: '②展開図_p039.png', area: 57.22 },
+  C: { plan: '①平面詳細図_p040.png', elev: '②展開図_p041.png', area: 70.12 },
+  D: { plan: '①平面詳細図_p042.png', elev: '②展開図_p043.png', area: 69.35 },
+  E: { plan: '①平面詳細図_p044.png', elev: '②展開図_p045.png', area: 67.90 },
+  F: { plan: '①平面詳細図_p046.png', elev: '②展開図_p047.png', area: 71.29 },
+};
+const typeFlag = process.argv.indexOf('--type');
+const TYPE = (typeFlag >= 0 && process.argv[typeFlag + 1]) ? process.argv[typeFlag + 1].toUpperCase() : 'A';
+const TCONF = TYPE_MAP[TYPE];
+if (!TCONF) { console.error('未対応のタイプ:', TYPE, '（A〜F）'); process.exit(1); }
+const SRC = `C:/Users/81804/Pictures/zairyoの資料/02_別府4丁目/アップロード用/${TYPE}タイプ`;
+const PLAN = path.join(SRC, TCONF.plan);
+const ELEV = path.join(SRC, TCONF.elev);
 const DOORS = [
   path.join(SRC, '③木製建具表_p069.png'),
 ];
@@ -61,14 +74,14 @@ for (const f of [PLAN, ELEV, ...DOORS]) {
 const rawDir = path.join(__dirname, 'recordings', 'raw-gemini');
 fs.mkdirSync(rawDir, { recursive: true });
 const saveRaw = (name, text) =>
-  fs.writeFileSync(path.join(rawDir, `beppu-a-${MODEL}-${name}.txt`), text ?? '(no response)');
+  fs.writeFileSync(path.join(rawDir, `beppu-${TYPE.toLowerCase()}-${MODEL}-${name}.txt`), text ?? '(no response)');
 
-console.log(`=== 別府Aタイプ Gemini実読みE2E（モデル: ${MODEL}） ===`);
+console.log(`=== 別府${TYPE}タイプ Gemini実読みE2E（モデル: ${MODEL}・専有${TCONF.area}㎡） ===`);
 
 // STEP1: 平面詳細図（本番uploadと同じ analyzeDrawing。専有面積は通常運用どおりユーザー入力あり
 // = 83.43㎡（別府Aタイプ・p036記載の専有面積））
 console.log('STEP1: 平面詳細図', path.basename(PLAN));
-const parsedData = await analyzeDrawing(PLAN, { userTotalAreaSqm: 83.43 });
+const parsedData = await analyzeDrawing(PLAN, { userTotalAreaSqm: TCONF.area });
 saveRaw('plan', parsedData._raw_responses?.gemini);
 delete parsedData._raw_responses;
 if (parsedData._ai_unavailable || parsedData.is_rejected) {
@@ -131,7 +144,7 @@ for (const [i, doorPath] of DOORS.entries()) {
 }
 
 // 記録保存（replay/calculate用のparsedData形式・Gタイプ記録と別名）
-const outFile = path.join(__dirname, 'recordings', `beppu-a-gemini-read-${MODEL}.json`);
+const outFile = path.join(__dirname, 'recordings', `beppu-${TYPE.toLowerCase()}-gemini-read-${MODEL}.json`);
 fs.writeFileSync(outFile, JSON.stringify(parsedData, null, 2));
 console.log('\n記録保存:', outFile);
 console.log('読み取り概要: rooms', parsedData.rooms?.length ?? 0,

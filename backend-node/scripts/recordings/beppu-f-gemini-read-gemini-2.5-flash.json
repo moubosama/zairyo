@@ -1,0 +1,547 @@
+{
+  "document_type": "floor_plan",
+  "is_analyzable": true,
+  "property_name": "別府４丁目プロジェクト Fタイプ",
+  "layout_type": "3LDK",
+  "outer_dimensions_mm": {
+    "width": 7350,
+    "depth": 9700
+  },
+  "total_floor_area_sqm": 71.29,
+  "partition_wall_length_m": 27.25,
+  "ceiling_height_mm": null,
+  "rooms": [
+    {
+      "name": "LDK",
+      "area_jou": "17.5",
+      "area_sqm_label": "28.43",
+      "area_sqm": 28.4,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室1",
+      "area_jou": "5.0",
+      "area_sqm_label": "8.10",
+      "area_sqm": 8.1,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室2",
+      "area_jou": "5.0",
+      "area_sqm_label": "8.10",
+      "area_sqm": 8.1,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "洋室3",
+      "area_jou": "4.5",
+      "area_sqm_label": "7.33",
+      "area_sqm": 7.3,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "sqm_label"
+    },
+    {
+      "name": "玄関",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 1.24,
+      "floor_type": "tile",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "廊下",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 2.98,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "洗面室",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 2.6,
+      "floor_type": "cf",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "トイレ",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 1.06,
+      "floor_type": "cf",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "UB",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 2.09,
+      "floor_type": "cf",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "SCL",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 0.83,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "WCL",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 1.92,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "システムクローゼット (洋室1)",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 0.79,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "システムクローゼット (洋室2)",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 0.79,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "リネン庫",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 0.4,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "パントリー",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 0.5,
+      "floor_type": "flooring",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    },
+    {
+      "name": "防災倉庫",
+      "area_jou": null,
+      "area_sqm_label": null,
+      "area_sqm": 1.34,
+      "floor_type": "tile",
+      "wall_finish_codes": [],
+      "area_source": "ai_estimate"
+    }
+  ],
+  "openings": [
+    {
+      "type": "片開き戸",
+      "width_mm": 850,
+      "height_mm": 1900,
+      "room": "玄関"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 850,
+      "height_mm": 2170,
+      "room": "洋室2"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 700,
+      "height_mm": 2170,
+      "room": "洋室1"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 750,
+      "height_mm": 2200,
+      "room": "洗面室"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 800,
+      "height_mm": 2200,
+      "room": "トイレ"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 800,
+      "height_mm": 2170,
+      "room": "洋室3"
+    },
+    {
+      "type": "片開き戸",
+      "width_mm": 830,
+      "height_mm": 2175,
+      "room": "パントリー"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 800,
+      "height_mm": 2200,
+      "room": "廊下収納"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 1000,
+      "height_mm": 2200,
+      "room": "SCL"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 1600,
+      "height_mm": 2200,
+      "room": "WCL"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 1450,
+      "height_mm": 2200,
+      "room": "システムクローゼット (洋室1)"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 1450,
+      "height_mm": 2200,
+      "room": "システムクローゼット (洋室2)"
+    },
+    {
+      "type": "2枚折戸",
+      "width_mm": 600,
+      "height_mm": 2200,
+      "room": "リネン庫"
+    },
+    {
+      "type": "開口",
+      "width_mm": 1600,
+      "height_mm": 2200,
+      "room": "LDK"
+    },
+    {
+      "type": "開口",
+      "width_mm": 1600,
+      "height_mm": 2200,
+      "room": "LDK"
+    },
+    {
+      "type": "開口",
+      "width_mm": 750,
+      "height_mm": 2200,
+      "room": "UB"
+    },
+    {
+      "type": "窓",
+      "width_mm": 850,
+      "height_mm": 1000,
+      "room": "洋室2"
+    },
+    {
+      "type": "窓",
+      "width_mm": 1400,
+      "height_mm": 1000,
+      "room": "洋室1"
+    },
+    {
+      "type": "窓",
+      "width_mm": 1400,
+      "height_mm": 1000,
+      "room": "K"
+    },
+    {
+      "type": "窓",
+      "width_mm": 600,
+      "height_mm": 1800,
+      "room": "洗面室"
+    },
+    {
+      "type": "窓",
+      "width_mm": 1920,
+      "height_mm": 2170,
+      "room": "洋室3"
+    },
+    {
+      "type": "窓",
+      "width_mm": 3600,
+      "height_mm": 2000,
+      "room": "LDK"
+    }
+  ],
+  "equipment": {
+    "ub_size": "1418",
+    "kitchen": "I型 W2550",
+    "washstand": "W750"
+  },
+  "storage": [
+    {
+      "name": "SCL",
+      "width_mm": 1000,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "WCL",
+      "width_mm": 1450,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "システムクローゼット (洋室1)",
+      "width_mm": 1450,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "システムクローゼット (洋室2)",
+      "width_mm": 1450,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "リネン庫",
+      "width_mm": 600,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "パントリー",
+      "width_mm": 600,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "廊下収納",
+      "width_mm": 800,
+      "has_makuradana": true,
+      "has_hanger_pipe": true
+    },
+    {
+      "name": "防災倉庫",
+      "width_mm": 1800,
+      "has_makuradana": false,
+      "has_hanger_pipe": false
+    }
+  ],
+  "special": [
+    "冷蔵庫スペース、カップボードスペース床下補強",
+    "カーテンレール用下地補強合板+アルミカーテンレール",
+    "エアコン用下地補強合板",
+    "WIC・CL固定棚ポリ合板t25+ステンレスハンガーパイプφ32"
+  ],
+  "total_area_source": "user_input",
+  "_validated": true,
+  "_warnings": [
+    {
+      "field": "rooms",
+      "message": "部屋面積合計(71.9㎡)が総面積71.29㎡の内法相当(68.4㎡)を超過。ラベルの無い部屋の目測を83%に按分縮小",
+      "before": 71.9,
+      "after": 68.4
+    }
+  ],
+  "_ai_disagreements": [],
+  "door_schedule": [
+    {
+      "symbol": "WD-1",
+      "name": "片開きフラッシュドア",
+      "width_mm": 830,
+      "height_mm": 2175,
+      "location": "LDK (全タイプ)",
+      "quantity": 36,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-2",
+      "name": "片開きフラッシュドア",
+      "width_mm": 600,
+      "height_mm": 2075,
+      "location": "SCL (A～C、F～Iタイプ)",
+      "quantity": 36,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-3",
+      "name": "片開きフラッシュドア",
+      "width_mm": 600,
+      "height_mm": 2175,
+      "location": "トイレ (A～Gタイプ)",
+      "quantity": 26,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-4",
+      "name": "片開きフラッシュドア",
+      "width_mm": 600,
+      "height_mm": 2175,
+      "location": "パントリー (H、Iタイプ)、洋室3WCL (Iタイプ)",
+      "quantity": 34,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-5",
+      "name": "片開きフラッシュドア",
+      "width_mm": 650,
+      "height_mm": 2175,
+      "location": "WCL (Hタイプ)",
+      "quantity": 3,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-6",
+      "name": "片引きフラッシュドア",
+      "width_mm": 650,
+      "height_mm": 2170,
+      "location": "トイレ (H、Iタイプ)",
+      "quantity": 1,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-7",
+      "name": "片引きフラッシュドア",
+      "width_mm": 700,
+      "height_mm": 2170,
+      "location": "WCL (A～C～Iタイプ)",
+      "quantity": 2,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-8",
+      "name": "片引きフラッシュドア",
+      "width_mm": null,
+      "height_mm": 2170,
+      "location": "洗面室 (全タイプ)",
+      "quantity": 41,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-9",
+      "name": "片開きフラッシュドア",
+      "width_mm": 800,
+      "height_mm": 2175,
+      "location": "洋室1 (C、Hタイプ)、洋室3 (E、Gタイプ)",
+      "quantity": 53,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-10",
+      "name": "片引きフラッシュドア",
+      "width_mm": 800,
+      "height_mm": 2170,
+      "location": "洋室 (全タイプ)",
+      "quantity": 3,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-11",
+      "name": "2枚折戸",
+      "width_mm": 700,
+      "height_mm": 2170,
+      "location": "納戸 (Eタイプ)",
+      "quantity": 5,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-12",
+      "name": "引違いフラッシュドア",
+      "width_mm": 1400,
+      "height_mm": 2170,
+      "location": "洋室1WCL (Hタイプ)",
+      "quantity": 5,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-13",
+      "name": "2枚引き＋2枚引きフラッシュドア",
+      "width_mm": 3085,
+      "height_mm": 2170,
+      "location": "洋室3 (Aタイプ)",
+      "quantity": 4,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-14",
+      "name": "2枚引き＋2枚引きフラッシュドア",
+      "width_mm": 2875,
+      "height_mm": 2170,
+      "location": "洋室3 (Cタイプ)",
+      "quantity": 5,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-15",
+      "name": "3枚引込みフラッシュドア",
+      "width_mm": 2422.5,
+      "height_mm": 2170,
+      "location": "洋室3 (Dタイプ)",
+      "quantity": 5,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-16",
+      "name": "3枚引込みフラッシュドア",
+      "width_mm": 2235,
+      "height_mm": 2170,
+      "location": "洋室2 (Eタイプ)",
+      "quantity": 33,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-17",
+      "name": "2枚引き＋2枚引きフラッシュドア",
+      "width_mm": 3345,
+      "height_mm": 2170,
+      "location": "洋室3 (Fタイプ)",
+      "quantity": 5,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-18",
+      "name": "2枚引き＋2枚引きフラッシュドア",
+      "width_mm": 3295,
+      "height_mm": 2170,
+      "location": "洋室4 (Gタイプ)",
+      "quantity": 5,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-19",
+      "name": "4枚可動間仕切戸",
+      "width_mm": 3070,
+      "height_mm": 2497,
+      "location": "洋室2 (Bタイプ)",
+      "quantity": 5,
+      "material": "木製"
+    },
+    {
+      "symbol": "WD-20",
+      "name": "4枚可動間仕切戸",
+      "width_mm": 3080,
+      "height_mm": 2497,
+      "location": "洋室4 (Iタイプ)",
+      "quantity": 5,
+      "material": "木製"
+    }
+  ]
+}
