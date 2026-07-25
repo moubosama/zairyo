@@ -1986,6 +1986,9 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
 
   // EV廻り壁PB t-9.5
   // アルファステイツ実績: 150枚/67戸 = 約2.2枚/戸
+  // ※ここは推定パス（展開図なし）＝実測0時のフォールバックに相当する固定推定値。丸めは行っていない。
+  //   実測パス（buildupCalculator.js applyElevationTakeoff）は面積換算 round（総量方式整合・2026-07-25）。
+  //   実測が取れないケースの標準3枚は据え置く（round化は面積換算する実測パスにのみ適用）。
   const evWallPb95Sheets = 3;
   const evWallPb95Area = Math.round(evWallPb95Sheets * PB_SHEET_SIZE_3x6 * 100) / 100;
   materials.push({
