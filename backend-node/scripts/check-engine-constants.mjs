@@ -36,6 +36,7 @@ import {
 } from '../src/services/timberVolume.js';
 import {
   DEFAULT_SOUND_WALL_PAIRS, KAIBE_FACE_HEIGHT_M, KAIBE_WALL_SQM_ALPHA,
+  CLOSET_PB_SQM_PER_SHEET,
 } from '../src/services/buildupCalculator.js';
 // クランプ判定は定数表の転記ではなく**実際にエンジンを走らせて**行う（2026-07-24）
 import { calculateMaterials, KIWANETA_RATIO_ALPHA } from '../src/services/materialCalculator.js';
@@ -55,7 +56,9 @@ const XLS = {
   '下り天井PB 換算': { alpha: 1.45, beppu: 1.45, unit: '㎡/枚', source: '集計表X75「天井(下り）」両物件' },
   '界壁PB 換算': { alpha: 1.5, beppu: 1.5, unit: '㎡/枚', source: 'アルファX85「界壁面」/ 別府X85「部分界壁」（※エンジンは固定3枚・面積換算せず）' },
   '防露壁PB 換算': { alpha: 1.5, beppu: 1.5, unit: '㎡/枚', source: 'アルファX62「防露壁面」/ 別府X62「防露ふかし壁（ＰＢ）」（※エンジンは固定1枚・面積換算せず）' },
-  '収納面PB 換算': { alpha: 1.45, beppu: null, unit: '㎡/枚', source: "アルファX73「ｸﾛｰｾﾞｯﾄ内RC面」/ 別府の同行は「界壁（耐水ＰＢ）」1.5で別部位（※エンジンは固定5枚・面積換算せず）" },
+  // 2026-07-25 面積換算化: エンジンは固定5枚→収納面RC拾い面積÷X73(1.45)へ。別府は収納面PBの概念が無く
+  //   同行は「界壁（耐水ＰＢ）」1.5で別部位＝物件依存。別府は overrides.closet_rc_sqm='0' で0枚にする
+  '収納面PB 換算': { alpha: 1.45, beppu: null, unit: '㎡/枚', source: "アルファX73「ｸﾛｰｾﾞｯﾄ内RC面」/ 別府の同行は「界壁（耐水ＰＢ）」1.5で別部位（別府は収納面PB無し＝override closet_rc_sqm=0）" },
   // 実測置換されるEV/防露壁面。XLS X62=1.5だがエンジンは1.4流用 → -6.7%（既知A-4）
   'EV廻り壁PB 換算': { alpha: 1.5, beppu: 1.5, unit: '㎡/枚', source: 'アルファX62「防露壁面」(1.5) / 別府X30「EV面遮音壁（界壁）」(1.5)・X62「防露ふかし壁」(1.5)' },
 
@@ -168,20 +171,22 @@ const CONSTANTS = [
   { key: '遮音壁PB 換算', engineName: 'PB_SQM_PER_SHEET (遮音も同係数)', engineValue: 1.4, override: null },
   { key: '天井PB 換算', engineName: 'CEILING_PB_SQM_PER_SHEET (materialCalculator:991)', engineValue: 1.45, override: null },
   { key: '下り天井PB 換算', engineName: 'CEILING_PB_SQM_PER_SHEET (下り天井も同係数)', engineValue: 1.45, override: null },
-  // 【重要・2026-07-24是正】以下3行は「エンジンに1.5/1.45の換算係数がある」わけではない。
+  // 【重要・2026-07-24是正】以下2行は「エンジンに1.5の換算係数がある」わけではない。
   //   materialCalculator.jsをgrepしても1.5の換算係数は存在しない（1.5のヒットは
   //   WINDOW_OPENING_AREA(96行)とKUTSUZURI_SLIDE_LENGTH(120行)のみで換算とは無関係）。
   //   実体は面積÷係数ではなく **67戸実績からの固定枚数ハードコード**:
-  //     materialCalculator.js:1140   一部界壁 石膏ボード     = 3枚 '標準3枚（67戸実績）'
-  //     materialCalculator.js:1151   一部界壁 耐水石膏ボード = 1枚 '標準1枚（67戸実績）'
-  //     materialCalculator.js:1175  収納面（ｸﾛｾﾞｯﾄ内RC面）  = 5枚 '標準5枚（67戸実績340/67）'
-  //   （行番号は2026-07-24に grep '標準N枚（67戸実績' で実測。実装を動かしたら取り直すこと）
+  //     一部界壁 石膏ボード     = 3枚 '標準3枚（67戸実績）'
+  //     一部界壁 耐水石膏ボード = 1枚 '標準1枚（67戸実績）'
+  //   （行番号は grep '標準N枚（67戸実績' で実測。実装を動かしたら取り直すこと）
   //   面積からの換算をしていない＝XLS係数と比較する対象が無いのでengineValue:null（差は「—」）。
   //   旧版はここに1.5/1.45を書いて「差+0.0%・物件不変」と出力しており、
   //   **A-4（EV廻り÷1.4 vs XLS 1.5）が解決済みだと誤認させる捏造値だった**。
-  { key: '界壁PB 換算', engineName: '（換算なし）一部界壁 石膏ボード=固定3枚 materialCalculator.js:1140', engineValue: null, override: null },
-  { key: '防露壁PB 換算', engineName: '（換算なし）一部界壁 耐水石膏ボード=固定1枚 materialCalculator.js:1151', engineValue: null, override: null },
-  { key: '収納面PB 換算', engineName: '（換算なし）収納面PB=固定5枚 materialCalculator.js:1175', engineValue: null, override: null },
+  { key: '界壁PB 換算', engineName: '（換算なし）一部界壁 石膏ボード=固定3枚 materialCalculator.js', engineValue: null, override: null },
+  { key: '防露壁PB 換算', engineName: '（換算なし）一部界壁 耐水石膏ボード=固定1枚 materialCalculator.js', engineValue: null, override: null },
+  // 収納面PBは 2026-07-25 に面積換算化（固定5枚→収納面RC拾い面積÷X73=1.45）。
+  //   推定パス: materialCalculator.js（CLOSET_PB_SQM_PER_SHEET・overrides.closet_rc_sqm='0'で別府0枚）
+  //   実測パス: buildupCalculator.js applyElevationTakeoff（konpane_sqm÷1.45）
+  { key: '収納面PB 換算', engineName: 'CLOSET_PB_SQM_PER_SHEET 1.45 (収納面RC÷X73・overrides.closet_rc_sqm)', engineValue: CLOSET_PB_SQM_PER_SHEET, override: 'closet_rc_sqm' },
   // 実測置換される唯一の1.5系部位。2026-07-24にA-4是正: 専用定数 EV_WALL_PB_SQM_PER_SHEET=1.5 を新設し
   // XLS X62(=1.5・アルファ「防露壁面」/ 別府「防露ふかし壁（ＰＢ）」)と一致させた（旧: PB_SQM_PER_SHEET 1.4 流用）
   { key: 'EV廻り壁PB 換算', engineName: 'EV_WALL_PB_SQM_PER_SHEET 1.5 (buildupCalculator.js applyElevationTakeoff)', engineValue: 1.5, override: null },
@@ -345,8 +350,9 @@ for (const r of mism) {
   console.log(`      出典: ${r.xls.source}`);
   if (r.key === 'EV廻り壁PB 換算') {
     console.log('      ⚠ 既知A-4: EV/防露壁面PBの実測置換が PB_SQM_PER_SHEET(1.4) で割られている（正: X62=1.5）。');
-    console.log('        「一部界壁/収納面」の固定枚数(3/1/5枚)は面積換算していないため差は「—」だが、');
+    console.log('        「一部界壁」の固定枚数(3/1枚)は面積換算していないため差は「—」だが、');
     console.log('        別府では固定3枚が9タイプ全部に一律で出る（別府は部分界壁X85=1.5が実在するのに未反映）。');
+    console.log('        ※収納面PBは2026-07-25に面積換算化済み（÷X73=1.45・別府はoverride closet_rc_sqm=0で0枚）。');
   }
 }
 

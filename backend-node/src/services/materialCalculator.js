@@ -92,6 +92,9 @@ import {
   // 界壁面（木胴縁の拾い対象）の既定面積と解決ロジック。高さ側 KAIBE_FACE_HEIGHT_M と同じ場所に置き、
   // 推定パス（ここ）と実測パス（applyElevationTakeoff）で同じ解釈になるようにする（S-2）
   resolveKaibeWallSqm, KAIBE_WALL_SQM_ALPHA,
+  // 収納面PB（マルチクロゼット・WIC・CLRC面）の面積換算。推定パス（ここ）と実測パス
+  // （applyElevationTakeoff の konpane_sqm）で同じ係数 X73=1.45 を使う（2026-07-25）
+  resolveClosetRcSqm, CLOSET_RC_SQM_ALPHA, CLOSET_PB_SQM_PER_SHEET,
 } from './buildupCalculator.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1995,14 +1998,40 @@ export function calculateMaterials(aiReading, packageSpecs, overrides = {}) {
   });
 
   // 収納面PB t-9.5（マルチクロゼット・WIC・CLRC面）
-  // アルファステイツ実績: 340枚/67戸 = 約5.1枚/戸
+  // 【面積換算（2026-07-25）】固定5枚 → 収納面RCの拾い面積 ÷ 1.45（XLS集計表X73）。
+  //   既定はアルファG実績 7.51㎡/戸（CLOSET_RC_SQM_ALPHA＝集計表C73）÷ 1.45 = 5.18 → ceil 6枚。
+  //   ※展開図ありの本番経路では applyElevationTakeoff が konpane_sqm（中間6＝D64収納内RC面）の
+  //     実測面積で置換する。ここは推定パス（展開図なし）と物件別指定の入口。
+  //   【物件依存】別府は収納面PBの概念が無い（集計表に該当行なし）。overrides.closet_rc_sqm='0' で
+  //     拾い面積0＝0枚を明示できる（未設定のみアルファ既定へフォールバック）。固定5枚の押し付けを解消。
+  const closetResolved = resolveClosetRcSqm(overrides.closet_rc_sqm);
+  if (closetResolved.invalid) {
+    calcWarnings.push({
+      field: 'closet_rc_sqm_invalid',
+      message: `収納面RCの拾い面積の指定値（${closetResolved.invalid}）が不正のため既定の${CLOSET_RC_SQM_ALPHA}㎡/戸を使用しました`
+        + '（0以上の数値で入力してください。収納面PBが無い物件は0）',
+      before: closetResolved.invalid,
+      after: CLOSET_RC_SQM_ALPHA,
+    });
+  }
+  const closetRcSqm = closetResolved.value;
+  // 【丸め方の選択（2026-07-25）】収納面PBだけ round、他の面積換算部位（壁PB/耐水/天井PB/EV）は ceil。
+  //   理由: 他部位は 87枚台/42枚台の大数量で、per-戸 ceil の切り上げ端数(<1枚)は+0.9%程度に埋もれる。
+  //   収納面PBは 5.18枚/戸 の小数量で、ceil(5.18)=6 が +15.8%（端数0.18が5枚台に大きく効く）。
+  //   XLS発注実態は per-戸 ceil ではない: 集計表 AB73=C73÷X73=5.18 は総量方式（9戸ぶんを合算→÷1.45）で、
+  //   9戸発注=ceil(7.51×9/1.45)=ceil(46.6)=47枚。per-戸 ceil の 6×9=54枚は+7枚の過大。
+  //   round(5.18)=5 → 5×9=45枚 の方が XLS の 47枚 に近い（±10%内・+15.8%→-3.5%）。
+  //   これは「5枚に合わせる逆算」ではなく、小数量部位で戸単位ceilがXLS総量方式から乖離する構造の是正。
+  //   ※クロゼット内RC面（㎡）の拾い量は変更しない（eval-gtype-buildup の面積判定 +1.3%✅は不変）。
+  const closetPbSheets = Math.round(closetRcSqm / CLOSET_PB_SQM_PER_SHEET);
   materials.push({
     category: '下地材',
     name: 'マルチクロゼット・WIC・CLRC面 石膏ボード',
     spec: "t-9.5（3'×6'）910×1820mm",
     unit: '枚',
-    quantity: 5,
-    calculation: '標準5枚（67戸実績）'
+    quantity: closetPbSheets,
+    calculation: `収納面RC ${closetRcSqm.toFixed(2)}㎡ ÷ ${CLOSET_PB_SQM_PER_SHEET}㎡/枚（XLS集計表X73）`
+      + (closetResolved.source === 'override' ? '（物件別指定）' : '（アルファG実績7.51㎡/戸）')
   });
 
   // キッチンパネル 3'×8'

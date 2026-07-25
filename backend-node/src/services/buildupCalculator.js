@@ -188,6 +188,55 @@ export function resolveKaibeWallSqm(raw) {
   return { value: KAIBE_WALL_SQM_ALPHA, source: 'default', invalid: s };
 }
 
+// ============================================================
+// 収納面PB（マルチクロゼット・WIC・CLRC面 石膏ボード）の面積換算（2026-07-25）
+//
+// 【固定5枚 → 面積換算へ】旧実装は ALPHA_STATS.wall_pb_closet(340枚/67戸=5.07)≈5枚の固定値だった。
+//   XLS原典（Ｇタイプ集計表）: AB73 = C73 ÷ X73。
+//     C73 = 'Ａタイプ'!P34+P88+P142+P196+…（各室の収納面RC＝収納内側の打放しRC面）= 7.51㎡/戸
+//     X73 = 1.45（収納面PBの換算係数。天井系X77=1.45と同値だが別セル・別部位の係数）
+//   → 7.51 ÷ 1.45 = 5.18枚/戸。固定5枚を面積÷1.45へ置き換える。
+//   ※答え合わせではない: 導出は「拾い面積÷X73」で、結果 ceil(5.18)=6枚 は XLS発注列 AB73(=5.18の実質値)と
+//     完全一致しない（丸め方向が違う）。係数を5枚に合わせて逆算していない証拠。
+//
+// 【拾い面積は物件依存】収納面RCの面積は物件・タイプで異なる。
+//   ・アルファG実績: 7.51㎡/戸（CLOSET_RC_SQM_ALPHA）
+//   ・別府: **収納面PBの概念が無い**（作り付けシステム収納でRC面PBを使わない・集計表に該当行なし。
+//     r73は別府では木胴縁の別用途）。→ 0㎡＝収納面PBを計上しない、が別府の正解。
+//   固定5枚のままだと別府でも5枚出てしまうため、界壁面（KAIBE_WALL_SQM_ALPHA）と同じ方式で
+//   差し替え可能にする:
+//     ・推定パス（展開図なし）: overrides.closet_rc_sqm（Overrideテーブル経由・文字列。
+//       materialCalculator が resolveClosetRcSqm で解決）。**0を明示指定できる**（＝計上しない）。
+//       未設定のみ既定 CLOSET_RC_SQM_ALPHA=7.51 へフォールバック。
+//     ・実測パス（展開図あり）: konpane_sqm（中間6＝D64収納内RC面）で自然に置換され、
+//       別府のように中間6の面が無ければ konpane_sqm=0 で実測置換が発火しない。
+//   ※ resolveClosetRcSqm は推定パス専用（materialCalculatorから呼ぶ）。buildup側 opts からは呼ばない
+//     （実測パスは konpane_sqm を直接使うため。界壁面が opts 経由なのと流儀が違う点に注意）。
+export const CLOSET_RC_SQM_ALPHA = 7.51; // ㎡/戸（アルファG実績 C73＝'Ａタイプ'!収納面RC合計）
+export const CLOSET_PB_SQM_PER_SHEET = 1.45; // 集計表X73（収納面PBの換算係数）
+
+// 収納面RCの拾い面積として受け付ける上限（㎡/戸）。アルファG実績7.51の約4倍。
+// 住戸1戸の収納面RCとしてこれを超える値は入力ミス（桁違い）とみなして既定へ戻す
+const CLOSET_RC_SQM_MAX = 30;
+
+/**
+ * 収納面RCの拾い面積（㎡/戸）を解決する。resolveKaibeWallSqm と同じ流儀の入力口。
+ *
+ * @param raw 面積指定（数値 or 文字列。undefined/null/空文字＝未設定）
+ * @returns { value: number, source: 'default'|'override', invalid?: string }
+ *   invalid が付くのは「値は入っているが採用できなかった」場合のみ（呼び出し側で警告を出す）。
+ *   **0 は正当な指定**（収納面PBが無い物件＝別府）なので既定へ戻さない。
+ */
+export function resolveClosetRcSqm(raw) {
+  if (raw === null || raw === undefined) return { value: CLOSET_RC_SQM_ALPHA, source: 'default' };
+  const s = String(raw).trim();
+  if (s === '') return { value: CLOSET_RC_SQM_ALPHA, source: 'default' };
+  // 許可パターン: 0以上の数値。数字以外の暗黙除去はしない（符号反転・10倍化の事故防止）
+  const n = /^\d*\.?\d+$/.test(s) ? Number(s) : Number.NaN;
+  if (Number.isFinite(n) && n >= 0 && n <= CLOSET_RC_SQM_MAX) return { value: n, source: 'override' };
+  return { value: CLOSET_RC_SQM_ALPHA, source: 'default', invalid: s };
+}
+
 /**
  * 面が「界壁面」として明示されているかを判定し、拾い幅(mm)を返す（無ければ0）。
  * 受け付ける入力（いずれも図面/AI読取からの明示。推測はしない）:
@@ -1618,6 +1667,19 @@ export function applyElevationTakeoff(result, takeoff) {
   const kpSheets = Math.ceil(kpSqm / KP_SHEET_SQM);
   set((m) => m.name === '壁 キッチンパネル',
     kpSheets, `キッチンパネル面 ${kpSqm}㎡ ÷ ${KP_SHEET_SQM}㎡/枚（3'×8' 910×2420mm）`);
+
+  // 収納面PB（マルチクロゼット・WIC・CLRC面）: 収納内RC面（D64＝中間6コンパネ→PB VE変更）の
+  // 実測面積 ÷ 1.45（XLS集計表X73）で枚数化する。
+  // 実測0（収納面PBの記号が展開図に無い＝別府のようにRC面PBを使わない物件）は set() の
+  // quantity>0 ガードにより materialCalculator の推定行（面積換算 or override）を維持する
+  // ＝別府では konpane_sqm=0 で実測置換が発火せず、overrides.closet_rc_sqm='0' 指定の0枚が残る。
+  // 丸めは round（推定パス materialCalculator.js と統一）。小数量部位（5枚台）は per-戸 ceil だと
+  // 端数0.18が+15.8%に効くため。XLS発注実態(AB73=5.18)は総量方式で per-戸 ceil ではない。詳細は
+  // materialCalculator の同名ブロック（収納面PB）参照。
+  const closetRcSqm = takeoff.konpane_sqm || 0;
+  const closetPbSheets = Math.round(closetRcSqm / CLOSET_PB_SQM_PER_SHEET);
+  set((m) => m.name === 'マルチクロゼット・WIC・CLRC面 石膏ボード',
+    closetPbSheets, `収納面RC ${Math.round(closetRcSqm * 100) / 100}㎡ ÷ ${CLOSET_PB_SQM_PER_SHEET}㎡/枚（XLS集計表X73）`);
 
   if (result.summary) {
     result.summary.wall_pb_sqm = takeoff.wall_pb_sqm;
