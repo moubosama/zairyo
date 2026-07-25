@@ -238,6 +238,32 @@ export function resolveClosetRcSqm(raw) {
   return { value: CLOSET_RC_SQM_ALPHA, source: 'default', invalid: s };
 }
 
+// 戸数（同一タイプの住戸戸数）の許容上限。1棟のマンションで同一タイプが数百戸を超えるのは
+// 入力ミス（別フィールドの混入・桁違い）とみなす。アルファ最大10戸・別府9戸なので余裕をとって500。
+const HOUSEHOLDS_MAX = 500;
+
+/**
+ * EV廻り壁PBの「戸数総量方式」に使う戸数（opt-in）を解決する。resolveClosetRcSqm と同じ流儀。
+ *
+ * ★これは opt-in 専用の入り口★。**未指定なら null を返し、呼び出し側は従来の per-戸 round にフォールバック**
+ *   する（ZAIRYOの1戸単位見積が根幹。ALPHA_STATS.units=67 は実績割り算用で見積対象の戸数ではない）。
+ *   戸数を「外から」渡されたときだけ、XLS AB列と厳密一致する総量方式 ceil(㎡×戸数÷係数) に切り替える。
+ *
+ * @param raw 戸数（数値 or 文字列。undefined/null/空文字/0以下/非数＝未指定扱いで null）
+ * @returns { value: number }（1以上の整数）| null（未指定・不正）
+ *   ※0・負・非数は「未指定へフォールバック」（per-戸round維持）で null を返す。警告は出さない
+ *     （未設定時に鬱陶しくしない方針。closet_rc_sqm の invalid とは扱いが違う＝戸数は任意のopt-inなので）。
+ */
+export function resolveHouseholds(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (s === '') return null;
+  // 許可パターン: 正の整数のみ（戸数に小数はない）。符号・小数点の暗黙除去はしない
+  const n = /^\d+$/.test(s) ? Number(s) : Number.NaN;
+  if (Number.isFinite(n) && n >= 1 && n <= HOUSEHOLDS_MAX) return { value: n };
+  return null; // 0/負/非数/桁違いは未指定扱い（per-戸roundへフォールバック）
+}
+
 /**
  * 面が「界壁面」として明示されているかを判定し、拾い幅(mm)を返す（無ければ0）。
  * 受け付ける入力（いずれも図面/AI読取からの明示。推測はしない）:
@@ -1611,7 +1637,7 @@ export function filterKenzaiScope(materials) {
  * 計算結果（materialCalculatorの出力）に展開図実測値を反映する
  * 該当する資材行の数量を実測ベースで置き換え、計算根拠に「展開図実測」を記す
  */
-export function applyElevationTakeoff(result, takeoff) {
+export function applyElevationTakeoff(result, takeoff, opts = {}) {
   if (!result?.materials || !takeoff) return result;
 
   const set = (match, quantity, basis) => {
@@ -1635,16 +1661,30 @@ export function applyElevationTakeoff(result, takeoff) {
   // set()のquantity>0ガードにより既存の実績推定（標準3枚）を維持する
   const evPbSqm = takeoff.ev_wall_pb_sqm || 0;
   // EV廻り・防露壁PBはXLS X62=1.5で換算（壁PBの1.4ではない。A-4是正）
-  // 丸めは round（推定パス materialCalculator.js と統一）。EV廻り壁PBは 1.44枚/戸の小数量部位で、
-  //   per-戸 ceil(1.44)=2 が総量方式（9戸合算→÷1.5）から+38%乖離する（収納面PBと同型）。
-  //   round(1.44)=1 の方が XLS総量方式（ceil(2.16×9/1.5)=13枚）の1戸表現に近い。詳細は
-  //   materialCalculator の EV廻り壁PB ブロック参照。実測0は下の quantity>0 ガードで既存推定を維持。
-  //   ※ evPbSqm>0 のときは Math.max(1,...) で最低1枚を保証する。round だけだと 0<ev<0.75㎡ で
-  //     round=0 になり「実測が0枚→quantity>0ガードで固定推定3枚に化ける退行」+行/summary不整合が
-  //     起きるため（既知の正解値は全て0.75㎡超で現データ非発火だが、round化が持ち込む潜在穴を塞ぐ）。
-  const evWallSheets = evPbSqm > 0 ? Math.max(1, Math.round(evPbSqm / EV_WALL_PB_SQM_PER_SHEET)) : 0;
-  set((m) => m.name === 'EV廻り壁 石膏ボード',
-    evWallSheets, `EV面実測 ${evPbSqm}㎡ ÷ ${EV_WALL_PB_SQM_PER_SHEET}㎡/枚`);
+  //
+  // 【丸め方式は2通り（戸数の有無で切り替え・opt-in）】
+  //   ● 戸数未指定（既定・後方互換）: per-戸 round（1戸単位見積が根幹）。
+  //     EV廻り壁PBは 1.44枚/戸の小数量部位で、per-戸 ceil(1.44)=2 が総量方式（9戸合算→÷1.5）から
+  //     +38%乖離する（収納面PBと同型）。round(1.44)=1 の方が近い。実測0は下の quantity>0 ガードで既存推定を維持。
+  //     ※ evPbSqm>0 のときは Math.max(1,...) で最低1枚を保証する。round だけだと 0<ev<0.75㎡ で
+  //       round=0 になり「実測が0枚→quantity>0ガードで固定推定3枚に化ける退行」+行/summary不整合が
+  //       起きるため（既知の正解値は全て0.75㎡超で現データ非発火だが、round化が持ち込む潜在穴を塞ぐ）。
+  //   ● 戸数指定あり（opts.households）: XLS総量方式そのもの ceil(㎡×戸数÷1.5)。
+  //     XLS AB列（W/X→ceil。W=拾い面積×戸数）と厳密一致する。G実測2.16㎡×9戸÷1.5=12.96→ceil=13枚。
+  //     ※これは opt-in。戸数を「外から」受け取ったときだけ発火し、per-戸roundの1戸見積を壊さない。
+  //       戸数0/負/非数は resolveHouseholds が null を返し per-戸round にフォールバックする。
+  //   最低1枚保証は総量方式でも同じ趣旨で適用（evPbSqm>0 かつ ceil>=1 なので実質常に満たすが揃える）。
+  const households = resolveHouseholds(opts.households);
+  let evWallSheets;
+  if (households && evPbSqm > 0) {
+    evWallSheets = Math.max(1, Math.ceil(evPbSqm * households.value / EV_WALL_PB_SQM_PER_SHEET));
+  } else {
+    evWallSheets = evPbSqm > 0 ? Math.max(1, Math.round(evPbSqm / EV_WALL_PB_SQM_PER_SHEET)) : 0;
+  }
+  const evBasis = households && evPbSqm > 0
+    ? `EV面実測 ${evPbSqm}㎡ ×${households.value}戸 ÷ ${EV_WALL_PB_SQM_PER_SHEET}㎡/枚（総量方式）`
+    : `EV面実測 ${evPbSqm}㎡ ÷ ${EV_WALL_PB_SQM_PER_SHEET}㎡/枚`;
+  set((m) => m.name === 'EV廻り壁 石膏ボード', evWallSheets, evBasis);
   // 実測が実績スケールを大きく超えた場合の警告（should-fix③・2026-07-24）。
   // この部位（防露ふかし壁/EV廻り壁）はXLS実測で**1戸あたり1〜2㎡台**の小さな行:
   //   別府 集計表62行「防露ふかし壁（ＰＢ）」戸当 = A 1.36 / B 1.904 / C 0.816 / D 1.904 / G 2.176㎡

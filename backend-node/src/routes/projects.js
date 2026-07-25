@@ -1023,7 +1023,9 @@ router.post('/:id/calculate', async (req, res) => {
         elevations: parsedObj.elevations,
       });
       if (sanity.ok) {
-        applyElevationTakeoff(result, takeoff);
+        // 戸数（opt-in）: 指定があるとEV廻り壁PBのみ総量方式 ceil(㎡×戸数÷1.5) に切り替わる
+        //   （XLS AB列と厳密一致・1戸単位見積の根幹は未指定なら不変）。未指定なら per-戸round のまま。
+        applyElevationTakeoff(result, takeoff, { households: overridesObj.households });
         console.log('展開図実測モード適用:', JSON.stringify({
           wall_pb_sqm: takeoff.wall_pb_sqm,
           wall_pb_sheets: Math.ceil(takeoff.wall_pb_sqm / 1.4),

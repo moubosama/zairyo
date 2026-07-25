@@ -19,7 +19,7 @@
  * 実行: node scripts/test-ev-wall-pb.mjs
  */
 import { calculateMaterials } from '../src/services/materialCalculator.js';
-import { applyElevationTakeoff, EV_WALL_PB_SQM_PER_SHEET } from '../src/services/buildupCalculator.js';
+import { applyElevationTakeoff, EV_WALL_PB_SQM_PER_SHEET, resolveHouseholds } from '../src/services/buildupCalculator.js';
 
 let pass = 0, fail = 0;
 function ok(cond, label, extra) {
@@ -98,11 +98,12 @@ console.log('\n=== (条件2) 別府9タイプの防露ふかし壁実測帯で�
   }
 }
 
-console.log('\n=== (4) 総量方式との照合（答え合わせでない残差）===');
+console.log('\n=== (4) per-戸round単独では総量方式に届かない（opt-in導入の動機）===');
 {
   // per-戸 round×9 = 1×9 = 9枚 vs XLS総量 ceil(2.16×9/1.5)=ceil(12.96)=13枚。
   //   round化は「per-戸ceilが総量方式から乖離する構造」の是正だが、EVは小数量ゆえ端数の関係で
-  //   round(1.44)=1 に丸めると 9戸で9枚となり総量13枚から-30.8%乖離が残る。無理に合わせない（答え合わせ禁止）。
+  //   round(1.44)=1 に丸めると 9戸で9枚となり総量13枚から-30.8%乖離が残る。
+  //   → per-戸roundの掛け算では±5%に届かないため、戸数opt-inで総量方式そのものを実装する（下の(条件1)）。
   const perUnitRound = Math.round(2.16 / 1.5);          // 1
   const perUnitCeil = Math.ceil(2.16 / 1.5);            // 2
   const totalXls = Math.ceil(2.16 * 9 / 1.5);           // 13
@@ -111,9 +112,57 @@ console.log('\n=== (4) 総量方式との照合（答え合わせでない残差
   console.log(`     per-戸round×9=${perUnitRound * 9}枚  per-戸ceil×9=${perUnitCeil * 9}枚  XLS総量=${totalXls}枚`);
   console.log(`     乖離: round=${diffRound.toFixed(1)}% / ceil=${diffCeil.toFixed(1)}%`);
   ok(perUnitRound * 9 === 9 && totalXls === 13, `per-戸round×9=9枚 / XLS総量ceil=13枚`, `round9=${perUnitRound * 9} xls=${totalXls}`);
-  // roundはceilより総量方式に「近い側」ではあるが±5%には収まらない（端数が小さすぎるため）
-  ok(Math.abs(diffRound) < Math.abs(diffCeil), `round(-30.8%)はceil(+38.5%)より総量方式に近い`, `|round|=${Math.abs(diffRound).toFixed(1)} |ceil|=${Math.abs(diffCeil).toFixed(1)}`);
-  ok(Math.abs(diffRound) > 5, `ただし±5%には収まらない（EVは1.44枚の極小量で端数丸めの相対誤差が大きい・答え合わせしない）`, `残差=${diffRound.toFixed(1)}%`);
+  ok(Math.abs(diffRound) > 5, `per-戸round×戸数では±5%に収まらない（-30.8%）→戸数opt-inで総量方式を実装`, `残差=${diffRound.toFixed(1)}%`);
+}
+
+console.log('\n=== (条件1) 戸数opt-in=総量方式でXLS AB列と厳密一致（±5%以内＝0%）===');
+{
+  // resolveHouseholds の仕様: 未指定/0/負/非数 → null（per-戸roundへフォールバック）。正の整数のみ採用。
+  ok(resolveHouseholds(undefined) === null && resolveHouseholds(null) === null && resolveHouseholds('') === null,
+    `resolveHouseholds: 未指定/null/空文字 → null（per-戸roundへ）`);
+  ok(resolveHouseholds('0') === null && resolveHouseholds('-3') === null && resolveHouseholds('abc') === null && resolveHouseholds('2.5') === null,
+    `resolveHouseholds: 0/負/非数/小数 → null（未指定扱いにフォールバック）`);
+  ok(resolveHouseholds('9') && resolveHouseholds('9').value === 9 && resolveHouseholds(9).value === 9,
+    `resolveHouseholds: '9'/9 → {value:9}`);
+
+  // Gタイプ実測2.16㎡・戸数9指定 → ceil(2.16×9÷1.5)=ceil(12.96)=13枚（XLS総量方式そのもの）
+  const base = calculateMaterials(plan, {}, {});
+  applyElevationTakeoff(base, mkTakeoff({ ev_wall_pb_sqm: 2.16 }), { households: '9' });
+  const row = findEv(base.materials);
+  const xlsTotal = Math.ceil(2.16 * 9 / EV_WALL_PB_SQM_PER_SHEET);       // 13
+  const diff = (row.quantity - xlsTotal) / xlsTotal * 100;              // 0%
+  console.log(`     戸数9指定: EV廻り壁PB=${row.quantity}枚  XLS総量=${xlsTotal}枚  乖離=${diff.toFixed(1)}%`);
+  ok(row.quantity === 13, `戸数9指定でEV廻り壁PB=13枚（総量方式 ceil(2.16×9÷1.5)）`, `実際=${row.quantity}`);
+  ok(Math.abs(diff) <= 5, `XLS総量13枚と±5%以内（=${diff.toFixed(1)}%）`, `乖離=${diff.toFixed(1)}%`);
+  ok(/総量方式/.test(row.calculation) && /×9戸/.test(row.calculation), `根拠に「×9戸 … 総量方式」`, row.calculation);
+  ok(base.summary && base.summary.ev_wall_pb_sheets === 13, `summary.ev_wall_pb_sheets も総量方式=13枚（行と一致）`, `実際=${base.summary && base.summary.ev_wall_pb_sheets}`);
+
+  // 戸数未指定なら per-戸round=1枚が維持される（後方互換）
+  const base2 = calculateMaterials(plan, {}, {});
+  applyElevationTakeoff(base2, mkTakeoff({ ev_wall_pb_sqm: 2.16 }));  // opts省略
+  ok(findEv(base2.materials).quantity === 1, `戸数未指定は per-戸round=1枚を維持（後方互換）`, `実際=${findEv(base2.materials).quantity}`);
+
+  // 戸数0/負/非数を渡しても per-戸round=1枚（ガード＝未指定フォールバック）
+  for (const bad of ['0', '-3', 'abc', '2.5', 0, -1]) {
+    const b = calculateMaterials(plan, {}, {});
+    applyElevationTakeoff(b, mkTakeoff({ ev_wall_pb_sqm: 2.16 }), { households: bad });
+    ok(findEv(b.materials).quantity === 1, `戸数=${JSON.stringify(bad)}（不正）→ per-戸round=1枚にフォールバック`, `実際=${findEv(b.materials).quantity}`);
+  }
+}
+
+console.log('\n=== (条件2) 別府9タイプ 戸数指定=総量方式でも破綻しない（丸め方式は物件不変）===');
+{
+  // 別府 集計表62行「防露ふかし壁（ＰＢ）」戸当㎡（原典）: A=1.36 B=1.904 C=0.816 D=1.904 G=2.176
+  //   別府の戸数は9戸（現場名等!B4）。総量方式でも負値/暴走なく XLS AB列相当（ceil(㎡×戸数÷1.5)）に一致。
+  const beppu62 = { A: 1.36, B: 1.904, C: 0.816, D: 1.904, G: 2.176 };
+  const H = 9;
+  for (const [t, sqm] of Object.entries(beppu62)) {
+    const base = calculateMaterials(plan, {}, {});
+    applyElevationTakeoff(base, mkTakeoff({ ev_wall_pb_sqm: sqm }), { households: String(H) });
+    const q = findEv(base.materials).quantity;
+    const expected = Math.max(1, Math.ceil(sqm * H / EV_WALL_PB_SQM_PER_SHEET));
+    ok(q === expected && q >= 1 && q <= 20, `別府${t} ${sqm}㎡×${H}戸 → 総量方式=${expected}枚（負値/暴走なし）`, `実際=${q}`);
+  }
 }
 
 console.log(`\n=== EV廻り壁PB 丸め方式: ✅ ${pass} / ✗ ${fail} ===`);
