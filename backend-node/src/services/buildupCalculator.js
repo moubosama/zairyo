@@ -1030,6 +1030,9 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 面ラベル混同（面記号の遮/G枠を「同一face-label × 同一記号」でN室以上に一律付与）を
   // 系統誤読とみなして棄却した件数（2026-07-25）。下で_warningsへ集約。
   t.beppu_sound_face_label_dropped = 0;
+  // 面数物理上限（1部屋最大2面・住戸最大6面）の超過分として棄却した遮/G枠の件数（2026-07-25）。
+  // 値は下のプレパス（soundFaceCap）で確定する。下で_warningsへ集約。
+  t.beppu_sound_face_cap_dropped = 0;
 
   // 高さ誤転記の疑い寸法（2026-07-19 Gemini読取ノイズ対策）: 平面図タイルの壁寸法(wall_length_mm)に
   // 天井高（2,400/2,200等の図面内の高さ表記）が混入する実例があるため、いずれかの部屋のCHと
@@ -1116,6 +1119,95 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     return faceLabelConfusionSet.has(`${String(label).trim().toUpperCase()}|${code.beppu}`);
   };
 
+  // ============================================================
+  // 戸境二重壁（遮/G枠）の面数物理上限（2026-07-25）
+  // ============================================================
+  // 【背景】既存2フィルタ（NON_PARTY_WALL_ROOM_RE=部屋種別・faceLabelConfusion=面ラベル混同）を
+  //   通過してもなお、別府B/DのGemini実読み（3回読み多数決）では遮/G枠のセグメントが
+  //   1部屋に最大7件・住戸で9件残り、遮音壁PBが+99〜127%に暴走する（同一の戸境壁を
+  //   粒度違い・記号違いで複数回転記する読取ノイズ＝多数決でも消えない）。
+  //   検出「件数」そのものに物理上限を課し、超過分を削る。
+  //
+  // 【上限の物理的導出（導出が先・数値が後。正解値からの逆算ではない）】
+  //   別府4丁目は片廊下型で住戸が横一列に並ぶ（各平面図右下の階配置表: 1フロアに
+  //   A|B|C|D|E|F|G が一列。p036〜p048で確認可能）。したがって:
+  //   ・1住戸が接する隣戸は左右の最大2戸 ＝ 戸境壁は最大2辺（端部住戸は1辺）。
+  //   ・SOUND_FACE_CAP_PER_ROOM = 2 …… 1部屋が接しうる戸境壁も同じ左右2辺が上限。
+  //     1辺の戸境壁は連続した1枚の壁で、1部屋がその辺に見せる壁面は連続1面
+  //     ＝1部屋の遮/G枠寄与は最大2面。3件目以降は同一壁の重複転記か誤読
+  //     （実測: 別府Dの洋室3に7件＝物理的にありえない）。
+  //   ・SOUND_FACE_CAP_PER_DWELLING = 6 …… 1辺の戸境壁に接しうる部屋数は間取りで決まる。
+  //     別府は2〜3LDK・住戸奥行き10〜12mに奥行き2.5〜4.5mの部屋が並ぶため片側最大3室。
+  //     2辺 × 片側最大3室 = 住戸全体で最大6面。7件目以降は物理的に存在し得ない。
+  //   整合確認: 別府Aの正当検出は5面（遮×2+G枠×3。うち1面はnonparty棄却で残4面）＝
+  //   両上限の内側。上限は「削る方向のみ」で、上限内のタイプ・検出ゼロのタイプは不変。
+  //
+  // 【削る順序（決定的・物理的正当化）】寄与（セグメント長/面幅）の大きい順に上限まで採用する。
+  //   戸境壁は住戸の奥行き方向に走る長い壁で、境界に接するのは大きい居室（LDK/洋室）が主
+  //   ＝長い読取ほど本物の蓋然性が高く、短い断片は同一壁の部分重複転記の疑いが強い。
+  //   同寸タイは走査順（部屋順→セグメント/面の列挙順）で決定的に解決する（同寸なら
+  //   面積寄与は同一＝タイの選び方が数量に影響するのは遮/G枠混在タイの遮音シートのみ）。
+  //
+  // 【棄却の扱い】nonparty棄却と同じ「検出が無かった」扱い＝セグメント不計上＋
+  //   soundDeductByFace未登録（差し引かれなくなった幅は既定コードの壁として壁PB側に通常計上）。
+  //   面記号経路はNON_PARTY/面ラベル混同と同じ「丸ごと落とす」過少側。
+  //
+  // 【アルファ非発火】プールは beppu マーカー付きの遮/G枠のみ（アルファ3記録に遮/G枠は
+  //   1件も無い）＝プール空＝dropセット空＝構造的非発火でアルファは1バイトも変わらない。
+  const SOUND_FACE_CAP_PER_ROOM = 2;
+  const SOUND_FACE_CAP_PER_DWELLING = 6;
+  const soundFaceCap = (() => {
+    // 既存2フィルタ通過後の遮/G枠寄与単位を、本ループと同一の条件・同一の走査順で列挙する
+    // （key=`roomIdx|seg|plIdx` / `roomIdx|face|faceIdx` で本ループと突合）
+    const units = []; // { key, roomIdx, len(m) }
+    rooms.forEach((room, roomIdx) => {
+      const rn = normalizeRoomName(room.name);
+      if (UB_ROOM_NAME_RE.test(rn)) return; // 本ループと同じUB室スキップ
+      if (NON_PARTY_WALL_ROOM_RE.test(rn)) return; // nonparty分は既存フィルタで棄却済み＝プール外
+      const faces = Array.isArray(room.faces) ? room.faces : [];
+      // セグメント経路（plan_placements）: 本ループのsoundSegments収集と同一条件
+      if (Array.isArray(room.plan_placements) && faces.length >= 1) {
+        collapseDoubledPlacements(room.plan_placements).forEach((pl, plIdx) => {
+          const c = parseWallCode(pl?.code);
+          const len = pl?.wall_length_mm;
+          if (!c || !Number.isFinite(len) || len <= 0) return;
+          if (!(c.beppu === '遮' || c.beppu === 'G枠')) return;
+          units.push({ key: `${roomIdx}|seg|${plIdx}`, roomIdx, len: len / 1000 });
+        });
+      }
+      // 面記号経路（face.wall_code）: 面ラベル混同で棄却される面・幅0面（本ループで不計上）はプール外
+      faces.forEach((face, faceIdx) => {
+        const c = parseWallCode(face?.wall_code);
+        if (!c || !(c.beppu === '遮' || c.beppu === 'G枠')) return;
+        if (!((face.width_mm || 0) > 0)) return;
+        if (isFaceLabelConfused(room, face, c)) return;
+        units.push({ key: `${roomIdx}|face|${faceIdx}`, roomIdx, len: (face.width_mm || 0) / 1000 });
+      });
+    });
+    // 寄与の大きい順（同寸タイは列挙順=部屋順→セグメント/面の順で安定・決定的）
+    const sorted = units.map((u, i) => ({ ...u, i }))
+      .sort((a, b) => (b.len - a.len) || (a.i - b.i));
+    const drop = new Set();
+    let roomDropped = 0;
+    let dwellingDropped = 0;
+    // ① 部屋あたり上限（左右2辺）: 各部屋で寄与の大きい2件だけ残す
+    const perRoom = new Map();
+    for (const u of sorted) {
+      const n = perRoom.get(u.roomIdx) || 0;
+      if (n >= SOUND_FACE_CAP_PER_ROOM) { drop.add(u.key); roomDropped++; continue; }
+      perRoom.set(u.roomIdx, n + 1);
+    }
+    // ② 住戸あたり上限（2辺×片側最大3室=6面）: ①の残りから寄与の大きい6件だけ残す
+    let kept = 0;
+    for (const u of sorted) {
+      if (drop.has(u.key)) continue;
+      if (kept >= SOUND_FACE_CAP_PER_DWELLING) { drop.add(u.key); dwellingDropped++; continue; }
+      kept++;
+    }
+    return { drop, detected: units.length, roomDropped, dwellingDropped };
+  })();
+  t.beppu_sound_face_cap_dropped = soundFaceCap.drop.size;
+
   // 間仕切下地(木): 部屋間の壁は両部屋の展開図に現れる（ドア開口が両側の面に出ることを実データで確認）
   // ため、面ごとの拾いを合算して最後に÷2し「壁1枚1回」のXLS方式に合わせる。
   // UB隣接面(耐水記号)は反対面がUB内で展開図に現れない → 鏡像分をもう一度足して÷2で相殺する。
@@ -1139,7 +1231,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   const isBeppuBareG = (raw) => typeof raw === 'string'
     && String(raw).trim().toUpperCase() === 'G';
 
-  for (const room of rooms) {
+  // roomIdx: 面数上限プレパス（soundFaceCap）との突合キー。プレパスと同じ配列走査順で振る
+  for (const [roomIdx, room] of rooms.entries()) {
     // UB内部の立面は拾わない（UB_ROOM_NAME_RE参照。読取ノイズで幻出した室のスキップ）
     if (UB_ROOM_NAME_RE.test(normalizeRoomName(room.name))) continue;
     const ch = (room.ceiling_height_mm || 2400) / 1000;
@@ -1276,7 +1369,7 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
 
       // 寸法差が小さい割付から確定させる（曖昧なマッチが確実なマッチの面を奪わないように）
       const cands = [];
-      for (const pl of planPlacements) {
+      for (const [plIdx, pl] of planPlacements.entries()) {
         if (usedPl.has(pl)) continue; // 第0パスで実測面に消費済み
         const c = parseWallCode(pl?.code);
         const len = pl?.wall_length_mm;
@@ -1286,6 +1379,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         // ただし戸境壁を物理的に持ち得ない部屋（isNonPartyRoom）の遮/G枠は誤検出として棄却。
         if (isBeppuSoundCode(c)) {
           if (isNonPartyRoom) { t.beppu_sound_nonparty_dropped += 1; continue; }
+          // 物理制約その3: 面数上限の超過分（soundFaceCap参照。カウンタはプレパスで確定済み）。
+          // 棄却＝セグメント不計上＋soundDeductByFace未登録＝nonparty棄却と同じ「検出が
+          // 無かった」扱い（差し引かれなくなった幅は既定コードの壁として壁PB側に通常計上される）
+          if (soundFaceCap.drop.has(`${roomIdx}|seg|${plIdx}`)) continue;
           soundSegments.push({ c, len: len / 1000 });
           continue;
         }
@@ -1631,6 +1728,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
         continue;
       }
+      // 物理制約その3: 面数上限の超過分（soundFaceCap参照・寄与の大きい順に上限まで採用した残り。
+      // カウンタはプレパスで確定済み）。棄却の扱いはNON_PARTY/面ラベル混同と同じ
+      // 「丸ごと落とす」過少側（クロスのみ面の実仕上げとして拾う）。
+      if (code.beppu && ['遮', 'G枠'].includes(code.beppu)
+          && soundFaceCap.drop.has(`${roomIdx}|face|${faceIdx}`)) {
+        if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
+        continue;
+      }
       // 下地
       if (['L', 'O', 'W'].includes(code.base)) {
         // 遮音壁はボードをスラブ下まで張る（図面注意書き「遮音壁はボードをスラブ下まで+GW24kg充填」・
@@ -1843,6 +1948,24 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         + '面ラベルと壁記号の取り違え（系統誤読）とみなして棄却しました。'
         + '住戸内の全部屋が同一方向で戸境に接することは物理的にありません。'
         + '該当部屋に本当に戸境壁がある場合は手動で追加してください（要確認）',
+      before: null, after: null,
+    });
+  }
+
+  // 面数物理上限による超過分の棄却の明示（2026-07-25）。
+  // 別府は片廊下型で住戸が横一列＝戸境壁は左右の最大2辺・1部屋最大2面・住戸全体で最大6面
+  // （2辺×片側最大3室。soundFaceCapの導出コメント参照）。超過分は同一壁の重複転記・誤読と
+  // みなし寄与（セグメント長/面幅）の小さい順に棄却した。黙って消さず件数を可視化する。
+  // アルファは記号が3桁でここに掛からない（遮/G枠が無い）＝通常運用では出ない。
+  if (t.beppu_sound_face_cap_dropped > 0) {
+    t._warnings.push({
+      field: 'sound_wall_face_cap',
+      message: `戸境二重壁（遮 / G枠）の検出が${soundFaceCap.detected}面あり、物理上限`
+        + '（片廊下型＝戸境壁は左右の最大2辺: 1部屋最大2面・住戸全体で最大6面=2辺×片側最大3室）'
+        + `を超過したため、寄与の小さい${t.beppu_sound_face_cap_dropped}面`
+        + `（部屋上限超過${soundFaceCap.roomDropped}面・住戸上限超過${soundFaceCap.dwellingDropped}面）を`
+        + '同一壁の重複転記・誤読とみなして除外しました。'
+        + '戸境壁が実際に多い特殊な間取りの場合は手動で追加してください（要確認）',
       before: null, after: null,
     });
   }
