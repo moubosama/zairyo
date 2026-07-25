@@ -1014,6 +1014,10 @@ router.post('/:id/calculate', async (req, res) => {
     // （プロの拾い出しと同じ「部屋×面×部位」方式。buildupCalculator参照）
     let parsedObj = null;
     try { parsedObj = JSON.parse(project.aiReadings[0].parsedData); } catch { /* 破損時は推定のまま */ }
+    // 壁PBが展開図実測で置換されたか（building_type_default 警告の発火条件。
+    // applyElevationTakeoff は壁 石膏ボード行を実測値で上書きするため、
+    // 採用時は推定パスの新築/リノベ係数が壁PBに効いていない＝未選択でも実害がない）
+    let elevationTakeoffApplied = false;
     if (parsedObj?.elevations?.rooms?.length) {
       // 下地高の物件別入力（Override: stud_height / stud_height_wet）。未設定なら undefined を渡し、
       // resolveStudHeightM のフォールバック（AI読取値→アルファ実績値+要確認warning）に委ねる
@@ -1037,6 +1041,7 @@ router.post('/:id/calculate', async (req, res) => {
         // 戸数（opt-in）: 指定があるとEV廻り壁PBのみ総量方式 ceil(㎡×戸数÷1.5) に切り替わる
         //   （XLS AB列と厳密一致・1戸単位見積の根幹は未指定なら不変）。未指定なら per-戸round のまま。
         applyElevationTakeoff(result, takeoff, { households: overridesObj.households });
+        elevationTakeoffApplied = true;
         console.log('展開図実測モード適用:', JSON.stringify({
           wall_pb_sqm: takeoff.wall_pb_sqm,
           wall_pb_sheets: Math.ceil(takeoff.wall_pb_sqm / 1.4),
@@ -1064,6 +1069,31 @@ router.post('/:id/calculate', async (req, res) => {
           field: 'wall_codes_empty',
           message: '壁仕上記号が1つも読み取れていません。記号の無い壁面は石膏ボード張りとして計上するため、'
             + '打放し・GL工法の壁がある場合は数量が過大になっている可能性があります',
+          before: null, after: null,
+        }];
+      }
+    }
+
+    // 【建物種別の未選択を可視化（2026-07-25）】壁PBが推定パス（既定=リノベ式）で計算されたのに
+    //   building_type が未指定のままだと、新築物件で壁PBが-32%級に過少化しても気づけない（無警告）。
+    //   発火条件:
+    //   ・building_type が未指定（明示 'renovation' は「選択済み」なので警告しない。
+    //     不正値は materialCalculator の building_type_invalid が別途出るためここでは重ねない
+    //     ＝未指定判定は resolveBuildingTypeProfile と同じ「null/undefined/空白のみ」）
+    //   ・かつ壁PBが実測置換されていない（展開図なし、または実測却下=サニティNGで
+    //     推定パスの係数が直接効く場合。実測採用時は係数が表に出ないため警告しない）
+    //   実装をエンジン（materialCalculator の resolveBuildingTypeProfile 付近）でなく
+    //   このルートに置く理由: 「実測採用の有無」（sanity.ok での applyElevationTakeoff 採否）は
+    //   このルートでしか確定せず、エンジンは自分の推定値が後段で置換されるかを知り得ない。
+    //   エンジン側で常時付与→採用時に取り消す案は buildupCalculator の改修が要るため不採用。
+    //   副次効果: エンジン直呼びの eval / replay 系の警告数は完全不変（回帰ゼロが構造的に保証される）
+    {
+      const btRaw = overridesObj.building_type;
+      const btUnspecified = btRaw === null || btRaw === undefined || String(btRaw).trim() === '';
+      if (btUnspecified && !elevationTakeoffApplied) {
+        result._warnings = [...(result._warnings || []), {
+          field: 'building_type_default',
+          message: '建物種別が未選択のためリノベーション式で推定しています。新築物件は建物種別を選択してください',
           before: null, after: null,
         }];
       }

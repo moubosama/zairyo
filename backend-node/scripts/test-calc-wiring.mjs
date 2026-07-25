@@ -285,11 +285,18 @@ const baseParsed = {
 };
 const staleCalcW = { field: 'wood_furring', message: '前回計算の警告（今回解消）', before: null, after: null, source: 'calculate' };
 
+// ※ 2026-07-25: building_type_default 警告（未選択+推定パスで発火）の導入で、
+//   building_type未指定のbaseParsed（展開図なし=常に推定パス）は計算警告が1件出るようになった。
+//   この警告マージ配線のテスト群は「計算警告ゼロ経路」が前提（waterproof_pb_no_wet_roomの
+//   ときと同じ事情）なので、fixture側で明示的に'renovation'を選択して前提を守る
+//   （新警告そのものの発火条件は下の「建物種別の未選択警告」ブロックで固定する）。
+const BT_RENO_OVERRIDE = [{ itemKey: 'building_type', value: 'renovation' }];
+
 await testAsync('並行/auxのdoor_scheduleを巻き戻さず・stale計算警告を除去・warningsを返す', async () => {
   const initial = { ...structuredClone(baseParsed), _warnings: [aiW, staleCalcW] };
   // /calculateの計算中に/auxが建具表を書き込んだ想定（初回読取に無いdoor_schedule）
   const fresh = { ...structuredClone(initial), door_schedule: [{ symbol: 'WD-1TA', width_mm: 850, height_mm: 2175 }] };
-  const { prisma, calls } = makeCalcPrisma({ initialParsed: initial, freshParsed: fresh });
+  const { prisma, calls } = makeCalcPrisma({ initialParsed: initial, freshParsed: fresh, overrides: BT_RENO_OVERRIDE });
   const { server, port } = await startApp(prisma);
   try {
     const { status, data } = await postJson(port, '/api/projects/1/calculate');
@@ -308,7 +315,7 @@ await testAsync('並行/auxのdoor_scheduleを巻き戻さず・stale計算警�
 
 await testAsync('警告に変化がなければparsedDataのupdateをスキップ（毎回全体書き戻しの抑止）', async () => {
   const initial = { ...structuredClone(baseParsed), _warnings: [aiW] };
-  const { prisma, calls } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { prisma, calls } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial), overrides: BT_RENO_OVERRIDE });
   const { server, port } = await startApp(prisma);
   try {
     const { status, data } = await postJson(port, '/api/projects/1/calculate');
@@ -322,7 +329,7 @@ await testAsync('警告に変化がなければparsedDataのupdateをスキッ�
 
 await testAsync('警告ゼロ同士でもupdateスキップ・warningsは空配列', async () => {
   const initial = structuredClone(baseParsed);
-  const { prisma, calls } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { prisma, calls } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial), overrides: BT_RENO_OVERRIDE });
   const { server, port } = await startApp(prisma);
   try {
     const { data } = await postJson(port, '/api/projects/1/calculate');
@@ -1121,7 +1128,11 @@ const directWallPb = (overridesObj) => {
   return r.materials.find((m) => m.name === '壁 石膏ボード');
 };
 
-await testAsync('override未設定: リノベ式（後方互換）・building_type警告なし', async () => {
+// 2026-07-25: 旧アサーション「未設定はbuilding_type警告なし」は building_type_invalid
+//   （不正値警告）が出ないことを指す。未選択の可視化（building_type_default）の導入で、
+//   未設定+推定パスは**invalid警告は出ないがdefault警告は出る**が正になった。
+//   意図（invalid警告が出ない=未設定を不正扱いしない）は保ちつつ、新警告の発火を明示的に固定する。
+await testAsync('override未設定: リノベ式（後方互換）・invalid警告なし・未選択のdefault警告あり', async () => {
   const initial = structuredClone(btParsed);
   const { prisma } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
   const { server, port } = await startApp(prisma);
@@ -1132,7 +1143,12 @@ await testAsync('override未設定: リノベ式（後方互換）・building_ty
     assert.ok(row, '壁 石膏ボード行が出力される');
     assert.equal(row.quantity, RENO_EXPECTED, `リノベ式 ${RENO_EXPECTED}枚: ${row.calculation}`);
     assert.match(row.calculation, /リノベ係数/, `根拠欄はリノベ式: ${row.calculation}`);
-    assert.equal(findWarn(data, 'building_type_invalid'), undefined, '未設定は警告なし');
+    assert.equal(findWarn(data, 'building_type_invalid'), undefined, '未設定は不正値警告なし');
+    // 【①/⑥】未選択+推定パス → 警告がレスポンスwarningsに含まれる（文言はgoal指定の一字一句）
+    const w = findWarn(data, 'building_type_default');
+    assert.ok(w, `未選択の可視化警告が出る（warnings=${JSON.stringify(data.warnings).slice(0, 300)}）`);
+    assert.equal(w.message,
+      '建物種別が未選択のためリノベーション式で推定しています。新築物件は建物種別を選択してください');
   } finally {
     server.close();
   }
@@ -1155,6 +1171,8 @@ await testAsync("building_type='new': ルート経由で新築式に切り替わ
     const direct = directWallPb({ building_type: 'new' });
     assert.equal(row.quantity, direct.quantity, `ルート${row.quantity}枚 = 直接${direct.quantity}枚`);
     assert.equal(findWarn(data, 'building_type_invalid'), undefined, '正当値は警告なし');
+    // 【③】'new'を選択済み → 未選択警告は出ない
+    assert.equal(findWarn(data, 'building_type_default'), undefined, '選択済みは未選択警告なし');
   } finally {
     server.close();
   }
@@ -1173,6 +1191,9 @@ await testAsync("building_type='renovation'（明示）: 未設定と同一＝�
     assert.equal(row.quantity, RENO_EXPECTED, '明示renovation = 未設定と同枚数');
     assert.match(row.calculation, /リノベ係数/);
     assert.equal(findWarn(data, 'building_type_invalid'), undefined);
+    // 【②】明示的に'renovation'を選んだ＝未選択ではないので警告しない
+    //   （枚数は未設定と同じでも、警告の有無で「選択済み」が区別される）
+    assert.equal(findWarn(data, 'building_type_default'), undefined, '明示選択は未選択警告なし');
   } finally {
     server.close();
   }
@@ -1210,6 +1231,8 @@ await testAsync('不正値: 既定リノベへフォールバックし building_
     const row = wallPbRow(data);
     assert.equal(row.quantity, RENO_EXPECTED, '既定リノベ式へフォールバック');
     assert.match(row.calculation, /リノベ係数/);
+    // 不正値は「指定はされている」ので未選択警告は重ねない（invalid警告が単独で案内する）
+    assert.equal(findWarn(data, 'building_type_default'), undefined, '不正値に未選択警告は重ねない');
   } finally {
     server.close();
   }
@@ -1226,6 +1249,70 @@ await testAsync('無関係なoverride（天井高）だけならリノベ式の�
     const { data } = await postJson(port, '/api/projects/1/calculate');
     assert.match(wallPbRow(data).calculation, /リノベ係数/, '無関係overrideで式は不変');
     assert.equal(findWarn(data, 'building_type_invalid'), undefined);
+  } finally {
+    server.close();
+  }
+});
+
+console.log('■ POST /:id/calculate: 建物種別の未選択警告と実測採用の関係（building_type_default）');
+
+// 【2026-07-25 goal(2)】未選択の可視化は「推定パスの係数が実際に効いている」ときだけ発火する。
+//   展開図実測（applyElevationTakeoff）が壁PBに採用された場合は推定係数が表に出ないため警告しない。
+//   実測却下（validateTakeoffSanity NG）で推定パスに落ちた場合は係数が直接効くので警告する。
+//   ①⑥（未選択+展開図なし→警告あり・レスポンス同梱）と②③（選択済み→なし）は上のブロックで固定済み。
+const BT_DEFAULT_MSG =
+  '建物種別が未選択のためリノベーション式で推定しています。新築物件は建物種別を選択してください';
+
+await testAsync('【④】展開図実測が採用された場合: 未選択でも警告しない（推定係数が効いていない）', async () => {
+  // elevParsed はサニティを通る実測fixture（他のoverrideテストで実測置換の観測に使用中のもの）
+  const initial = structuredClone(elevParsed);
+  const { prisma } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    // 前提の確認: 実測が採用されている（却下警告が無い+実測経路でしか出ない木胴縁警告がある）
+    assert.equal(findWarn(data, 'elevation_takeoff_rejected'), undefined, '実測は却下されていない');
+    assert.ok(kaibeWarn(data), 'applyElevationTakeoffが実際に走っている（木胴縁警告が証拠）');
+    assert.equal(findWarn(data, 'building_type_default'), undefined,
+      `実測採用時は未選択警告なし（warnings=${JSON.stringify(data.warnings).slice(0, 300)}）`);
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('【⑤】実測却下（サニティNG）で推定パスに落ちた場合: 未選択警告を出す', async () => {
+  // 洋室(1)Ａ面を200m（桁誤読相当）に膨らませ、room_perimeter/wall_pb_ratio でサニティNGにする
+  //   （maxPerim = 4×√65.76×1.3 ≒ 42.2m ≪ 200m）
+  const initial = structuredClone(elevParsed);
+  initial.elevations.rooms[0].faces[0].width_mm = 200000;
+  const { prisma } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    // 前提の確認: 実測が却下され推定値が残っている
+    assert.ok(findWarn(data, 'elevation_takeoff_rejected'),
+      `サニティNGで却下される（warnings=${JSON.stringify(data.warnings).slice(0, 300)}）`);
+    const w = findWarn(data, 'building_type_default');
+    assert.ok(w, '却下＝推定係数が効くので未選択警告が出る');
+    assert.equal(w.message, BT_DEFAULT_MSG, '文言はgoal指定の一字一句');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('【⑤補】実測却下でも明示renovationなら警告しない（未選択ではない）', async () => {
+  const initial = structuredClone(elevParsed);
+  initial.elevations.rooms[0].faces[0].width_mm = 200000;
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial), overrides: BT_RENO_OVERRIDE,
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.ok(findWarn(data, 'elevation_takeoff_rejected'), '却下は同じ');
+    assert.equal(findWarn(data, 'building_type_default'), undefined, '選択済みなら警告なし');
   } finally {
     server.close();
   }
