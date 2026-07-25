@@ -39,6 +39,23 @@
           class="bg-dark-600 border border-dark-400 rounded px-3 py-2 w-48 focus:border-gold focus:outline-none disabled:opacity-60"
         />
       </div>
+      <!-- 建物種別（新築/リノベ）。壁ボードの推定式が構造ごと変わる（リノベ=床面積比／新築=周長×階高）ため、
+           図面から推定せず人が指定する。未選択なら送らない＝サーバー既定リノベーション（後方互換）。
+           STEP1解析時にプロジェクトのoverridesへ保存し、最初の計算から効かせる。後から結果画面でも変更可 -->
+      <div>
+        <label class="block text-sm text-gray-400 mb-2">
+          建物種別<span class="text-xs ml-2">任意・新築物件は「新築」を選んでください（結果画面でも変更できます）</span>
+        </label>
+        <select
+          v-model="buildingType"
+          :disabled="planDone"
+          class="bg-dark-600 border border-dark-400 rounded px-3 py-2 w-64 focus:border-gold focus:outline-none disabled:opacity-60"
+        >
+          <option value="">未選択（リノベーション既定）</option>
+          <option value="renovation">リノベーション</option>
+          <option value="new">新築</option>
+        </select>
+      </div>
     </div>
 
     <!-- STEP 1: 平面詳細図 -->
@@ -204,6 +221,8 @@ const selectedFile = ref(null)
 const isDragging = ref(false)
 const projectName = ref('')
 const totalAreaSqm = ref(null)
+// 建物種別（'new'|'renovation'|''）。未選択=''なら overrides を送らない＝サーバー既定'renovation'
+const buildingType = ref('')
 const loadingStep = ref('')
 const uiError = ref(null)
 
@@ -232,12 +251,13 @@ const persistHomeState = () => {
     projectId: store.currentProject?.id ?? null,
     projectName: projectName.value,
     totalAreaSqm: totalAreaSqm.value,
+    buildingType: buildingType.value,
     planSummary: planSummary.value,
     elevSummary: elevSummary.value,
     doorSummary: doorSummary.value,
   })
 }
-watch([projectName, totalAreaSqm, planSummary, elevSummary, doorSummary], persistHomeState)
+watch([projectName, totalAreaSqm, buildingType, planSummary, elevSummary, doorSummary], persistHomeState)
 
 onMounted(async () => {
   const saved = store.loadHomeState()
@@ -251,6 +271,7 @@ onMounted(async () => {
     // 入力値は解析前でも復元する（専有面積の入れ忘れ対策: 値があれば戻す）
     projectName.value = saved.projectName || ''
     totalAreaSqm.value = saved.totalAreaSqm ?? null
+    buildingType.value = saved.buildingType || ''
     if (saved.projectId != null) {
       // SPA内の戻りならstoreが生きている。リロード後はAPIから再取得して復元
       const alive = store.currentProject?.id === saved.projectId
@@ -282,6 +303,7 @@ const startNewSite = () => {
   selectedFile.value = null
   projectName.value = ''
   totalAreaSqm.value = null
+  buildingType.value = ''
   planSummary.value = null
   elevSummary.value = null
   doorSummary.value = null
@@ -330,6 +352,13 @@ const analyzePlan = async () => {
   try {
     loadingStep.value = 'プロジェクトを作成中...'
     await store.createProject(projectName.value.trim())
+    // 建物種別（任意）。選択時のみプロジェクトのoverridesへ保存し、最初の計算から効かせる。
+    // 未選択なら送らない＝サーバー既定'renovation'（後方互換）。
+    // glasswool_coverage等と同じ POST /overrides 経路（store.saveOverrides）に乗せる
+    if (buildingType.value) {
+      loadingStep.value = '建物種別を保存中...'
+      await store.saveOverrides({ building_type: buildingType.value })
+    }
     loadingStep.value = 'AIが平面詳細図を解析中...'
     const parsed = await store.uploadPlan(selectedFile.value, totalAreaSqm.value)
     planSummary.value = {

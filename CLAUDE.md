@@ -13,6 +13,28 @@ AI（Gemini + Claude API）による図面解析で、資材リスト作成を�
 
 ユーザー方針: 読み取らせる図面を**平面詳細図・展開図・建具表の3枚**にし、ロジック計算する。
 
+**building_typeのUI配線＝新築物件のブラウザ運用対応（2026-07-25・coder/reviewer分離・承認済み・未コミット）**:
+推定パスの新築/リノベ分離（materialCalculator実装済み）にUIから到達する経路が無く、新築物件でも既定'renovation'が使われ
+アルファAタイプで壁PB-32.4%✗になっていた問題のUI配線。**backend-node/srcはゼロ変更**（全16ファイルmd5一致＝
+WALL_PB_COEFF_RENOVATION/REDUCTION不変・後方互換はコード上自明）。
+- **【正解値の誤読を是正】「壁118枚/天井61枚」は㎡の誤読**: 積算XLS原典（alpha-af-ground-truth.json・XLS100セル一致）の
+  Aタイプは壁PB=118.0204**㎡**÷1.4=**84.3枚** / 天井PB=61.0072**㎡**÷1.45=**42.07枚**。README.txtの「積算118/61」表記が
+  枚数に見える罠（CLAUDE.md既存記録「単位の取り違えに注意」と同型）。判定基準は84.3/42.07枚を採用
+- **(1)達成の実測**: building_type='new'で壁PB 80枚(**-5.1%✅**)/天井PB 48枚(**+14.1%✅**)＝両方±15%内。
+  renovation既定は壁57枚(-32.4%✗)。※天井+14.1%はrooms:[]時の新築控除非発火による既知の過大（should-fix繰越済み・±15%内）
+- **UI**: Home.vue（アップロード画面・現場名/専有面積と同カード・STEP1解析時にsaveOverridesで保存・sessionStorage永続化・
+  planDone後disabled）+ MaterialResult.vue（計算条件パネル・glasswool_coverageと同イディオム・「変更しない」''は既存値維持）。
+  **未選択は building_type キー自体を送らない**＝既定'renovation'の後方互換（''が届いてもサーバーtrim()===''で既定扱い＝二重に安全）
+- **バックエンド配線は既に通っていた**: POST /calculate→Override→overridesObj→calculateMaterials→resolveBuildingTypeProfile
+  （ceiling_pb_extra_sheetsと同じ「新規パーサ不要」型）。憶測で終わらせず**疎通テスト6件**（test-calc-wiring 58→64件・
+  実ルーターマウント+スタブprismaでルート経由の式切替/日本語エイリアス/不正値警告/回帰なしを固定）。期待値は式から導出
+  （リノベ53枚=ceil(ceil(65.76×0.96×1.37)×0.6)・観測値の写しでない）
+- **後方互換の総当たり72シナリオ**（専有30/50/70/100×1LDK/2LDK/3LDK×rooms有無×併用overrides）: override無し2回呼び・
+  明示'renovation' vs 未指定、ともにバイト一致不一致0件
+- 検証: eval-gtype 20✅⏳0✗0 / eval-beppu 453✅ / eval-alpha-af 567✅ / replay 10✅✗0 / test 23件全緑（calc-wiring 64✅）/ vite build成功
+- reviewer繰越nit: ①結果画面で種別変更後にHomeへ戻るとdisabledセレクトがsessionStorageの古い値を表示（表示のみ・計算は正）
+  ②currentBuildingTypeの語彙正規表現がサーバーの複製（同期前提コメント有）③adjustBuildingTypeが再計算後もクリアされず同値再送（実害なし）
+
 **別府A〜F Gemini実読みE2E（2026-07-25・課金済み・6タイプ実測・ユーザー包括承認で実施）**:
 「Gタイプは問題なかったのに別府Aはゴミデータが出た」の原因究明。全6タイプを本番同一パイプライン（analyzeDrawing→attachElevationData→mergeDoorSchedule）でGemini実読みし記録保存
 （`scripts/recordings/beppu-{a..f}-gemini-read-gemini-2.5-flash.json`）、別府9タイプ正解JSONと突合。**override共通**（building_type:new / glasswool_coverage:0.5 / stud_height 2720/2820 / ceiling_pb_extra_sheets:0 / closet_rc_sqm:0 / households:5 / soundWallRule:pairs[]）。

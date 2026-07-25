@@ -197,6 +197,20 @@
               class="input w-full"
             />
           </div>
+          <!-- 建物種別（新築/リノベ）。壁PBの推定式が構造ごと変わる（リノベ=床面積比／新築=周長×階高）。
+               図面からは推定しない方針（外すと壁PBが1.6倍ずれる）のため人が指定する。
+               未選択なら送らない＝サーバー既定'renovation'（後方互換・既存プロジェクトの出力を変えない） -->
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">
+              建物種別
+              <span class="text-xs">現在: {{ currentBuildingType }}</span>
+            </label>
+            <select v-model="adjustBuildingType" class="input w-full">
+              <option value="">変更しない</option>
+              <option value="renovation">リノベーション（既定）</option>
+              <option value="new">新築</option>
+            </select>
+          </div>
           <button
             @click="recalculate"
             :disabled="store.loading || !hasAdjustInput"
@@ -223,6 +237,11 @@
           （住戸内の遮音壁だけに入れる物件は 0.135 前後、ほぼ全ての間仕切に入れる物件は 0.4〜0.8）。
           未入力ならアルファステイツ実績の 0.135 で計算するため、全間仕切に充填する物件では
           数量が大幅に少なく出ます。拾い出しXLSや仕様書で確認して入力してください。
+        </p>
+        <p class="text-xs text-gray-400 mt-1">
+          ※ 建物種別＝壁ボードの推定式の切り替え（リノベーション＝床面積ベース／新築＝壁の長さ×高さベース）。
+          未選択ならリノベーションとして計算します。新築物件で「新築」を選ばないと壁ボードが
+          大幅に少なく出ます（展開図の実測がある場合は実測値が優先されるため影響しません）。
         </p>
       </div>
     </div>
@@ -403,6 +422,9 @@ const adjustCeilingPbExtra = ref('')
 // グラスウール充填率（物件別）。未入力なら送らない＝サーバー側の既定値0.135（アルファ＝遮音壁のみ）。
 // 全間仕切に充填する物件（別府）は0.4〜0.8を指定する。0は充填なしではなく不正値扱い（サーバーが警告）
 const adjustGlasswoolCoverage = ref('')
+// 建物種別（'new'|'renovation'）。未選択なら送らない＝サーバー側の既定'renovation'（後方互換）。
+// 図面から新築/リノベは推定しない方針（resolveBuildingTypeProfile）のため人が明示する
+const adjustBuildingType = ref('')
 
 // 履歴から来たかどうか（referrerまたはstoreの状態で判定）
 const isFromHistory = computed(() => {
@@ -503,13 +525,24 @@ const currentGlasswoolCoverage = computed(() => {
   return String(v)
 })
 
+// 建物種別の「現在値」表示。保存済みoverrideがあればその解釈、無ければ既定リノベーション。
+// 判定の正規表現はサーバー側 resolveBuildingTypeProfile と同じ語彙（new/新築系・renovation/リノベ系）
+const currentBuildingType = computed(() => {
+  const v = String(store.overrides?.building_type ?? '').trim()
+  if (!v) return '既定値リノベーション'
+  if (/^(new|新築|新築工事)$/i.test(v)) return '新築'
+  if (/^(renovation|reno|リノベ|リノベーション|改修|リフォーム)$/i.test(v)) return 'リノベーション'
+  // サーバーが解釈できない値は既定へフォールバックし警告を出す（building_type_invalid）
+  return `${v}（解釈不能・リノベーション扱い）`
+})
+
 // 再計算ボタンの活性判定（入力欄が増えたので明示的にまとめる）
 // 天井PB加算は '0' も有効入力なので空文字以外を入力ありと見なす（Boolean('0')はtrueだが明示する）
 // GW充填率は 0 が不正値（サーバーが既定へフォールバックし警告）なので Boolean 判定でよい
 const hasAdjustInput = computed(() =>
   Boolean(adjustPartitionWall.value || adjustCeilingHeight.value
     || adjustStudHeight.value || adjustStudHeightWet.value
-    || adjustGlasswoolCoverage.value)
+    || adjustGlasswoolCoverage.value || adjustBuildingType.value)
   || adjustCeilingPbExtra.value !== ''
 )
 
@@ -581,6 +614,10 @@ const recalculate = async () => {
     // GW充填率。0より大きく1.0以下の小数（サーバー側で検証・不正なら既定へ戻して警告）
     if (adjustGlasswoolCoverage.value) {
       newOverrides.glasswool_coverage = String(adjustGlasswoolCoverage.value)
+    }
+    // 建物種別。未選択（空）なら送らない＝保存済みの値/サーバー既定'renovation'を維持
+    if (adjustBuildingType.value) {
+      newOverrides.building_type = adjustBuildingType.value
     }
     await store.saveOverrides(newOverrides)
     await store.calculateMaterials()

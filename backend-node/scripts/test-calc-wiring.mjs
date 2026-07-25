@@ -35,6 +35,8 @@ const {
 } = await import('../src/routes/projects.js');
 const { computeElevationTakeoff, resolveStudHeightM } =
   await import('../src/services/buildupCalculator.js');
+// 建物種別（building_type）の疎通検証で「ルート経由＝直接呼び」の等価性を見るために使う
+const { calculateMaterials } = await import('../src/services/materialCalculator.js');
 
 let pass = 0;
 let fail = 0;
@@ -1086,6 +1088,144 @@ await testAsync('無関係なoverride（天井高）だけなら追加部位は�
   try {
     const { data } = await postJson(port, '/api/projects/1/calculate');
     assert.equal(data.materials.some((m) => m.extra_part === true), false);
+  } finally {
+    server.close();
+  }
+});
+
+console.log('■ POST /:id/calculate: overrides → 建物種別（building_type）');
+
+// 【2026-07-25 goal(2)】新築/リノベの式切り替え（resolveBuildingTypeProfile）のoverride疎通。
+//   配線は Override → overridesObj → calculateMaterials(overrides) の既存経路
+//   （ceiling_pb_extra_sheets と同じ「新規パーサ不要」型・routes無変更）。UIから選べるように
+//   したのに経路が切れていると新築物件で壁PBが-32%級の過少が黙って出るため、ここで固定する。
+//
+// 観測点: materials の「壁 石膏ボード」行（建材14項目スコープ内＝レスポンスに出る）。
+//   期待値は観測値の写しではなく式から算出。基礎面積はvalidator仕様
+//   「部屋合計が専有面積×0.96未満なら不足分を居室床に補填」（CLAUDE.md）により、
+//   このfixture（部屋合計33㎡ < 65.76×0.96）では 65.76×0.96 = 63.1296㎡ になる。
+//     リノベ既定 = ceil(ceil(63.1296×1.37) × 0.6) = ceil(87×0.6) = 53枚
+//   新築側は周長の再構成（間仕切×2+躯体・実測帯下限での底上げ）が絡み手計算が式の写しになりやすいので
+//   枚数は固定せず、(a) calculation欄が新築式（周長×天井高）へ切り替わる (b) リノベ既定と枚数が変わる
+//   (c) ルート経由の出力 = 同じoverridesで calculateMaterials を直接叩いた出力（供給経路の等価性）で見る。
+const btParsed = {
+  ...structuredClone(baseParsed),
+  total_area_source: 'user_input', // 床面積サニティの誤発火を避け、式の分母を安定させる（他のoverrideテストと同じ）
+};
+const wallPbRow = (data) => data.materials.find((m) => m.name === '壁 石膏ボード');
+const BT_FLOOR = 65.76 * 0.96; // 補填後の基礎面積（部屋合計33㎡が0.96×専有を下回るfixtureのため）
+const RENO_EXPECTED = Math.ceil(Math.ceil(BT_FLOOR * 1.37) * 0.6); // = 53枚（リノベ式から算出）
+// 直接呼び: ルートと同じ引数形（parsedData文字列・packageSpecs={}・overridesObj）
+const directWallPb = (overridesObj) => {
+  const r = calculateMaterials(JSON.stringify(structuredClone(btParsed)), {}, overridesObj);
+  return r.materials.find((m) => m.name === '壁 石膏ボード');
+};
+
+await testAsync('override未設定: リノベ式（後方互換）・building_type警告なし', async () => {
+  const initial = structuredClone(btParsed);
+  const { prisma } = makeCalcPrisma({ initialParsed: initial, freshParsed: structuredClone(initial) });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    const row = wallPbRow(data);
+    assert.ok(row, '壁 石膏ボード行が出力される');
+    assert.equal(row.quantity, RENO_EXPECTED, `リノベ式 ${RENO_EXPECTED}枚: ${row.calculation}`);
+    assert.match(row.calculation, /リノベ係数/, `根拠欄はリノベ式: ${row.calculation}`);
+    assert.equal(findWarn(data, 'building_type_invalid'), undefined, '未設定は警告なし');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync("building_type='new': ルート経由で新築式に切り替わる（materialCalculatorまで届く）", async () => {
+  const initial = structuredClone(btParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'building_type', value: 'new' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { status, data } = await postJson(port, '/api/projects/1/calculate');
+    assert.equal(status, 200, JSON.stringify(data).slice(0, 200));
+    const row = wallPbRow(data);
+    assert.match(row.calculation, /新築: 周長/, `根拠欄が新築式へ切り替わる: ${row.calculation}`);
+    assert.notEqual(row.quantity, RENO_EXPECTED, '枚数がリノベ式から実際に変わる');
+    // 供給経路の等価性: ルート経由 = calculateMaterials直接呼び（route層が値を欠落・変形させない）
+    const direct = directWallPb({ building_type: 'new' });
+    assert.equal(row.quantity, direct.quantity, `ルート${row.quantity}枚 = 直接${direct.quantity}枚`);
+    assert.equal(findWarn(data, 'building_type_invalid'), undefined, '正当値は警告なし');
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync("building_type='renovation'（明示）: 未設定と同一＝既定の明示指定", async () => {
+  const initial = structuredClone(btParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'building_type', value: 'renovation' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    const row = wallPbRow(data);
+    assert.equal(row.quantity, RENO_EXPECTED, '明示renovation = 未設定と同枚数');
+    assert.match(row.calculation, /リノベ係数/);
+    assert.equal(findWarn(data, 'building_type_invalid'), undefined);
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync("building_type='新築'（日本語エイリアス）: 'new'と同じく新築式", async () => {
+  const initial = structuredClone(btParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'building_type', value: '新築' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    const row = wallPbRow(data);
+    assert.match(row.calculation, /新築: 周長/, `日本語指定も新築式: ${row.calculation}`);
+    const direct = directWallPb({ building_type: 'new' });
+    assert.equal(row.quantity, direct.quantity, "'新築' と 'new' で同枚数");
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('不正値: 既定リノベへフォールバックし building_type_invalid 警告が出る', async () => {
+  const initial = structuredClone(btParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'building_type', value: 'マンション' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.ok(findWarn(data, 'building_type_invalid'),
+      `不正値は採用せず警告（warnings=${JSON.stringify(data.warnings).slice(0, 300)}）`);
+    const row = wallPbRow(data);
+    assert.equal(row.quantity, RENO_EXPECTED, '既定リノベ式へフォールバック');
+    assert.match(row.calculation, /リノベ係数/);
+  } finally {
+    server.close();
+  }
+});
+
+await testAsync('無関係なoverride（天井高）だけならリノベ式のまま（回帰なし）', async () => {
+  const initial = structuredClone(btParsed);
+  const { prisma } = makeCalcPrisma({
+    initialParsed: initial, freshParsed: structuredClone(initial),
+    overrides: [{ itemKey: 'ceiling_height', value: '2400mm' }],
+  });
+  const { server, port } = await startApp(prisma);
+  try {
+    const { data } = await postJson(port, '/api/projects/1/calculate');
+    assert.match(wallPbRow(data).calculation, /リノベ係数/, '無関係overrideで式は不変');
+    assert.equal(findWarn(data, 'building_type_invalid'), undefined);
   } finally {
     server.close();
   }
