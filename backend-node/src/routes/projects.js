@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { makeLimiter } from '../middleware/rateLimits.js';
 import { optionalAuth, projectScope } from '../middleware/auth.js';
-import { analyzeDrawing, analyzeAuxDrawing, analyzeWallCodesTiled, analyzeOpeningsTiled } from '../services/claudeApi.js';
+import { analyzeDrawing, analyzeAuxDrawing, analyzeWallCodesTiled, analyzeOpeningsTiled, isCreditsDepletedMessage } from '../services/claudeApi.js';
 import { calculateMaterials } from '../services/materialCalculator.js';
 import {
   computeElevationTakeoff, applyElevationTakeoff, filterKenzaiScope,
@@ -237,6 +237,7 @@ export function wallCodesNeedTileReread(analysisResult) {
  * 旧記録・テストモック等でどちらも無い場合は ''（呼び出し側で内訳なし文言にフォールバック）
  */
 const TILE_FAILURE_KIND_LABELS = {
+  credits_depleted: 'AI残高不足', // 429のうち前払いクレジット枯渇（再試行では直らない・運営者対応）
   rate_limit: 'レート制限', // 429（RPM/日次quota）
   server: 'サーバーエラー', // 5xx
   parse: '解析失敗',        // JSONパース失敗（出力途切れの救済不能を含む）
@@ -458,7 +459,10 @@ export function mergeDoorSchedule(existing, incoming) {
  * - キー無効・権限なし: Claude等はAPIの401/403が err.status に入る → 恒久扱い。
  *   Geminiの無効/失効キーは HTTP 400 + message「API key not valid」/ API_KEY_INVALID で返るため
  *   （本番AI_PROVIDER=gemini稼働中の主経路）、ステータスではなくメッセージでも識別する
- * - それ以外（429/529/接続断/タイムアウト）: 一時的 → 従来どおり再試行を誘導
+ * - 残高枯渇: Geminiプリペイド残高0は 429 + message「prepayment credits are depleted」で返る
+ *   → 恒久扱い（再試行では直らない・運営者のクレジット追加が必要）。RPM超過の429と区別する
+ *   （2026-07-20実障害: 区別できず「1分待って再アップロード」を案内し誤診に1日浪費した恒久対策）
+ * - それ以外（429=RPM/529/接続断/タイムアウト）: 一時的 → 従来どおり再試行を誘導
  * ステータスはメインupload経路のAI障害と同じ503で統一（フロントの扱いを変えない）
  * @returns { status, body: { error, message } }
  */
@@ -474,6 +478,13 @@ export function auxAiErrorResponse(e) {
     return { status: 503, body: {
       error: 'ai_auth_error',
       message: `AI解析の認証に失敗しました（コード${e?.status ?? '不明'}）。時間を置いても解消しない場合は運営者にご連絡ください。`,
+    } };
+  }
+  // 残高枯渇の429はRPM超過の429（下のai_unavailable=再試行誘導）より先に判定する
+  if (e?.status === 429 && isCreditsDepletedMessage(msg)) {
+    return { status: 503, body: {
+      error: 'ai_credits_depleted',
+      message: 'AI利用枠の残高が不足しています（前払いクレジット枯渇・再試行では解消しません）。運営者にご連絡ください。',
     } };
   }
   return { status: 503, body: {

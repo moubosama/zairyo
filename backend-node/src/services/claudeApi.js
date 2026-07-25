@@ -373,6 +373,41 @@ const DOOR_SCHEDULE_PROMPT = `あなたはマンションリノベーション�
 - 建具表でないページの場合は {"drawing_type": "not_door_schedule"} を返す`;
 
 /**
+ * 429がGeminiプリペイド残高枯渇（前払いクレジット0）かをメッセージで判定する（純関数）
+ * 2026-07-20実障害: 残高0の429を「RPM超過/多数決集中」と誤診して1日浪費した恒久対策。
+ * 残高枯渇はリトライしても直らない（クレジット追加=運営者対応が必要）ため、検出時は
+ * 再試行せず即断念し、専用のエラー文言（「運営者にご連絡ください」系）へ分岐させる。
+ * - 残高枯渇429の実メッセージ（2026-07-20実測）: 「Your prepayment credits are depleted.
+ *   Please purchase more credits ...」→ 'credits are depleted' / 'prepayment' を検出
+ * - 誤検出しない根拠: RPM超過429は「Resource has been exhausted (e.g. check quota)」
+ *   「Quota exceeded ... GenerateRequestsPerMinute...」、日次上限429は「... PerDay ...」で、
+ *   いずれも depleted / prepayment の語を含まない（isDailyQuota判定と共存・干渉しない）
+ */
+export function isCreditsDepletedMessage(msg) {
+  return /credits\s+are\s+depleted|prepayment/i.test(String(msg || ''));
+}
+
+/**
+ * Gemini呼び出し失敗時のリトライ可否判定（純関数・test-credits-depleted.mjsで検証）
+ * analyzeWithGeminiのcatch節から呼ぶ。判定順:
+ * 1. 429×PerDay（日次上限quota）→ 当日中は回復しないため再試行しない（従来挙動）
+ * 2. 429×残高枯渇（credits are depleted / prepayment）→ クレジット追加まで直らないため再試行しない
+ * 3. 429（RPM制限）/ 503（高負荷）でattempt < maxRetries → 待って再試行（待機15/30/45/60秒・従来挙動）
+ * 4. それ以外（401/400/接続断・リトライ上限到達）→ 再試行しない
+ * @returns { retry: boolean, waitMs?: number, reason: 'daily_quota'|'credits_depleted'|null }
+ */
+export function gemini429RetryDecision(error, attempt, maxRetries) {
+  const msg = String(error?.message || '');
+  const status = error?.status;
+  if (status === 429 && /PerDay/.test(msg)) return { retry: false, reason: 'daily_quota' };
+  if (status === 429 && isCreditsDepletedMessage(msg)) return { retry: false, reason: 'credits_depleted' };
+  if ((status === 429 || status === 503) && attempt < maxRetries) {
+    return { retry: true, waitMs: 15000 * (attempt + 1), reason: null }; // 15/30/45/60秒（RETRY_MAX=4で1呼び出し最大150秒）
+  }
+  return { retry: false, reason: null };
+}
+
+/**
  * Gemini APIで図面解析
  * analyzeWithClaudeと同じシグネチャ（プロンプト差し替え+rethrowApiErrors対応）で、
  * AI_PROVIDER=gemini時に補助図面・タイル解析からも呼ばれる
@@ -434,17 +469,20 @@ async function analyzeWithGemini(filePath, base64Data, mimeType, promptText = SY
       return parseAiText(text, options.jsonResponse === true);
     } catch (error) {
       // 429/503は時間をおけば通ることが多い（無料枠のRPM制限・混雑）。
-      // ただし日次上限（quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier）は
-      // 当日中は待っても回復しないため再試行しない（PerMinute等のRPM系のみリトライ）
-      const isDailyQuota = error.status === 429 && /PerDay/.test(String(error.message || ''));
-      if ((error.status === 429 || error.status === 503) && !isDailyQuota && attempt < maxRetries) {
-        const waitMs = 15000 * (attempt + 1); // 15/30/45/60秒（RETRY_MAX=4で1呼び出し最大150秒）
-        console.warn(`Gemini ${error.status} — ${waitMs / 1000}s待って再試行 (${attempt + 1}/${maxRetries})`);
-        await new Promise((r) => setTimeout(r, waitMs));
+      // ただし以下は待っても回復しないため再試行しない（判定はgemini429RetryDecision＝純関数）:
+      // - 日次上限（quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier）= 当日中は回復しない
+      // - 前払い残高枯渇（Your prepayment credits are depleted）= クレジット追加（運営者対応）まで直らない。
+      //   2026-07-20実障害: 残高0の429にリトライを積み上げてRPM誤診の被害を拡大した恒久対策
+      const decision = gemini429RetryDecision(error, attempt, maxRetries);
+      if (decision.retry) {
+        console.warn(`Gemini ${error.status} — ${decision.waitMs / 1000}s待って再試行 (${attempt + 1}/${maxRetries})`);
+        await new Promise((r) => setTimeout(r, decision.waitMs));
         continue;
       }
-      if (isDailyQuota) {
+      if (decision.reason === 'daily_quota') {
         console.error('Gemini 429（日次上限quota）— 再試行せず諦めます');
+      } else if (decision.reason === 'credits_depleted') {
+        console.error('Gemini 429（前払い残高枯渇）— 再試行せず諦めます。クレジット追加が必要です（運営者対応）');
       }
       console.error('Gemini API error:', error.message);
       // API起因の失敗（429/401/503等・fetch失敗）を「図面が読めなかった」と区別する
@@ -913,6 +951,8 @@ export async function analyzeTiles(filePath, prompt, resultKey, deps = {}) {
 /**
  * タイル解析1回分の結果を失敗として分類する（成功なら null）
  * kind:
+ *  - 'credits_depleted' = 429のうち前払い残高枯渇（再試行では直らない・運営者のクレジット追加が必要。
+ *                         RPM/日次quotaの429と区別して誤診を防ぐ・2026-07-20実障害の恒久対策）
  *  - 'rate_limit' = 429（RPM/日次quota）
  *  - 'server'     = 5xx（高負荷・サーバー障害）
  *  - 'parse'      = JSONパース失敗（救済不能の出力途切れ等）または parsedがオブジェクトでない
@@ -927,7 +967,11 @@ function classifyTileFailure(r) {
     const detail = String(r.error.message || '')
       .replace(/key=[^&\s"']+/gi, 'key=***') // 万一URL付きメッセージにキーが乗っても伏せる
       .slice(0, 80);
-    if (status === 429) return { kind: 'rate_limit', detail };
+    if (status === 429) {
+      // 判定はdetail（80字切り詰め後）でなく元メッセージで行う（切り詰めで文言が欠ける可能性があるため）
+      if (isCreditsDepletedMessage(r.error.message)) return { kind: 'credits_depleted', detail };
+      return { kind: 'rate_limit', detail };
+    }
     if (typeof status === 'number' && status >= 500) return { kind: 'server', detail };
     if (r.error.name === 'SyntaxError') return { kind: 'parse', detail };
     return { kind: 'error', detail };
@@ -1483,6 +1527,26 @@ export async function analyzeAuxDrawing(filePath, kind, context = {}) {
   return res;
 }
 
+/**
+ * 両AI失敗時のユーザー向け文言を組み立てる（純関数・test-credits-depleted.mjsで検証）
+ * 残高枯渇（プリペイドクレジット0）は「時間をおいて再試行」しても直らないため
+ * 「運営者にご連絡ください」系へ分岐する（2026-07-20実障害: RPM超過と区別できず誤診に1日浪費した恒久対策）。
+ * それ以外は従来文言（原因コード付き・再試行誘導）を維持。
+ * @param provider aiProvider()の値（'dual'|'gemini'|'claude'）。未使用側のエラーは判定に使わない
+ * @param geminiRes/claudeRes analyzeWithGemini/Claudeの戻り値（{error:{status,message}}|null）
+ */
+export function buildAllAiFailedReason(provider, geminiRes, claudeRes) {
+  const isDepleted = (r) => r?.error?.status === 429 && isCreditsDepletedMessage(r.error.message);
+  if ((provider !== 'claude' && isDepleted(geminiRes)) || (provider !== 'gemini' && isDepleted(claudeRes))) {
+    return 'AI利用枠の残高が不足しています（前払いクレジット枯渇・再試行では解消しません）。運営者にご連絡ください。';
+  }
+  // 原因コードを明示（429=レート制限/401=キー無効/529=混雑）— 運用時の切り分け用
+  const errCode = (r) => r?.error?.status || (r?.error?.message ? 'ERR' : 'キー未設定');
+  const geminiPart = provider === 'claude' ? '未使用' : errCode(geminiRes);
+  const claudePart = provider === 'gemini' ? '未使用' : errCode(claudeRes);
+  return `AI解析に失敗しました（Gemini: ${geminiPart} / Claude: ${claudePart}）。時間をおいて再試行してください。`;
+}
+
 export async function analyzeDrawing(filePath, options = {}) {
   const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
   const claudeKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
@@ -1556,14 +1620,11 @@ export async function analyzeDrawing(filePath, options = {}) {
     // モックの架空物件を返すと本物の見積として保存されてしまう。
     // 明示的に拒否して、アップロード側で500として扱わせる。
     console.error('All AI APIs failed — refusing to fabricate analysis');
-    // 原因コードを明示（429=レート制限/401=キー無効/529=混雑）— 運用時の切り分け用
-    const errCode = (r) => r?.error?.status || (r?.error?.message ? 'ERR' : 'キー未設定');
-    const geminiPart = provider === 'claude' ? '未使用' : errCode(geminiRes);
-    const claudePart = provider === 'gemini' ? '未使用' : errCode(claudeRes);
+    // 文言の組み立てはbuildAllAiFailedReason（残高枯渇=運営者連絡系/それ以外=原因コード付き再試行誘導）
     return {
       is_rejected: true,
       document_type: 'unknown',
-      rejection_reason: `AI解析に失敗しました（Gemini: ${geminiPart} / Claude: ${claudePart}）。時間をおいて再試行してください。`,
+      rejection_reason: buildAllAiFailedReason(provider, geminiRes, claudeRes),
       _ai_unavailable: true,
     };
   }

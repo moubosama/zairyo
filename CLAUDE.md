@@ -13,7 +13,22 @@ AI（Gemini + Claude API）による図面解析で、資材リスト作成を�
 
 ユーザー方針: 読み取らせる図面を**平面詳細図・展開図・建具表の3枚**にし、ロジック計算する。
 
-**building_typeのUI配線＝新築物件のブラウザ運用対応（2026-07-25・coder/reviewer分離・承認済み・未コミット）**:
+**残高枯渇429の専用エラー化（2026-07-25・coder/reviewer分離・承認済み・push済み）**:
+2026-07-20実障害（Gemini前払い残高0の429をRPM超過と誤診し1日浪費）の恒久対策（CLAUDE.md「恒久対策②」の実装）。
+- **検出**: `isCreditsDepletedMessage`＝`/credits\s+are\s+depleted|prepayment/i` + **status===429必須**（4消費箇所すべて429ゲート内）。
+  RPM/PerDayの実メッセージは depleted/prepayment を含まない＝誤検出経路なし（両陰性をテスト固定・400+depleted文言も非発火）。
+  Anthropicの残高切れ文言("credit balance is too low")は対象外＝非マッチで従来文言に落ちる（安全側）
+- **リトライ判断を純関数化** `gemini429RetryDecision`（テスト可能に）: 残高枯渇429は**リトライせず即断念**。
+  既存挙動はreviewer真理値表で**完全等価**（PerDay即断念/RPM漸増15-60秒/上限150秒/503巻き込みなし/GEMINI_RETRY_MAX既定0不変）
+- **文言分岐**: aux経路=`ai_credits_depleted`（503維持・フロント互換。フロントはcodeで分岐せずmessage表示のみ＝未知コードでも壊れない）
+  / 一括upload=`buildAllAiFailedReason`で「AI利用枠の残高不足・運営者にご連絡ください」（**未使用プロバイダ側のエラーでは非発火**のprovider条件）
+  / タイル内訳ラベル「AI残高不足」（`classifyTileFailure`は80字切詰め前の元メッセージで判定）
+- 検証: 新規test-credits-depleted 29✅・フォールト注入で8✗（全層検出）・eval-gtype 20✅⏳0✗0 / eval-beppu 453✅ /
+  eval-alpha-af 567✅ / replay3記録✅10✗0（壁92枚等の数値も既知値一致＝エンジン非影響）/ test 24件全OK / build成功
+- should-fix繰越: SF-1 第2スイープがcredits_depletedタイルも再試行（残高0で最大12回の必敗呼び・課金なし・レイテンシのみ）
+  / SF-2 メインupload経路のerror codeが`ai_unavailable`のまま（messageは正・aux側と非対称）
+
+**building_typeのUI配線＝新築物件のブラウザ運用対応（2026-07-25・coder/reviewer分離・承認済み・push済み075c79a）**:
 推定パスの新築/リノベ分離（materialCalculator実装済み）にUIから到達する経路が無く、新築物件でも既定'renovation'が使われ
 アルファAタイプで壁PB-32.4%✗になっていた問題のUI配線。**backend-node/srcはゼロ変更**（全16ファイルmd5一致＝
 WALL_PB_COEFF_RENOVATION/REDUCTION不変・後方互換はコード上自明）。
