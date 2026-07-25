@@ -893,6 +893,41 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   const rooms = elevations?.rooms || [];
   const doorLookup = buildDoorLookup(doorSchedule);
 
+  // ============================================================
+  // 別府方式の図面かどうかの文書レベル判定（打放し面の過大計上を安全に縮小するためのゲート）
+  // ============================================================
+  // 【背景・2026-07-25】別府AタイプのGemini実読みで壁PBが+82%になる。主因は「記号を面に
+  //   割り付けられなかった面が既定G14（全面PB）へ落ちる」こと。別府の展開図はRC打放し（凡例C/D/E/G）
+  //   の面が多いのに、平面タイル読取のplacement寸法が展開図の面幅と揃わず（面が合算幅・
+  //   タイルはセグメント幅）多くの面が既定PBへ落ちる（トレース: 別府A 237㎡が既定G14＝正解75㎡の3倍）。
+  //
+  // 【なぜ別府限定にするか＝アルファ非回帰の絶対条件】前サイクルで「全記録一律に打放し(C04)を
+  //   差し引く」を試したところ、アルファのノイズC04（面に載らない読取ジャンク）まで差し引き
+  //   壁PB 92枚→54枚(-38%)に退行して撤回された。打放しの記号（別府C/D/E/G と アルファC04）は
+  //   parseWallCode 上でほぼ同一構造（base:'C', mid:0）で、AIが別府の打放しを "C04"（3桁）と
+  //   転記するケースもある（この記録の plan_placements も "C04"）ため、記号単体では別府/アルファを
+  //   区別できない。
+  //
+  // 【安全な弁別マーカー＝別府にしか無い戸境二重壁記号（遮 / G枠）の存在】別府の凡例には
+  //   遮（戸境二重遮音壁）・Ｇ枠（戸境二重壁）という**アルファに存在しない記号**があり、
+  //   parseBeppuWallCode がこれらに beppu:'遮'|'G枠' を付与する（アルファの3桁 C04/G14 には
+  //   beppu フィールドが付かない＝長さで分岐）。記録横断で確認: 別府Aのみ遮/G枠を含み、
+  //   アルファ3記録（gtype-gemini/claude×2）は1件も含まない。
+  //   → 図面のどこかに 遮 か G枠 が読めていれば「別府方式の図面」と判定し、打放し面の縮小を許可する。
+  //     アルファ図面では isBeppuLayout=false のまま＝この節は完全非発火＝アルファ挙動バイト単位不変。
+  const isBeppuSoundCodeStr = (raw) => {
+    const c = parseWallCode(raw);
+    return !!(c && c.beppu && (c.beppu === '遮' || c.beppu === 'G枠'));
+  };
+  const isBeppuLayout = rooms.some((room) => {
+    const faces = Array.isArray(room.faces) ? room.faces : [];
+    if (faces.some((f) => isBeppuSoundCodeStr(f?.wall_code))) return true;
+    if ((Array.isArray(room.plan_codes) ? room.plan_codes : []).some(isBeppuSoundCodeStr)) return true;
+    if ((Array.isArray(room.plan_placements) ? room.plan_placements : [])
+      .some((pl) => isBeppuSoundCodeStr(pl?.code))) return true;
+    return false;
+  });
+
   // 遮音壁ルールの適用対象: ペアの両部屋が展開図に存在する場合のみ（片方しか読めていない
   // 読取で幻の壁を積まない安全側ゲート。Gタイプ以外の間取りで部屋名が偶然一致した場合に
   // 誤計上するリスクはDEFAULT_SOUND_WALL_PAIRS側のコメント参照=他タイプ検証時に差し替え）
@@ -1044,6 +1079,34 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       const isStandardPb = c && ['G', 'I', 'H', 'L', 'O', 'W', 'S'].includes(c.base)
         && [1, 4].includes(c.mid) && !(c.beppu && ['遮', 'G枠'].includes(c.beppu));
       if (isStandardPb) roomDefaultCode = c;
+    }
+
+    // 【別府限定・打放し既定への切替（2026-07-25）】
+    // 別府方式の図面（isBeppuLayout。遮/G枠の存在で判定）で、この部屋の平面タイル読取に
+    //   打放し記号（C下地・別府C/D/E/G や アルファ表記のC04）が1つでも含まれる場合、
+    //   面に割り付けられなかった面（placement/面記号なし）を既定G14（全面PB）ではなく
+    //   **打放し（PBなし）** に倒す。
+    // 根拠: 別府はRC躯体面が多く、AIが「その部屋に打放し記号がある」と読めた時点で、その部屋は
+    //   RC打放し面を含むことが確定する。展開図の面幅と平面タイルのセグメント幅が揃わず割付漏れした
+    //   面を全面PBへ落とすと壁PBが暴発する（別府A: 既定G14面が237㎡＝正解75㎡の3倍）。割付漏れ面を
+    //   PB(過大)ではなく打放し(過少)へ倒すことで、この物件の主誤差である+82%を安全側に縮小する。
+    // 安全性:
+    //   ・isBeppuLayout=false のアルファ図面では発火しない（遮/G枠が無い）＝アルファ完全不変。
+    //   ・別府でも「打放し記号を1つも読めていない部屋」（LDK/洗面室等）は従来どおり既定G14を維持する
+    //     （＝読取根拠が無い部屋を勝手に打放しにはしない＝答え合わせに寄せない）。
+    //   ・面/plan_placements に個別の記号（A=PB / G24=耐水 等）が付く面はその記号が優先されるため、
+    //     この既定は「記号の無い面」にしか効かない（打放しを全面に塗るわけではない）。
+    // 位置づけ: roomDefaultCode を打放しへ差し替える（面ループ末尾の既定 { base:'G',mid:1,surf:4 } の代替）。
+    //   roomDefaultCode が上で標準PBに確定している部屋（planCodes単一のPB）はそれを尊重し、打放しへは
+    //   倒さない（PBと明示読取された部屋を打放しに落とさない安全側）。
+    if (isBeppuLayout && !roomDefaultCode) {
+      const hasBlankConcrete = planCodes.some((pc) => {
+        const c = parseWallCode(pc);
+        return c && c.base === 'C' && c.mid === 0;
+      });
+      // 打放し既定コード（別府C相当・base:'C', mid:0）。surfは0（クロス無し面もあるため既定は無仕上げ）。
+      // 面ループでこの code は switch(mid) の default に落ちて壁PBに載らない＝PBなしになる。
+      if (hasBlankConcrete) roomDefaultCode = { base: 'C', mid: 0, surf: 0, _beppuBlankDefault: true };
     }
 
     // 平面図タイル読取の「記号＋壁寸法mm」を面に割り付ける。
