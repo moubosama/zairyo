@@ -114,6 +114,28 @@ const WET_ROOM_NAME_RE = /パウダー|洗面|トイレ|便所|UB|浴/;
 // （2026-07-19 Gemini記録で幻出したUB室が耐水+117%とジャンク壁PBの燃料になった実例）
 const UB_ROOM_NAME_RE = /^(UB|ユニットバス|浴室)$/;
 
+// 戸境二重壁（遮 / G枠）を物理的に持ち得ない部屋種別（別府の遮/G枠系統的過剰検出の棄却）。
+// 戸境壁＝隣接する別住戸との境界にある二重壁（遮音のため）。したがって以下の部屋には物理的に
+// 戸境壁が接し得ない（＝そこにGeminiが読んだ遮/G枠は誤検出）:
+//   ・屋外       … バルコニー / ベランダ（住戸の外・隣戸との共有壁ではない）
+//   ・共用部/住戸外 … 防災倉庫 / 防炎倉庫 / 備蓄倉庫（住戸の専有内に無い＝戸境の外）
+//   ・収納内部    … パントリー / システムクローゼット / SCL / WCL / WIC / CL / クローゼット /
+//                  クロゼット / 押入 / 物入（壁1枚介した内側の小空間。戸境壁は外側の居室が持つ）
+//   ・水回り内部  … トイレ / 便所 / 洗面 / パウダー / UB / 浴室（戸境に接しても壁1枚介す内側）
+// 触らない（本物の可能性がある＝戸境壁を持ちうる居室・動線）: LDK / 洋室 / 玄関 / 廊下。
+// 実測（別府A〜F 3回読み多数決）でGeminiが上記の部屋へ遮/G枠を系統的に誤付与し、遮音壁PBが
+// 最大+338%（D）に暴走していた（3回とも同じ誤読＝多数決では消えない）。物理制約で棄却する。
+// ※ アルファの記録には遮/G枠が1件も無い（isBeppuSoundCodeが別府マーカー付きのみ真）ため
+//    このフィルタはアルファで非発火＝アルファGは1バイトも変わらない。
+// ※ 判定は normalizeRoomName（長音「ー」除去）後の文字列に対して行うため、
+//    パターンも長音を含まない語幹で書く（バルコニー→バルコニ / パントリー→パントリ /
+//    クローゼット→クロゼット / パウダー→パウダ）。
+// ※ 素の `CL`/`UB` は英字語（Club/hub/subroom 等）への部分一致を避けるため語境界化する
+//    （reviewer SF-1・全実記録では発火ゼロだが将来の英字ラベル物件での居室誤棄却を予防）。
+//    SCL/WCL/WIC は個別列挙で拾う（語境界の前後に英字が付くため素のCL規則からは外れる）。
+const NON_PARTY_WALL_ROOM_RE =
+  /バルコニ|ベランダ|倉庫|パントリ|クロゼット|SCL|WCL|WIC|(?:^|[^A-Za-z])CL(?![A-Za-z])|押入|物入|トイレ|便所|洗面|パウダ|(?:^|[^A-Za-z])UB(?![A-Za-z])|浴/i;
+
 // 開口控除の物理上限（面面積に対する開口合計の比率）。壁一面がほぼ開口で埋まることは
 // 物理的に無い（袖壁・垂れ壁が残る）ため、超過は開口の幻覚・重複転記とみなして
 // ①面内の完全同一開口（符号/type+寸法一致）の2件目以降を落とす → ②なお超過なら比率まで縮退+警告。
@@ -1001,6 +1023,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 外れた場合は戸境二重壁のPB+GWが**静かに過少**になる（サニティは上限側しか見ない）。
   // 面/plan_codes/plan_placementsの3経路すべてで数え、下で_warningsに集約する
   t.beppu_g_shape_unknown = 0;
+  // 戸境二重壁（遮/G枠）を物理的に持ち得ない部屋（NON_PARTY_WALL_ROOM_RE）で読まれた
+  // 遮/G枠を棄却した件数（2026-07-25）。別府でGeminiがバルコニー・倉庫・収納・水回り内部へ
+  // 系統的に遮/G枠を誤付与し遮音壁PBが暴走していたのを物理制約で削る。下で_warningsへ集約。
+  t.beppu_sound_nonparty_dropped = 0;
 
   // 高さ誤転記の疑い寸法（2026-07-19 Gemini読取ノイズ対策）: 平面図タイルの壁寸法(wall_length_mm)に
   // 天井高（2,400/2,200等の図面内の高さ表記）が混入する実例があるため、いずれかの部屋のCHと
@@ -1128,6 +1154,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     // ※ アルファの記録に遮/G枠 placementは1件も無い（3桁記号のみ）＝この分岐は非発火＝回帰なし。
     const soundSegments = []; // { c, len(m) } — 遮/G枠のセグメント（面幅マッチ対象外）
     const isBeppuSoundCode = (c) => c && c.beppu && ['遮', 'G枠'].includes(c.beppu);
+    // 物理制約: この部屋が戸境二重壁を持ち得ない部屋種別（バルコニー/倉庫/収納内部/水回り内部）
+    // なら、そこで読まれた遮/G枠は誤検出として棄却する（NON_PARTY_WALL_ROOM_RE参照）。
+    // 居室（LDK/洋室/玄関/廊下）の遮/G枠はここでは弾かず本物として計上する。
+    const isNonPartyRoom = NON_PARTY_WALL_ROOM_RE.test(normalizeRoomName(room.name));
     if (Array.isArray(room.plan_placements) && faces.length >= 1) {
       // 二重転記ノイズの縮退（保存済み記録にもノイズが残るため読取時と再計算時の両方で適用）
       const planPlacements = collapseDoubledPlacements(room.plan_placements);
@@ -1174,7 +1204,12 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (!c || !Number.isFinite(len) || len <= 0) continue;
         // 別府の戸境二重壁（遮/G枠）: 面幅マッチせずセグメント長で計上する。
         // 面幅マッチ（±80mm）は合算面（LDK-A面8200等）で外れて過少/過大化するため。
-        if (isBeppuSoundCode(c)) { soundSegments.push({ c, len: len / 1000 }); continue; }
+        // ただし戸境壁を物理的に持ち得ない部屋（isNonPartyRoom）の遮/G枠は誤検出として棄却。
+        if (isBeppuSoundCode(c)) {
+          if (isNonPartyRoom) { t.beppu_sound_nonparty_dropped += 1; continue; }
+          soundSegments.push({ c, len: len / 1000 });
+          continue;
+        }
         const susp = suspectHeights.has(len) ? 1 : 0; // 高さ誤転記疑い（suspectHeights参照）
         if (susp && (c.mid === 2 || c.mid === 5)) continue; // 耐水記号×疑い寸法は割付しない（増幅遮断）
         // 遮音壁ルール適用時、遮音記号（L/O/W）placementの採用は
@@ -1495,6 +1530,19 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         t.kaibe_furring_faces++;
       }
 
+      // 物理制約: 面の記号が別府の戸境二重壁（遮/G枠）で、この部屋が戸境壁を持ち得ない
+      // 部屋種別（バルコニー/倉庫/収納内部/水回り内部）の場合は誤読とみなして棄却する。
+      // 別府の展開図はD面等に face.wall_code='遮' を持ち、非戸境部屋（洗面/WCL/トイレ等）にも
+      // 系統的に付くため、soundSegments（plan_placements）だけでなくこの面記号経路にも同じ
+      // 物理制約を効かせる（棄却しないと遮音壁PBが暴走する）。棄却面は遮音壁PB・GW・遮音シートも
+      // 壁PBも積まず素通りさせる（＝soundSegmentsのcontinueと同じ「丸ごと落とす」過少側の扱い）。
+      // ※ 判定は code.beppu マーカー付きの遮/G枠のみ（アルファのL/O/Wは beppu が無く非該当＝不変）。
+      if (code.beppu && ['遮', 'G枠'].includes(code.beppu) && isNonPartyRoom) {
+        t.beppu_sound_nonparty_dropped += 1;
+        // 巾木・周長・開口・部屋統計は上で計上済み。仕上げ（クロス）だけは面の実仕上げとして拾う
+        if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
+        continue;
+      }
       // 下地
       if (['L', 'O', 'W'].includes(code.base)) {
         // 遮音壁はボードをスラブ下まで張る（図面注意書き「遮音壁はボードをスラブ下まで+GW24kg充填」・
@@ -1671,6 +1719,24 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         + '打放し（ボードなし）として扱っています。'
         + '四角囲みのＧ＝戸境二重壁（胴縁＋PBt9.5＋グラスウール24K）の場合、'
         + 'その壁の壁PB・グラスウールが計上されず数量が過少になります（要確認）',
+      before: null, after: null,
+    });
+  }
+
+  // 戸境二重壁（遮/G枠）を物理的に持ち得ない部屋での棄却の明示（2026-07-25）。
+  // 別府でGeminiがバルコニー・各種倉庫（住戸外）・収納内部・水回り内部へ遮/G枠を系統的に
+  // 誤付与し（3回読み多数決でも消えない同一誤読）、遮音壁PBが最大+338%に暴走していた。
+  // 戸境壁＝隣接住戸との境界の二重壁のため、上記の部屋種別には物理的に接し得ない
+  // （NON_PARTY_WALL_ROOM_RE参照）→ 誤検出として棄却した。黙って消さず件数を可視化する。
+  // アルファは記号が3桁でここに掛からない（遮/G枠が無い）＝通常運用では出ない。
+  if (t.beppu_sound_nonparty_dropped > 0) {
+    t._warnings.push({
+      field: 'sound_wall_nonparty_room',
+      message: `戸境二重壁（遮 / G枠）の読み取り${t.beppu_sound_nonparty_dropped}件を、`
+        + '戸境壁を物理的に持ち得ない部屋（バルコニー・倉庫・収納内部・水回り内部）で'
+        + '検出したため誤読とみなして棄却しました。'
+        + '戸境壁は隣接する別住戸との境界にのみ存在します。'
+        + '該当部屋に本当に戸境壁がある場合は手動で追加してください（要確認）',
       before: null, after: null,
     });
   }
