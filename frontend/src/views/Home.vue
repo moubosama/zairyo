@@ -5,18 +5,17 @@
       <p class="text-gray-400">1枚ずつ解析して進める段階式。①の読み取り結果を②③のAI解析に引き継ぐので精度が上がります</p>
     </div>
 
+    <!-- リセットボタン。状態はsessionStorageに残り続けるため明示リセットが必要。
+         旧: 現場名欄右上の小さなテキストリンク＝ユーザーが気づけなかった（「ずっと残ってる」）ため
+         明確なセカンダリボタンに格上げ（2026-07-25ユーザー要望）。解析済み（planDone）でも押せる -->
+    <div v-if="hasAnyInput" class="flex justify-end mb-4">
+      <button @click="startNewSite" class="btn-secondary">↺ 新しい現場を開始（入力をリセット）</button>
+    </div>
+
     <!-- Project Name + 専有面積 -->
     <div class="card mb-6 grid md:grid-cols-2 gap-4">
       <div>
-        <div class="flex items-center justify-between mb-2">
-          <label class="text-sm text-gray-400">現場名</label>
-          <!-- 復元された前の現場を捨てて新規で始める導線（状態はsessionStorageに残るため明示リセットが必要） -->
-          <button
-            v-if="planDone || projectName"
-            @click="startNewSite"
-            class="text-xs text-gray-500 hover:text-gold underline"
-          >↺ 新しい現場を開始</button>
-        </div>
+        <label class="block text-sm text-gray-400 mb-2">現場名</label>
         <input
           v-model="projectName"
           type="text"
@@ -40,18 +39,20 @@
         />
       </div>
       <!-- 建物種別（新築/リノベ）。壁ボードの推定式が構造ごと変わる（リノベ=床面積比／新築=周長×階高）ため、
-           図面から推定せず人が指定する。未選択なら送らない＝サーバー既定リノベーション（後方互換）。
+           図面から推定せず人が指定する。UI上は選択必須（未選択のまま解析すると既定'renovation'で
+           新築物件の壁PBが過少化する事故が実際に起きたため。2026-07-25ユーザー決定）。
+           API層は変更なし＝未指定は従来どおり既定リノベーション（後方互換）。
            STEP1解析時にプロジェクトのoverridesへ保存し、最初の計算から効かせる。後から結果画面でも変更可 -->
       <div>
         <label class="block text-sm text-gray-400 mb-2">
-          建物種別<span class="text-xs ml-2">任意・新築物件は「新築」を選んでください（結果画面でも変更できます）</span>
+          建物種別<span class="text-xs text-red-400 ml-2">必須</span><span class="text-xs ml-2">新築物件は「新築」を選んでください（結果画面でも変更できます）</span>
         </label>
         <select
           v-model="buildingType"
           :disabled="planDone"
           class="bg-dark-600 border border-dark-400 rounded px-3 py-2 w-64 focus:border-gold focus:outline-none disabled:opacity-60"
         >
-          <option value="">未選択（リノベーション既定）</option>
+          <option value="" disabled>選択してください</option>
           <option value="renovation">リノベーション</option>
           <option value="new">新築</option>
         </select>
@@ -221,7 +222,8 @@ const selectedFile = ref(null)
 const isDragging = ref(false)
 const projectName = ref('')
 const totalAreaSqm = ref(null)
-// 建物種別（'new'|'renovation'|''）。未選択=''なら overrides を送らない＝サーバー既定'renovation'
+// 建物種別（'new'|'renovation'|''）。初期値''=未選択で、STEP1解析前に選択必須（analyzePlanで検証）。
+// ''のままoverridesを送ることはない（サーバー既定'renovation'はAPI直叩き時のみの後方互換）
 const buildingType = ref('')
 const loadingStep = ref('')
 const uiError = ref(null)
@@ -237,6 +239,12 @@ const doorSummary = ref(null)   // STEP3完了で {doors_total, added}
 
 const planDone = computed(() => planSummary.value !== null)
 const canAnalyzePlan = computed(() => !!selectedFile.value && !!projectName.value.trim())
+// リセットボタンの表示条件: 消える対象（入力値・解析状態）が1つでもあるとき。
+// 何もない初期状態では非表示（押しても何も起きないボタンを見せない）
+const hasAnyInput = computed(() =>
+  planDone.value || !!projectName.value || totalAreaSqm.value != null
+  || !!buildingType.value || !!selectedFile.value
+)
 
 // --- Homeウィザード状態の同一タブ内復元（2026-07-20）---
 // 結果画面から戻るとSTEP状態が消え、タイル部分失敗の警告が案内する
@@ -296,9 +304,12 @@ onMounted(async () => {
   }
 })
 
-// 「新しい現場を開始」: 復元された状態とsessionStorageを明示的に捨てる
+// 「新しい現場を開始」: 復元された状態とsessionStorageを明示的に捨てる。
+// リセット対象: 現場名・専有面積・建物種別・選択ファイル・STEP1〜3解析状態・
+// プロジェクトID参照+sessionStorage（store.reset()が破棄）。
+// confirmは常時（旧: planDone時のみ）＝ボタン格上げに伴い入力途中の誤タップも防ぐ
 const startNewSite = () => {
-  if (planDone.value && !window.confirm('入力中の現場をクリアして、新しい現場を開始しますか？\n（過去の見積もりはログイン時の履歴から再表示できます）')) return
+  if (!window.confirm('入力中の現場をクリアして、新しい現場を開始しますか？\n（過去の見積もりはログイン時の履歴から再表示できます）')) return
   store.reset() // Home状態(sessionStorage)も一緒に破棄される
   selectedFile.value = null
   projectName.value = ''
@@ -347,13 +358,19 @@ const processFile = (file) => {
 // STEP 1: 平面詳細図の解析（プロジェクト作成込み）
 const analyzePlan = async () => {
   if (!canAnalyzePlan.value) return
+  // 建物種別はUI必須（未選択の既定'renovation'が新築物件で壁PB過少化する事故対策）。
+  // ボタンをdisabledにせずクリック時にエラー表示＝未選択の理由がユーザーに伝わるようにする
+  if (!buildingType.value) {
+    uiError.value = '建物種別（新築/リノベーション）を選択してください'
+    return
+  }
   planLoading.value = true
   uiError.value = null
   try {
     loadingStep.value = 'プロジェクトを作成中...'
     await store.createProject(projectName.value.trim())
-    // 建物種別（任意）。選択時のみプロジェクトのoverridesへ保存し、最初の計算から効かせる。
-    // 未選択なら送らない＝サーバー既定'renovation'（後方互換）。
+    // 建物種別（UI必須）をプロジェクトのoverridesへ保存し、最初の計算から効かせる。
+    // if ガードは復元異常などで空が残った場合の安全網（API層の既定'renovation'後方互換は不変）。
     // glasswool_coverage等と同じ POST /overrides 経路（store.saveOverrides）に乗せる
     if (buildingType.value) {
       loadingStep.value = '建物種別を保存中...'
