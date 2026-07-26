@@ -197,7 +197,11 @@ console.log('--- 8. NON_PARTY部屋の遮/G枠はnonpartyで落ち、上限枠�
     segRoom('洋室3', [['遮', 1500]]),
   ];
   const t = computeElevationTakeoff({ rooms }, [], OPTS);
-  check('nonparty_dropped=3（洗面）', t.beppu_sound_nonparty_dropped, 3);
+  // 【2026-07-26 部位スコープ整合】水回り（洗面）の遮/G枠はnonparty棄却でなく
+  // 遮音壁耐水PBバケットへ振替（wet_rerouted）。プール外＝上限枠を消費しない点は不変
+  check('洗面3件は耐水振替（wet_rerouted=3・nonparty=0）',
+    [t.beppu_sound_wet_rerouted, t.beppu_sound_nonparty_dropped], [3, 0]);
+  approx('耐水振替バケット（(9+8+7)m×2.57≒61.68㎡）', t.sound_wall_waterproof_pb_sqm, 24 * H);
   check('cap_dropped=1（居室7件中1件のみ）', t.beppu_sound_face_cap_dropped, 1);
   approx('居室上位6件のみ計上（20.4m×2.57≒52.43㎡）', t.sound_wall_pb_sqm, 20.4 * H);
 }

@@ -50,14 +50,30 @@ const OVERRIDES = {
 // エンジン変更でここがズレたら✗（exit 1）。意図した変更なら差分を明記してこの表を更新する。
 // takeoff: true=展開図実測置換済み / false=推定パス値（E・Fは展開図が記録に無い=API失敗の記録
 //   をそのまま再生するため、遮音壁PBはアルファ実績の固定13㎡[推定]が出る。0㎡ではない点に注意）。
-// counters: [nonparty, face_label, face_cap]（戸境壁フィルタ3種の棄却数。時点の指紋になる）
+// counters: [nonparty, face_label, face_cap, wet_rerouted, closet_excluded]
+//   （戸境壁フィルタ3種の棄却数 + 部位スコープ整合2件のカウンタ。時点の指紋になる）
+// soundWet: takeoff.sound_wall_waterproof_pb_sqm（②振替バケット・表示スコープ外の㎡。資材行なし）
+//
+// 【2026-07-26 部位スコープ整合2件での更新（変化理由の部位単位内訳）】
+//   ① 収納室スコープ除外（XLSに収納の部屋ブロックなし=何も拾わないが正）による壁PB減:
+//     A 71→55枚（SCL 17.86㎡ + WCL 3.29㎡ = -21.15㎡ → 98.13→76.98㎡・正解75.50に対し+30%→+2%）
+//     B 42→42枚（SCL 0.74㎡減=58.74→58.00㎡だがceil境界を跨がず枚数不変）
+//     C 45→41枚（WCL 4.92㎡減 → 61.99→57.07㎡。正解74.37に対し-17%→-23%＝**見かけ悪化**。
+//       これは収納の過大が玄関/台所の読み欠落過少と相殺していたのが剥がれた正直化。
+//       部屋単位ではWCL行の+4.92誤計上が消え、残る過少は読み取り欠落起因=診断表参照）
+//     D 34→23枚（WCL 14.40㎡減 → 46.45→32.05㎡。-1%→-32%＝同じく相殺剥がれの正直化。
+//       部屋レベルでは玄関-12.66/台所-13.04の読み欠落過少が残存＝読み取り側の課題）
+//   ② 水回り遮/G枠の耐水バケット振替（棄却→遮音壁耐水PB=XLS集計表r60実在部位の検出へ）:
+//     nonpartyカウンタ A1→0 / B1→0 / D3→0（D内訳: 洗面+トイレ→wet 2件・WCL→①closet除外1室）。
+//     壁PB・遮音壁PBの数値は②では1バイトも動かない（棄却時も計上していなかったため）。
+//     soundWet= A6.35 / B6.20 / D8.45㎡（正解23.7〜35.2㎡に対し-72〜-82%の過少=AI検出限界を受容）
 const SNAPSHOT = {
-  A: { wall: 71, sound: 29.92, ceil: 51, wallTakeoff: true,  soundTakeoff: true,  counters: [1, 0, 0] },
-  B: { wall: 42, sound: 53.75, ceil: 34, wallTakeoff: true,  soundTakeoff: true,  counters: [1, 0, 1] },
-  C: { wall: 45, sound: 35.36, ceil: 42, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0] },
-  D: { wall: 34, sound: 44.88, ceil: 41, wallTakeoff: true,  soundTakeoff: true,  counters: [3, 5, 5] },
-  E: { wall: 76, sound: 13,    ceil: 41, wallTakeoff: false, soundTakeoff: false, counters: null },
-  F: { wall: 79, sound: 13,    ceil: 43, wallTakeoff: false, soundTakeoff: false, counters: null },
+  A: { wall: 55, sound: 29.92, ceil: 51, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0, 1, 2], soundWet: 6.35 },
+  B: { wall: 42, sound: 53.75, ceil: 34, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 1, 1, 1], soundWet: 6.20 },
+  C: { wall: 41, sound: 35.36, ceil: 42, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0, 0, 2], soundWet: 0 },
+  D: { wall: 23, sound: 44.88, ceil: 41, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 5, 5, 2, 1], soundWet: 8.45 },
+  E: { wall: 76, sound: 13,    ceil: 41, wallTakeoff: false, soundTakeoff: false, counters: null, soundWet: null },
+  F: { wall: 79, sound: 13,    ceil: 43, wallTakeoff: false, soundTakeoff: false, counters: null, soundWet: null },
 };
 
 // 正解: 別府9タイプ正解JSON（XLS集計表の戸当セル・90セル一致検証済み）
@@ -137,7 +153,12 @@ for (const T of ['A', 'B', 'C', 'D', 'E', 'F']) {
     console.log(`  フィルタ棄却: nonparty=${takeoff.beppu_sound_nonparty_dropped}`
       + ` / face_label=${takeoff.beppu_sound_face_label_dropped}`
       + ` / face_cap=${takeoff.beppu_sound_face_cap_dropped}`
+      + ` / 耐水振替=${takeoff.beppu_sound_wet_rerouted}件`
+      + ` / 収納除外=${takeoff.beppu_closet_rooms_excluded}室`
       + ` / 警告${(result._warnings || []).length}件（表示のみ・判定外）`);
+    const expSoundWet = parts['遮音壁耐水PB']?.area_or_length;
+    console.log(`  遮音壁耐水PB: ${takeoff.sound_wall_waterproof_pb_sqm}㎡（②振替バケット・表示スコープ外・資材行なし）`
+      + ` vs 正解${expSoundWet?.toFixed(1) ?? '-'}㎡ (${fmtPct(takeoff.sound_wall_waterproof_pb_sqm, expSoundWet)}) ※情報表示のみ・過少はAI検出限界を受容`);
   } else {
     console.log(`  フィルタ棄却: -（展開図なし） / 警告${(result._warnings || []).length}件（表示のみ・判定外）`);
   }
@@ -151,10 +172,17 @@ for (const T of ['A', 'B', 'C', 'D', 'E', 'F']) {
   if (!!wall?.takeoff !== snap.wallTakeoff) errs.push(`壁PB takeoff ${!!wall?.takeoff} ≠ snap ${snap.wallTakeoff}`);
   if (!!sound?.takeoff !== snap.soundTakeoff) errs.push(`遮音壁PB takeoff ${!!sound?.takeoff} ≠ snap ${snap.soundTakeoff}`);
   const gotCounters = takeoff
-    ? [takeoff.beppu_sound_nonparty_dropped, takeoff.beppu_sound_face_label_dropped, takeoff.beppu_sound_face_cap_dropped]
+    ? [takeoff.beppu_sound_nonparty_dropped, takeoff.beppu_sound_face_label_dropped, takeoff.beppu_sound_face_cap_dropped,
+       takeoff.beppu_sound_wet_rerouted, takeoff.beppu_closet_rooms_excluded]
     : null;
   if (JSON.stringify(gotCounters) !== JSON.stringify(snap.counters)) {
     errs.push(`フィルタ棄却カウンタ ${JSON.stringify(gotCounters)} ≠ snap ${JSON.stringify(snap.counters)}`);
+  }
+  // ②振替バケット（表示スコープ外＝資材行は無い。takeoff値そのものを指紋にする）
+  const gotSoundWet = takeoff ? takeoff.sound_wall_waterproof_pb_sqm : null;
+  if (snap.soundWet === null ? gotSoundWet !== null
+    : !(Number.isFinite(gotSoundWet) && Math.abs(gotSoundWet - snap.soundWet) <= 0.02)) {
+    errs.push(`遮音壁耐水PB(振替バケット) ${gotSoundWet} ≠ snap ${snap.soundWet}（±0.02㎡超）`);
   }
   if (errs.length > 0) {
     ng++;

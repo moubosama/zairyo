@@ -98,7 +98,11 @@ console.log('--- 3b. 面記号 face.wall_code=遮/G枠 でも棄却/計上が効
   };
   const tw = computeElevationTakeoff({ rooms: [wetFace] }, [], OPTS);
   check('洗面の面記号遮は棄却（遮音壁PB=0）', Math.round(tw.sound_wall_pb_sqm * 1000) / 1000, 0);
-  check('洗面の面記号遮でカウンタ加算（dropped=1）', tw.beppu_sound_nonparty_dropped, 1);
+  // 【2026-07-26 部位スコープ整合】水回りの遮/G枠はnonparty棄却でなく遮音壁耐水PBバケットへ
+  // 振替（wet_rerouted）。遮音壁PBに載らない点（上のアサーション）は不変
+  check('洗面の面記号遮は耐水振替（wet_rerouted=1・nonparty=0）',
+    [tw.beppu_sound_wet_rerouted, tw.beppu_sound_nonparty_dropped], [1, 0]);
+  approx('耐水振替バケット（2.0×2.57≒5.14㎡）', tw.sound_wall_waterproof_pb_sqm, 5.14, 1e-2);
 
   const livingFace = {
     name: '洋室3', ceiling_height_mm: 2400,

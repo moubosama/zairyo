@@ -134,8 +134,14 @@ console.log('--- 4. NON_PARTY部屋は面ラベル集計に数えない ---');
   const t = computeElevationTakeoff({ rooms }, [], OPTS);
   // 居室2室は面ラベル混同に達しない → face_label_dropped=0
   check('居室2室はface_label混同に達しない（face_label_dropped=0）', t.beppu_sound_face_label_dropped, 0);
-  // NON_PARTY3室（洗面/WCL/トイレ）は従来の物理制約で落ちる
-  check('NON_PARTY3室はnonpartyで落ちる（nonparty_dropped=3）', t.beppu_sound_nonparty_dropped, 3);
+  // 【2026-07-26 部位スコープ整合】NON_PARTY3室の内訳が変わった:
+  //   水回り（洗面/トイレ）→ 遮音壁耐水PBバケットへ振替（wet_rerouted） /
+  //   収納（WCL）→ 部屋ごとスコープ除外（closet_excluded）。nonparty棄却は0になる
+  check('水回り2室（洗面/トイレ）は耐水振替（wet_rerouted=2）', t.beppu_sound_wet_rerouted, 2);
+  check('収納1室（WCL）はスコープ除外（closet_excluded=1）', t.beppu_closet_rooms_excluded, 1);
+  check('nonparty棄却は0（水回り=振替・収納=部屋除外へ移行）', t.beppu_sound_nonparty_dropped, 0);
+  // 振替バケット: 洗面D面2.44 + トイレD面1.0 = 3.44m × 下地高2.57 = 8.8408㎡
+  approx('耐水振替バケット（(2.44+1.0)×2.57≒8.84㎡）', t.sound_wall_waterproof_pb_sqm, 8.84, 2e-2);
   // 居室2室のD面遮は計上（3.0×2.57×2≒15.42㎡）
   approx('居室2室のD面遮は計上（≒15.42㎡）', t.sound_wall_pb_sqm, 15.42, 2e-2);
 }
@@ -154,7 +160,11 @@ console.log('--- 4. NON_PARTY部屋は面ラベル集計に数えない ---');
   ];
   const t = computeElevationTakeoff({ rooms }, [], OPTS);
   check('別府D型: 居室5室のD面遮を棄却（face_label_dropped=5）', t.beppu_sound_face_label_dropped, 5);
-  check('別府D型: NON_PARTY3室はnonpartyで棄却（nonparty_dropped=3）', t.beppu_sound_nonparty_dropped, 3);
+  // 【2026-07-26 部位スコープ整合】旧nonparty=3の内訳: 水回り2（洗面/トイレ）=耐水振替 /
+  // 収納1（WCL）=部屋ごとスコープ除外。nonparty棄却は0
+  check('別府D型: 水回り2室は耐水振替（wet_rerouted=2）', t.beppu_sound_wet_rerouted, 2);
+  check('別府D型: 収納WCLはスコープ除外（closet_excluded=1）', t.beppu_closet_rooms_excluded, 1);
+  check('別府D型: nonparty棄却は0', t.beppu_sound_nonparty_dropped, 0);
   check('別府D型: 面記号経由の遮音壁PBは全棄却（=0）', Math.round(t.sound_wall_pb_sqm * 1000) / 1000, 0);
 }
 

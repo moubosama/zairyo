@@ -51,6 +51,10 @@ const TOL_MM = 80; // エンジンPLACEMENT_TOL_MMと同値
 // ============================================================
 const NON_PARTY_RE = /バルコニ|ベランダ|倉庫|パントリ|クロゼット|SCL|WCL|WIC|(?:^|[^A-Za-z])CL(?![A-Za-z])|押入|物入|トイレ|便所|洗面|パウダ|(?:^|[^A-Za-z])UB(?![A-Za-z])|浴/i;
 const UB_RE = /^(UB|ユニットバス|浴室)$/;
+// 別府スコープ整合2件（2026-07-26）のミラー: 収納室=部屋ごと除外（isBeppuLayout時） /
+// 水回りの遮/G枠=遮音壁耐水PBバケットへ振替（出典: BEPPU_CLOSET_SCOPE_ROOM_RE / SOUND_WET_ROOM_RE）
+const CLOSET_RE = /パントリ|クロゼット|SCL|WCL|WIC|(?:^|[^A-Za-z])CL(?![A-Za-z])|押入|物入/i;
+const WET_RE = /トイレ|便所|洗面|パウダ|(?:^|[^A-Za-z])UB(?![A-Za-z])|浴/i;
 const CONFUSION_MIN_ROOMS = 3;
 const CAP_PER_ROOM = 2;
 const CAP_PER_DWELLING = 6;
@@ -124,6 +128,8 @@ function classifySoundDetections(rooms, opts) {
   rooms.forEach((room, roomIdx) => {
     const rn = normalizeRoomName(room.name);
     const isUB = UB_RE.test(rn);
+    const isCloset = CLOSET_RE.test(rn); // ①部屋ごと除外（別府記録=isBeppuLayout前提）
+    const isWet = WET_RE.test(rn);       // ②耐水振替
     const isNonParty = NON_PARTY_RE.test(rn);
     const faces = Array.isArray(room.faces) ? room.faces : [];
     if (Array.isArray(room.plan_placements) && faces.length >= 1) {
@@ -134,7 +140,8 @@ function classifySoundDetections(rooms, opts) {
         if (!(c.beppu === '遮' || c.beppu === 'G枠')) return;
         units.push({
           roomIdx, room, kind: 'seg', plIdx, code: c.beppu, len_m: len / 1000,
-          status: isUB ? 'UB室スキップ' : isNonParty ? 'nonparty棄却' : 'pool',
+          status: isUB ? 'UB室スキップ' : isCloset ? 'closet除外'
+            : isWet ? '耐水振替' : isNonParty ? 'nonparty棄却' : 'pool',
         });
       });
     }
@@ -144,9 +151,9 @@ function classifySoundDetections(rooms, opts) {
       units.push({
         roomIdx, room, kind: 'face', faceIdx, faceLabel: face?.face || null,
         code: c.beppu, len_m: (face.width_mm || 0) / 1000,
-        status: isUB ? 'UB室スキップ'
+        status: isUB ? 'UB室スキップ' : isCloset ? 'closet除外'
           : !((face.width_mm || 0) > 0) ? '幅0不計上'
-          : isNonParty ? 'nonparty棄却' : 'pool',
+          : isWet ? '耐水振替' : isNonParty ? 'nonparty棄却' : 'pool',
       });
     });
   });
@@ -337,11 +344,13 @@ for (const T of ['A', 'B', 'C', 'D']) {
   const mirrorNonparty = cnt('nonparty');
   const mirrorFaceLabel = cnt('face_label');
   const mirrorCap = units.filter((u) => u.status.startsWith('face_cap')).length;
+  const mirrorWet = cnt('耐水振替');
   const selfCheckOk = mirrorNonparty === base.beppu_sound_nonparty_dropped
     && mirrorFaceLabel === base.beppu_sound_face_label_dropped
-    && mirrorCap === base.beppu_sound_face_cap_dropped;
-  console.log(`  検出計${units.length}件 / ミラー分類: nonparty=${mirrorNonparty} face_label=${mirrorFaceLabel} face_cap=${mirrorCap}`
-    + ` / takeoff実カウンタ: ${base.beppu_sound_nonparty_dropped}/${base.beppu_sound_face_label_dropped}/${base.beppu_sound_face_cap_dropped}`
+    && mirrorCap === base.beppu_sound_face_cap_dropped
+    && mirrorWet === base.beppu_sound_wet_rerouted;
+  console.log(`  検出計${units.length}件 / ミラー分類: nonparty=${mirrorNonparty} face_label=${mirrorFaceLabel} face_cap=${mirrorCap} 耐水振替=${mirrorWet}`
+    + ` / takeoff実カウンタ: ${base.beppu_sound_nonparty_dropped}/${base.beppu_sound_face_label_dropped}/${base.beppu_sound_face_cap_dropped}/${base.beppu_sound_wet_rerouted}`
     + (selfCheckOk ? ' ✅一致' : ' ⚠不一致（ミラー陳腐化の疑い・分類表示は参考値）'));
   console.log('  ' + padD('部屋(正解名)', 16) + padD('正解㎡', 9) + padD('エンジン㎡', 11) + padD('差㎡', 9) + '検出内訳（遮/G枠）');
   const soundRows = [];
@@ -384,7 +393,10 @@ for (const T of ['A', 'B', 'C', 'D']) {
     + padD(fmt(base.sound_wall_pb_sqm - truthSoundTotal), 9)
     + `(ΣLOO=${fmt(looSoundSum)}㎡・フィルタ相互作用差${fmt(base.sound_wall_pb_sqm - looSoundSum)}㎡)`);
   const truthSoundWetTotal = truthRooms.reduce((s, r) => s + truthRoomSubtotal(r, ['soundWet']), 0);
-  console.log(`  （参考）正解の遮音壁耐水PB=${fmt(truthSoundWetTotal)}㎡はエンジン未実装部位（別部位・水回り壁の主体）`);
+  console.log(`  遮音壁耐水PB（②振替バケット・表示スコープ外）: エンジン${fmt(base.sound_wall_waterproof_pb_sqm)}㎡`
+    + ` vs 正解${fmt(truthSoundWetTotal)}㎡ (${pct(base.sound_wall_waterproof_pb_sqm, truthSoundWetTotal)})`
+    + ` — 振替${base.beppu_sound_wet_rerouted}件・過少はAIの水回り検出限界（受容）`);
+  console.log(`  収納室スコープ除外（①）: ${base.beppu_closet_rooms_excluded}室（XLSに部屋ブロックなし=何も拾わない）`);
 
   // ── 4. 残差の主因TOP3 ─────────────────────────────────────
   const top3 = (rows) => rows.filter((r) => Number.isFinite(r.diff))

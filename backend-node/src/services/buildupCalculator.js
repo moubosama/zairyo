@@ -136,6 +136,49 @@ const UB_ROOM_NAME_RE = /^(UB|ユニットバス|浴室)$/;
 const NON_PARTY_WALL_ROOM_RE =
   /バルコニ|ベランダ|倉庫|パントリ|クロゼット|SCL|WCL|WIC|(?:^|[^A-Za-z])CL(?![A-Za-z])|押入|物入|トイレ|便所|洗面|パウダ|(?:^|[^A-Za-z])UB(?![A-Za-z])|浴/i;
 
+// ============================================================
+// 別府の部位スコープ整合 2件（2026-07-26・部屋単位診断 diag-beppu-rooms.mjs で確定した原典事実に基づく）
+// ============================================================
+// 【① 収納室のスコープ除外（BEPPU_CLOSET_SCOPE_ROOM_RE）】
+//   別府のXLSタイプ別シート（beppu-room-truth.json・1845項目検証済み）の正確な事実（reviewer SF-1で訂正済み）:
+//   ・SCL/WCLの部屋ブロックは**存在しない**
+//   ・押入/物入ブロックは**実在する**が、中身は洗面片引き軸組・ｼｽﾃﾑ収納床組・際根太・
+//     EV面遮音壁（界壁）（A=8.02/B=13.93/H=22.74㎡）等で、**壁ボード・巾木の行は無い**
+//   ＝「収納室の壁PB・巾木は拾わない」が正（壁PB過大の除去としての①は正しい）。
+//   【既知の限界】将来の読みで展開図に「押入」「物入」室が現れ、その面にEV面のD14/B記号が
+//   付いた場合、①の部屋ごと除外がEV廻り壁の実在寄与（8〜23㎡級）ごと落とす狭い穴がある
+//   （現記録の展開図収納室はSCL/WCLのみ＝非発生。発生時は警告の部屋名で気づける。
+//    是正するなら押入/物入をREから外しEV系記号面だけ拾う分岐が要る＝次サイクル判断）。
+//   エンジンは展開図に現れた収納室を既定G14で通常壁PBに計上しており、
+//   A: SCL +17.86㎡ / D: WCL +14.40㎡ / C: WCL +4.92㎡ の過大源になっていた（診断実測）。
+//   → isBeppuLayout（遮/G枠マーカー実在＝アルファに物理的に無い記号）のときだけ、
+//     収納系部屋名の展開図室を**部屋ごとtakeoff寄与から除外**する（壁PB・巾木・周長・下地すべて）。
+//   ・正規表現は NON_PARTY_WALL_ROOM_RE の「収納内部」部分と同一定義（サブセット。
+//     水回り・屋外・倉庫は①の対象外＝除外しない）。判定は normalizeRoomName 後（長音除去済み）。
+//   ・アルファ非発火の構造的保証: isBeppuLayout ゲート（遮/G枠が1件も無いアルファ記録では
+//     常にfalse）＝アルファGは1バイトも変わらない。
+//   ・除外は黙って行わず beppu_closet_rooms_excluded カウンタ + _warnings(field:'beppu_closet_scope')
+//     で可視化する。
+const BEPPU_CLOSET_SCOPE_ROOM_RE =
+  /パントリ|クロゼット|SCL|WCL|WIC|(?:^|[^A-Za-z])CL(?![A-Za-z])|押入|物入/i;
+
+// 【② 水回りの遮/G枠 → 遮音壁耐水PBバケットへ振替（SOUND_WET_ROOM_RE）】
+//   別府の便所・洗面所の壁はほぼ全量「遮音壁耐水ＰＢ張」（XLS集計表r60＝タイプ別P332+P386参照。
+//   全9タイプに実在 23.7〜35.2㎡/戸・換算係数1.4）＝**エンジン未実装の実在部位**。
+//   従来は NON_PARTY_WALL_ROOM_RE フィルタが水回りの遮/G枠検出を丸ごと棄却しており
+//   （「遮音壁PB(t9.5+GW)行の保護」としては正しいが）実在部位の受け皿が無かった。
+//   → 水回り（下記RE）で読まれた遮/G枠は棄却でなく新バケット sound_wall_waterproof_pb_sqm
+//     （セグメント長/面幅 × 下地高）へ振替する。
+//   ・正規表現は NON_PARTY_WALL_ROOM_RE の「水回り内部」部分と同一定義（サブセット）。
+//   ・バケットは**データ層とsummaryのみ**（filterKenzaiScope外＝資材行は新設しない。
+//     名称・摘要・単価の行新設と画面表示はけいとさん確認事項として保留中のため）。
+//     _warnings(field:'sound_wall_waterproof_pb') で検出㎡を可視化し手動追加を促す。
+//   ・検出はAIの水回り読み取りに依存し正解より大幅過少になる見込み（例: A G枠@2250→約6.3㎡
+//     vs 正解35.17㎡）だが、そのまま受容する（答え合わせで水増ししない）。
+//   ・壁PB側は従来（nonparty棄却時）と同じく触らない（棄却＝「検出が無かった」扱いのまま
+//     計上先だけを新バケットへ＝②単独では壁PB・遮音壁PBの数値は1バイトも動かない）。
+const SOUND_WET_ROOM_RE = /トイレ|便所|洗面|パウダ|(?:^|[^A-Za-z])UB(?![A-Za-z])|浴/i;
+
 // 開口控除の物理上限（面面積に対する開口合計の比率）。壁一面がほぼ開口で埋まることは
 // 物理的に無い（袖壁・垂れ壁が残る）ため、超過は開口の幻覚・重複転記とみなして
 // ①面内の完全同一開口（符号/type+寸法一致）の2件目以降を落とす → ②なお超過なら比率まで縮退+警告。
@@ -974,6 +1017,12 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
     waterproof_pb_sqm: 0,    // 耐水PB t9.5
     ev_wall_pb_sqm: 0,       // EV廻り・防露壁面のPB t9.5（D下地×中間1/4。XLSは壁(ボード)と別部位で拾う）
     sound_wall_pb_sqm: 0,    // 遮音壁PB張り t9.5+GW（下地L/O/W）
+    // 遮音壁耐水PB（別府 集計表r60「遮音壁耐水ＰＢ張」・水回りの戸境壁）。
+    // 水回りで読まれた遮/G枠の振替先（SOUND_WET_ROOM_RE の注記参照）。
+    // **表示スコープ外**（filterKenzaiScope外・資材行なし）＝データ層とsummaryのみ。
+    // GW・遮音シートはこのバケットでは積まない（r60の規格の正はけいとさん確認待ちのため
+    // 確定している耐水PB面積のみを転記する）
+    sound_wall_waterproof_pb_sqm: 0,
     gw_sqm: 0,               // グラスウール充填（下地L/S/W）
     sound_sheet_sqm: 0,      // 遮音シート（下地O）
     rawan_veneer_sqm: 0,     // ラワンベニヤ（中間3）
@@ -1033,6 +1082,13 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 面数物理上限（1部屋最大2面・住戸最大6面）の超過分として棄却した遮/G枠の件数（2026-07-25）。
   // 値は下のプレパス（soundFaceCap）で確定する。下で_warningsへ集約。
   t.beppu_sound_face_cap_dropped = 0;
+  // 別府スコープ除外した収納室の数（①・BEPPU_CLOSET_SCOPE_ROOM_RE参照・2026-07-26）。
+  // isBeppuLayoutのときのみ発火。下で_warningsへ集約。
+  t.beppu_closet_rooms_excluded = 0;
+  const beppuClosetExcludedNames = []; // 警告表示用の部屋名リスト（takeoffには載せない）
+  // 水回りの遮/G枠を遮音壁耐水PBバケットへ振替した件数（②・SOUND_WET_ROOM_RE参照・2026-07-26）。
+  // 従来は beppu_sound_nonparty_dropped に数えていた分のうち水回り分がこちらへ移る。
+  t.beppu_sound_wet_rerouted = 0;
 
   // 高さ誤転記の疑い寸法（2026-07-19 Gemini読取ノイズ対策）: 平面図タイルの壁寸法(wall_length_mm)に
   // 天井高（2,400/2,200等の図面内の高さ表記）が混入する実例があるため、いずれかの部屋のCHと
@@ -1235,6 +1291,16 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   for (const [roomIdx, room] of rooms.entries()) {
     // UB内部の立面は拾わない（UB_ROOM_NAME_RE参照。読取ノイズで幻出した室のスキップ）
     if (UB_ROOM_NAME_RE.test(normalizeRoomName(room.name))) continue;
+    // ① 別府スコープ: 収納室（SCL/WCL等）はXLSに部屋ブロック自体が無い＝何も拾わないが正
+    //   （BEPPU_CLOSET_SCOPE_ROOM_RE の注記参照）。壁PB・巾木・周長・下地・開口の全寄与を
+    //   部屋ごと除外する。isBeppuLayout ゲートによりアルファでは構造的に非発火。
+    //   ※ 遮/G枠プレパス（soundFaceCap/faceLabelConfusion）は NON_PARTY_WALL_ROOM_RE で
+    //     元から収納室を除外済み（収納REはそのサブセット）＝roomIdxキーの整合は崩れない。
+    if (isBeppuLayout && BEPPU_CLOSET_SCOPE_ROOM_RE.test(normalizeRoomName(room.name))) {
+      t.beppu_closet_rooms_excluded += 1;
+      beppuClosetExcludedNames.push(room.name);
+      continue;
+    }
     const ch = (room.ceiling_height_mm || 2400) / 1000;
     // 下地高: 物件別入力 > 展開図の部屋別実値 > アルファ実績値（2.57/水回り2.77）。
     // CH非連動（resolveStudHeightM / STUD_HEIGHT_M定義のコメント参照）
@@ -1378,7 +1444,21 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         // 面幅マッチ（±80mm）は合算面（LDK-A面8200等）で外れて過少/過大化するため。
         // ただし戸境壁を物理的に持ち得ない部屋（isNonPartyRoom）の遮/G枠は誤検出として棄却。
         if (isBeppuSoundCode(c)) {
-          if (isNonPartyRoom) { t.beppu_sound_nonparty_dropped += 1; continue; }
+          if (isNonPartyRoom) {
+            // ② 水回り（便所/洗面等）の遮/G枠は棄却でなく「遮音壁耐水ＰＢ張」（XLS集計表r60・
+            //   実在部位）の検出として新バケットへ振替（SOUND_WET_ROOM_RE の注記参照）。
+            //   遮音壁PB(t9.5+GW)行の保護（＝soundSegmentsへ積まない）は従来どおり維持し、
+            //   soundDeductByFace にも登録しない＝壁PB側は「検出が無かった」扱いのまま不変。
+            //   それ以外のnonparty（バルコニー/倉庫）は従来どおり誤読として棄却。
+            //   収納系はこのループの前に部屋ごと除外済み（①）＝ここへは来ない。
+            if (SOUND_WET_ROOM_RE.test(normalizeRoomName(room.name))) {
+              t.sound_wall_waterproof_pb_sqm += (len / 1000) * studH;
+              t.beppu_sound_wet_rerouted += 1;
+            } else {
+              t.beppu_sound_nonparty_dropped += 1;
+            }
+            continue;
+          }
           // 物理制約その3: 面数上限の超過分（soundFaceCap参照。カウンタはプレパスで確定済み）。
           // 棄却＝セグメント不計上＋soundDeductByFace未登録＝nonparty棄却と同じ「検出が
           // 無かった」扱い（差し引かれなくなった幅は既定コードの壁として壁PB側に通常計上される）
@@ -1714,7 +1794,16 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
       // 壁PBも積まず素通りさせる（＝soundSegmentsのcontinueと同じ「丸ごと落とす」過少側の扱い）。
       // ※ 判定は code.beppu マーカー付きの遮/G枠のみ（アルファのL/O/Wは beppu が無く非該当＝不変）。
       if (code.beppu && ['遮', 'G枠'].includes(code.beppu) && isNonPartyRoom) {
-        t.beppu_sound_nonparty_dropped += 1;
+        // ② 水回りの遮/G枠面は棄却でなく遮音壁耐水PBバケットへ振替（セグメント経路と同じ規則。
+        //   SOUND_WET_ROOM_RE の注記参照）。面積は遮音壁の拾い方（L/O/W分岐のnetSlab）と同じ
+        //   「面幅×下地高−開口(下地高キャップ)」＝遮音壁はボードをスラブ下まで張るため。
+        //   壁PB・遮音壁PB・GW・遮音シートへは従来どおり積まない（振替先だけが変わる）。
+        if (SOUND_WET_ROOM_RE.test(normalizeRoomName(room.name))) {
+          t.sound_wall_waterproof_pb_sqm += Math.max(0, w * studH - openingAreaStud);
+          t.beppu_sound_wet_rerouted += 1;
+        } else {
+          t.beppu_sound_nonparty_dropped += 1;
+        }
         // 巾木・周長・開口・部屋統計は上で計上済み。仕上げ（クロス）だけは面の実仕上げとして拾う
         if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
         continue;
@@ -1925,11 +2014,49 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   if (t.beppu_sound_nonparty_dropped > 0) {
     t._warnings.push({
       field: 'sound_wall_nonparty_room',
+      // ※①収納除外・②水回り振替（2026-07-26）の導入後、この棄却へ到達するのは
+      //   バルコニー/ベランダ/倉庫（住戸外）のみ（収納は①で部屋ごと除外・水回りは②で振替が先行）
       message: `戸境二重壁（遮 / G枠）の読み取り${t.beppu_sound_nonparty_dropped}件を、`
-        + '戸境壁を物理的に持ち得ない部屋（バルコニー・倉庫・収納内部・水回り内部）で'
+        + '戸境壁を物理的に持ち得ない部屋（バルコニー・倉庫など住戸外）で'
         + '検出したため誤読とみなして棄却しました。'
         + '戸境壁は隣接する別住戸との境界にのみ存在します。'
         + '該当部屋に本当に戸境壁がある場合は手動で追加してください（要確認）',
+      before: null, after: null,
+    });
+  }
+
+  // ① 別府スコープ: 収納室の除外の明示（2026-07-26・BEPPU_CLOSET_SCOPE_ROOM_RE参照）。
+  // 別府のXLSタイプ別シートにはSCL/WCL等のブロックが無く、押入・物入ブロックは実在するが
+  // 壁ボード・巾木の行が無い（reviewer SF-1で訂正済みの正確な事実。定義側コメント参照）
+  // ＝収納室の壁PB・巾木は拾わないのが正。黙って消さず部屋名と件数を可視化する。
+  // アルファは isBeppuLayout=false で非発火＝通常運用では出ない。
+  if (t.beppu_closet_rooms_excluded > 0) {
+    t._warnings.push({
+      field: 'beppu_closet_scope',
+      message: `展開図の収納室${t.beppu_closet_rooms_excluded}室`
+        + `（${beppuClosetExcludedNames.join('・')}）を資材拾いから除外しました。`
+        + 'この物件方式（戸境二重壁記号のある図面）では収納は作り付けシステム収納で、'
+        + '拾い出しXLSでも収納室の壁ボード・巾木は拾われていないためです（本計算でも計上しません）。'
+        + '収納内部を大工工事で造作する場合は手動で追加してください（要確認）',
+      before: null, after: null,
+    });
+  }
+
+  // ② 遮音壁耐水PBの検出の明示（2026-07-26・SOUND_WET_ROOM_RE参照）。
+  // 「遮音壁耐水ＰＢ張」はXLS集計表r60に実在する部位（全9タイプ23.7〜35.2㎡/戸）だが、
+  // 資材行の名称・摘要・単価の正はけいとさん確認待ちのため行は新設しない（表示スコープ外・
+  // データ層とsummaryのみ）。検出はAIの水回り読み取りに依存し正解より大幅過少になりうる
+  // （水回りの戸境壁の一部しか読めない）ことも含めて明示する。
+  if (t.sound_wall_waterproof_pb_sqm > 0) {
+    t._warnings.push({
+      field: 'sound_wall_waterproof_pb',
+      message: `遮音壁耐水PB（水回りの戸境壁）${Math.round(t.sound_wall_waterproof_pb_sqm * 10) / 10}㎡を`
+        + `検出しました（振替${t.beppu_sound_wet_rerouted}件・表示外・参考値）。`
+        + '拾い出しXLSの「遮音壁耐水ＰＢ張」に対応する実在部位ですが、資材リストには行がありません'
+        + '（名称・摘要・単価の確認待ちのため未実装）。またこの数値はAIが水回りで読めた戸境壁のみで、'
+        + '実際より少ない可能性があります。なお同じ壁の面積の一部が「壁 石膏ボード」行にも'
+        + '含まれている場合があります（読取経路による・二重手配に注意）。'
+        + '別途手配する場合は手動で追加してください（未実装項目）',
       before: null, after: null,
     });
   }
@@ -2155,6 +2282,12 @@ export function applyElevationTakeoff(result, takeoff, opts = {}) {
     //   0<ev<0.75㎡ で 行3枚/summary0枚 の不整合が出るため一致させる）。
     result.summary.ev_wall_pb_sheets = evWallSheets;
     result.summary.sound_wall_pb_sqm = takeoff.sound_wall_pb_sqm;
+    // 遮音壁耐水PB（別府r60・②振替バケット）: 検出があるときだけsummaryへ載せる。
+    // 資材行は新設しない（表示スコープ外・データ層とsummaryのみ。SOUND_WET_ROOM_RE の注記参照）。
+    // 0のとき（アルファ・検出なし別府）はキー自体を書かない＝既存出力とバイト単位で不変を保つ
+    if (takeoff.sound_wall_waterproof_pb_sqm > 0) {
+      result.summary.sound_wall_waterproof_pb_sqm = takeoff.sound_wall_waterproof_pb_sqm;
+    }
     result.summary.kitchen_panel_sqm = kpSqm;
     result.summary.kp_sheets = kpSheets;
   }
