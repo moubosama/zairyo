@@ -1,0 +1,169 @@
+// 別府A〜Fの記録済みAI読み取り（scripts/recordings/beppu-{a..f}-gemini-read-gemini-2.5-flash.json）を
+// エンジンに通し、①正解JSONとの乖離%を単位厳密で表示（情報表示のみ）②現HEADスナップショットとの
+// 回帰判定（ズレたら✗でexit 1）を行う（AI呼び出しゼロ・replay-gtype.mjsの別府版）。
+//
+// 【なぜ必要か・2026-07-26】別府の精度数値はこれまで会話内で手転記されており、
+//   ①単位混同（資材行「遮音壁PB張り」は**㎡**なのに枚の正解と比較する事故が実際に発生）
+//   ②時点ズレ（フィルタ導入前後の値の混在）が起きた。このスクリプトが機械再現の口になる。
+//
+// 【使い方】エンジン（src/services/）を変更したら必ず実行すること。
+//   node scripts/replay-beppu.mjs
+//   別府数値が動く変更は、差分（どの行がなぜ動いたか）をレビューに明記した上で
+//   下の SNAPSHOT を更新する（commit-hygiene-replay-gate型のガード。黙って更新しない）。
+//
+// 【判定の設計】
+//   ・回帰判定はSNAPSHOT（現HEADの実行値・2026-07-26採取）とのみ比較する。
+//     正解JSONとの乖離%は情報表示のみ＝「正解に寄せる」判定はしない
+//     （残差は読み取り品質起因と確定済み。CLAUDE.md「別府主要3部位の現到達度」参照）。
+//   ・許容: 枚=±0（整数丸め済み）/ ㎡=±0.02（浮動小数の表示丸めのみ吸収）/ カウンタ=±0。
+//   ・警告数は表示のみ（時点の可視化。判定には使わない）。
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import {
+  computeElevationTakeoff, applyElevationTakeoff, filterKenzaiScope, validateTakeoffSanity,
+} from '../src/services/buildupCalculator.js';
+import { calculateMaterials } from '../src/services/materialCalculator.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const recDir = path.join(__dirname, 'recordings');
+
+// 専有面積（各平面図の「住戸面積」記載値。記録のtotal_floor_area_sqmと同値のはずだが、
+// 記録が欠けた場合のサニティ判定フォールバックとして明記しておく）
+const AREAS = { A: 83.43, B: 57.22, C: 70.12, D: 69.35, E: 67.90, F: 71.29 };
+
+// 別府物件プロファイル（文書化済みoverride一式。出典: CLAUDE.md「別府A〜F Gemini実読みE2E」節・
+// e2e-beppu-a.mjs末尾のプロファイルコメント）。本番/calculateのoverridesObjと同じ文字列形式。
+const OVERRIDES = {
+  building_type: 'new',          // 別府は新築（推定パス=周長×階高ベースの新築式）
+  glasswool_coverage: '0.5',     // 別府のGW被覆率（アルファ既定0.135と別）
+  stud_height: '2720',           // 一般部下地高mm（アルファ2570と別）
+  stud_height_wet: '2820',       // 水回り下地高mm
+  ceiling_pb_extra_sheets: '0',  // 別府は集計表A74「ﾊﾟｳﾀﾞｰ･ﾄｲﾚ」加算行が無い（アルファG=4）
+  closet_rc_sqm: '0',            // 別府に収納面PBの概念なし（作り付けシステム収納）
+  households: '5',               // EV廻り壁PBの総量方式用（B〜G=5戸。E2E記録時の共通値）
+};
+
+// ============================================================================
+// 回帰スナップショット（現HEAD・2026-07-26実行値。正解値ではない＝正解との乖離は下の表で別掲）
+// ============================================================================
+// エンジン変更でここがズレたら✗（exit 1）。意図した変更なら差分を明記してこの表を更新する。
+// takeoff: true=展開図実測置換済み / false=推定パス値（E・Fは展開図が記録に無い=API失敗の記録
+//   をそのまま再生するため、遮音壁PBはアルファ実績の固定13㎡[推定]が出る。0㎡ではない点に注意）。
+// counters: [nonparty, face_label, face_cap]（戸境壁フィルタ3種の棄却数。時点の指紋になる）
+const SNAPSHOT = {
+  A: { wall: 71, sound: 29.92, ceil: 51, wallTakeoff: true,  soundTakeoff: true,  counters: [1, 0, 0] },
+  B: { wall: 42, sound: 53.75, ceil: 34, wallTakeoff: true,  soundTakeoff: true,  counters: [1, 0, 1] },
+  C: { wall: 45, sound: 35.36, ceil: 42, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0] },
+  D: { wall: 34, sound: 44.88, ceil: 41, wallTakeoff: true,  soundTakeoff: true,  counters: [3, 5, 5] },
+  E: { wall: 76, sound: 13,    ceil: 41, wallTakeoff: false, soundTakeoff: false, counters: null },
+  F: { wall: 79, sound: 13,    ceil: 43, wallTakeoff: false, soundTakeoff: false, counters: null },
+};
+
+// 正解: 別府9タイプ正解JSON（XLS集計表の戸当セル・90セル一致検証済み）
+const truth = JSON.parse(fs.readFileSync(path.join(__dirname, 'beppu-9types-ground-truth.json'), 'utf8'));
+
+const fmtPct = (got, exp) => {
+  if (!(exp > 0)) return '-';
+  const p = (got / exp - 1) * 100;
+  return `${p >= 0 ? '+' : ''}${p.toFixed(1)}%`;
+};
+
+let ng = 0;
+console.log('=== 別府A〜F 記録リプレイ（エンジン再生・AI呼び出しゼロ） ===');
+console.log('override:', JSON.stringify(OVERRIDES));
+
+for (const T of ['A', 'B', 'C', 'D', 'E', 'F']) {
+  const file = path.join(recDir, `beppu-${T.toLowerCase()}-gemini-read-gemini-2.5-flash.json`);
+  if (!fs.existsSync(file)) {
+    console.error(`✗ ${T}: 記録がありません: ${file}`);
+    ng++;
+    continue;
+  }
+  const rec = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+  // ── 本番 /calculate と同等の組み立て ──────────────────────────────
+  // calculateMaterials → 展開図があれば computeElevationTakeoff → validateTakeoffSanity
+  // → OKなら applyElevationTakeoff → filterKenzaiScope（routes/projects.js:1007-1075と同順）
+  const result = calculateMaterials(rec, {}, OVERRIDES);
+  let takeoff = null;
+  let sanityLabel = '展開図なし（記録にelevationsが無い=E2E時のAPI失敗も含む）';
+  if (rec.elevations?.rooms?.length) {
+    takeoff = computeElevationTakeoff(rec.elevations, rec.door_schedule || [], {
+      planRooms: rec.rooms || [],                       // 本番と同じ: 収納内の間仕切下地推定用
+      closetInteriors: rec.closet_interiors || [],
+      studHeight: { default_mm: 2720, wet_mm: 2820 },   // parseStudHeightOverrides(OVERRIDES)と同値
+      // アルファG専用の既定遮音ペアを無効化（別府E2Eプロファイル）。
+      // ※注意（reviewer SF-1）: sound_wall_rule系overrideは本番/calculateに配線されておらず、
+      //   本番は常にDEFAULT_SOUND_WALL_PAIRSが有効。現A〜D記録では幅ゲート1450/1050±80が
+      //   非成立のため pairs:[] でも未指定でも数値は完全一致（実測済み）だが、将来の再読みで
+      //   LDK↔洋室(1)幅1450±80mmの面が現れると本番とreplayの遮音値が割れる（+約12.85㎡）。
+      soundWallRule: { pairs: [] },
+    });
+    const sanity = validateTakeoffSanity(takeoff, {
+      // ※AREASフォールバックは本番に無い（本番は記録の値をそのまま渡す＝欠落時undefined）。
+      //   現記録は全タイプ値ありで不活性（reviewer N-1）
+      totalFloorAreaSqm: rec.total_floor_area_sqm ?? AREAS[T],
+      elevations: rec.elevations,
+    });
+    if (sanity.ok) {
+      applyElevationTakeoff(result, takeoff, { households: OVERRIDES.households });
+      sanityLabel = 'サニティOK→実測採用';
+    } else {
+      sanityLabel = `サニティNG→推定のまま (${sanity.reasons.map((r) => r.code).join(',')})`;
+    }
+  }
+  result.materials = filterKenzaiScope(result.materials);
+
+  const get = (name) => result.materials.find((m) => m.name === name);
+  const wall = get('壁 石膏ボード');
+  const sound = get('遮音壁PB張り');
+  const ceil = get('天井 石膏ボード');
+  const parts = truth.types[T]?.parts || {};
+  // 単位を厳密に:
+  //   壁PB・天井PB = 枚 vs 枚（正解はarea_or_length÷係数のsheets_converted）
+  //   遮音壁PB    = ㎡ vs ㎡（資材行「遮音壁PB張り」の単位は㎡。枚の正解と比較しないこと！
+  //                 2026-07-26に「A遮音+3%✅」の誤報を生んだ単位混同の再発防止）
+  const expWall = parts['壁PB']?.sheets_converted;      // 枚
+  const expSound = parts['遮音壁PB']?.area_or_length;   // ㎡
+  const expCeil = parts['天井PB']?.sheets_converted;    // 枚
+
+  const tk = (m) => (m?.takeoff ? '[実測]' : '[推定]');
+  console.log(`\n--- ${T}タイプ（専有${rec.total_floor_area_sqm}㎡・展開図${rec.elevations?.rooms?.length ?? 0}室・${sanityLabel}） ---`);
+  console.log(`  壁PB      : ${wall?.quantity}${wall?.unit} ${tk(wall)} vs 正解${expWall?.toFixed(1)}枚 (${fmtPct(wall?.quantity, expWall)}) ※情報表示のみ`);
+  console.log(`  遮音壁PB  : ${sound?.quantity}${sound?.unit} ${tk(sound)} vs 正解${expSound?.toFixed(1)}㎡ (${fmtPct(sound?.quantity, expSound)}) ※㎡同士の比較・情報表示のみ`);
+  console.log(`  天井PB    : ${ceil?.quantity}${ceil?.unit} ${tk(ceil)} vs 正解${expCeil?.toFixed(1)}枚 (${fmtPct(ceil?.quantity, expCeil)}) ※情報表示のみ`);
+  if (takeoff) {
+    console.log(`  フィルタ棄却: nonparty=${takeoff.beppu_sound_nonparty_dropped}`
+      + ` / face_label=${takeoff.beppu_sound_face_label_dropped}`
+      + ` / face_cap=${takeoff.beppu_sound_face_cap_dropped}`
+      + ` / 警告${(result._warnings || []).length}件（表示のみ・判定外）`);
+  } else {
+    console.log(`  フィルタ棄却: -（展開図なし） / 警告${(result._warnings || []).length}件（表示のみ・判定外）`);
+  }
+
+  // ── 回帰スナップショット判定（現HEAD既知値と比較・正解には寄せない） ──
+  const snap = SNAPSHOT[T];
+  const errs = [];
+  if (wall?.quantity !== snap.wall) errs.push(`壁PB ${wall?.quantity} ≠ snap ${snap.wall}`);
+  if (Math.abs((sound?.quantity ?? NaN) - snap.sound) > 0.02) errs.push(`遮音壁PB ${sound?.quantity} ≠ snap ${snap.sound}（±0.02㎡超）`);
+  if (ceil?.quantity !== snap.ceil) errs.push(`天井PB ${ceil?.quantity} ≠ snap ${snap.ceil}`);
+  if (!!wall?.takeoff !== snap.wallTakeoff) errs.push(`壁PB takeoff ${!!wall?.takeoff} ≠ snap ${snap.wallTakeoff}`);
+  if (!!sound?.takeoff !== snap.soundTakeoff) errs.push(`遮音壁PB takeoff ${!!sound?.takeoff} ≠ snap ${snap.soundTakeoff}`);
+  const gotCounters = takeoff
+    ? [takeoff.beppu_sound_nonparty_dropped, takeoff.beppu_sound_face_label_dropped, takeoff.beppu_sound_face_cap_dropped]
+    : null;
+  if (JSON.stringify(gotCounters) !== JSON.stringify(snap.counters)) {
+    errs.push(`フィルタ棄却カウンタ ${JSON.stringify(gotCounters)} ≠ snap ${JSON.stringify(snap.counters)}`);
+  }
+  if (errs.length > 0) {
+    ng++;
+    console.log(`  ✗ スナップショット不一致: ${errs.join(' / ')}`);
+  } else {
+    console.log('  ✅ スナップショット一致（現HEAD・2026-07-26採取値）');
+  }
+}
+
+console.log(`\n判定: ${ng === 0 ? '✅ 全6タイプ一致' : `✗ ${ng}タイプ不一致`}`
+  + '（回帰判定はスナップショットのみ。正解との乖離%は読み取り品質の現在地の情報表示）');
+process.exit(ng > 0 ? 1 : 0);
