@@ -9,3 +9,7 @@ uploads/
 nul
 read-excel.js
 .test-accounts.txt
+
+# Python (scripts/*.py の実行で生成・成果物ではない)
+__pycache__/
+*.pyc
