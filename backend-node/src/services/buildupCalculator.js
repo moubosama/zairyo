@@ -179,6 +179,80 @@ const BEPPU_CLOSET_SCOPE_ROOM_RE =
 //     計上先だけを新バケットへ＝②単独では壁PB・遮音壁PBの数値は1バイトも動かない）。
 const SOUND_WET_ROOM_RE = /トイレ|便所|洗面|パウダ|(?:^|[^A-Za-z])UB(?![A-Za-z])|浴/i;
 
+// ============================================================
+// 戸境二重壁（遮 / G枠）のセグメント辺長の物理上限（2026-07-28）
+// ============================================================
+// 【背景】面数上限（1部屋2面・住戸6面。SOUND_FACE_CAP_PER_ROOM/DWELLING）を通過してもなお
+//   別府Bの遮音壁PBが+101%残る。内訳を割ると主因は**LDKの 遮@9700mm 1本**（1本で約26㎡＝
+//   Bの正解総量26.7㎡に匹敵）。これは「件数」ではなく「1件の長さ」の異常なので面数上限では削れない。
+//
+// 【物理規則（自明・正解値からの逆算ではない）】
+//   1住戸の中に、その住戸の外形（通り芯）の最大辺より長い壁は物理的に存在し得ない。
+//   戸境壁は住戸外周の隣戸接触面にある1枚の連続した壁なので、その実長は住戸の外形寸法
+//   （width / depth）のいずれかに収まる。よって
+//     セグメント長 > max(外形width, 外形depth) → 物理的に存在し得ない ＝ 誤読として棄却。
+//
+// 【実データでの裏付け（帰属間違いの指紋）】記録の outer_dimensions_mm は
+//   A 8200×9700 / B 7350×8500 / D 7150×9700 / E 7000×9700 / F 7350×9700（C は読み取れず null）。
+//   別府Bの 遮@9700 は B自身の最大辺 8500 を **1200mm 超過**する一方、9700 は A/D/E/F の
+//   奥行きと同値＝**建物全体の通り芯グリッド値**。AIが図面上に実在する寸法値を拾って
+//   別の壁（B住戸のLDK）に付けた「値は実在・帰属が間違い」の典型（レバー1第6段で
+//   誤読の実質100%がこの型と定量確定済み）。他タイプの遮/G枠セグメントは 1150〜5500mm で
+//   全て自身の外形内＝**この上限は現データでBの1本以外に触らない**。
+//
+// 【マージンを付けない理由（等倍）】外形は通り芯寸法で、実際の壁はそれ以下に収まる。
+//   つまり等倍でも既に緩い（真の上限より大きい）側であり、これ以上緩める物理的根拠がない。
+//   逆に「Bの9700を落とすために8500未満へ絞る」ような調整もしない（それは正解逆算）。
+//   等倍＝「住戸の外形を超える壁は存在しない」という自明の物理そのもの。
+//
+// 【外形が無い/不正なら上限なし（安全側）】外形寸法はAIの読み取り値で、欠落（別府C）や
+//   誤読がありうる。誤った小さい外形で本物の戸境壁を削ると過少化するため、
+//   「取れなければ上限を課さない」＝削らない方向に倒す。
+//   受け付け範囲: [SOUND_SPAN_CAP_MIN_MM, SOUND_SPAN_CAP_MAX_MM]。
+//   下限3000mmは「住戸の最大辺がこれ未満」はありえない読み取り（桁落ち・部分寸法の誤転記）、
+//   上限30000mmは1住戸の外形として非現実（棟全体の寸法を拾った誤読）とみなす。
+//   いずれも「上限を課さない」に倒すだけで、数量そのものは動かさない。
+//
+// 【繰越 SF-1: 水回り振替経路はこの上限を受けない】水回り（SOUND_WET_ROOM_RE）の遮/G枠は
+//   辺長判定より先に耐水バケット（sound_wall_waterproof_pb_sqm）へ振替されるため、外形超過の
+//   長大セグメントもそのまま入る（例: 洗面に 遮@99000 を与えると耐水バケットへ約254㎡）。
+//   現在このバケットは表示スコープ外（資材行なし・参考値）＝実害ゼロだが、XLS集計表r60
+//   「遮音壁耐水ＰＢ張」を将来資材行として実装する際は、同じ帰属間違いが耐水行に出る。
+//   実装時は振替の前段にも同じ辺長上限を通すこと。
+//
+// 【繰越 SF-2: この上限は「かなり緩い」段階の上限】本来、戸境壁の長さを規定するのは
+//   隣戸と接する**その1辺の長さ**であって住戸の最大辺ではない（接触辺が短辺側なら真の上限は
+//   もっと小さい）。ここで住戸の最大辺を採るのは「どの辺が隣戸接触面かを図面から特定できない」
+//   （レバー1第8段＝幾何の部屋帰属は否と確定）ためで、特定可能な情報だけで引ける最も緩い上限。
+//   よって本フィルタは「遮音PBの過大を削り切った」ではなく**「緩い上限を1つ入れた」段階**である。
+//   接触辺の特定ができるようになれば、より厳しい上限へ差し替える余地がある。
+const SOUND_SPAN_CAP_MIN_MM = 3000;
+const SOUND_SPAN_CAP_MAX_MM = 30000;
+
+/**
+ * 戸境二重壁セグメントの辺長上限（mm）を住戸の外形寸法から解決する。
+ *
+ * @param raw 外形寸法 { width, depth }（parsedData.outer_dimensions_mm 相当。
+ *            opts.outerDimensionsMm 経由で渡す。未指定＝上限なし）
+ * @returns { capMm: number|null, source: 'outer_dimensions'|'none', reason?: string }
+ *   capMm=null は「上限を課さない」（安全側＝1件も棄却しない）。
+ *   reason は値が入っていたのに採用しなかった場合のみ付く（デバッグ用・警告は出さない
+ *   ＝外形が読めないのは通常運用でありふれているため鬱陶しくしない）。
+ */
+export function resolveSoundSpanCapMm(raw) {
+  if (!raw || typeof raw !== 'object') return { capMm: null, source: 'none' };
+  const w = Number(raw.width);
+  const d = Number(raw.depth);
+  // 片方だけ読めているケースも許容する（最大辺が取れれば上限として機能する）
+  const sides = [w, d].filter((v) => Number.isFinite(v) && v > 0);
+  if (sides.length === 0) return { capMm: null, source: 'none' };
+  const maxSide = Math.max(...sides);
+  if (maxSide < SOUND_SPAN_CAP_MIN_MM || maxSide > SOUND_SPAN_CAP_MAX_MM) {
+    return { capMm: null, source: 'none', reason: `outer_max=${maxSide}` };
+  }
+  return { capMm: maxSide, source: 'outer_dimensions' };
+}
+
 // 開口控除の物理上限（面面積に対する開口合計の比率）。壁一面がほぼ開口で埋まることは
 // 物理的に無い（袖壁・垂れ壁が残る）ため、超過は開口の幻覚・重複転記とみなして
 // ①面内の完全同一開口（符号/type+寸法一致）の2件目以降を落とす → ②なお超過なら比率まで縮退+警告。
@@ -1082,6 +1156,10 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 面数物理上限（1部屋最大2面・住戸最大6面）の超過分として棄却した遮/G枠の件数（2026-07-25）。
   // 値は下のプレパス（soundFaceCap）で確定する。下で_warningsへ集約。
   t.beppu_sound_face_cap_dropped = 0;
+  // 辺長物理上限（住戸外形の最大辺）を超えたため棄却した遮/G枠の件数（2026-07-28）。
+  // 住戸の外形より長い壁は住戸内に存在し得ない＝図面上の別寸法を拾った帰属間違い
+  // （resolveSoundSpanCapMm 参照）。外形寸法が渡されない場合は常に0（上限を課さない）。
+  t.beppu_sound_span_cap_dropped = 0;
   // 別府スコープ除外した収納室の数（①・BEPPU_CLOSET_SCOPE_ROOM_RE参照・2026-07-26）。
   // isBeppuLayoutのときのみ発火。下で_warningsへ集約。
   t.beppu_closet_rooms_excluded = 0;
@@ -1210,6 +1288,44 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   //
   // 【アルファ非発火】プールは beppu マーカー付きの遮/G枠のみ（アルファ3記録に遮/G枠は
   //   1件も無い）＝プール空＝dropセット空＝構造的非発火でアルファは1バイトも変わらない。
+  // ============================================================
+  // 戸境二重壁（遮/G枠）のセグメント辺長の物理上限（2026-07-28・resolveSoundSpanCapMm 参照）
+  // ============================================================
+  // 上限＝この住戸の外形寸法の最大辺。これを超えるセグメント/面幅は住戸内に物理的に存在し得ない
+  // （＝図面上の別の寸法を拾った帰属間違い）ため棄却する。外形が無い/不正なら上限なし＝棄却ゼロ。
+  //
+  // 【面数上限（soundFaceCap）より先に適用する理由＝一般原則】棄却の順序は
+  //   NON_PARTY → 面ラベル混同 → **辺長上限** → 面数上限 とする。
+  //   各フィルタは互いに独立した物理規則であり、辺長上限は「その寄与単位が単体で存在し得るか」を
+  //   判定する（他の検出に依存しない）。一方、面数上限は検出集合全体を見て「何件まで採るか」を
+  //   決める集合演算＝**入力集合の質に結果が依存する**。物理的に存在し得ないと判定済みの
+  //   寄与単位を後段の集合演算へ流し込むと、偽データが枠計算を汚染する。
+  //   よって「単体で棄却できるものを先に落としてから集合を評価する」を一般原則として採る
+  //   （どの物件・どの正解値でも成立する論拠であり、特定タイプの数値には依存しない）。
+  //
+  // 【正直な残差＝この順序選択は別府Bを正解から遠ざけている（測定事実）】
+  //   別府Bで順序を入れ替えて実測すると:
+  //     ・現実装（辺長→面数）: 遮音壁PB 34.16㎡（正解26.704㎡比 **+27.9%**）face_cap=0 / span_cap=1
+  //     ・逆順（面数→辺長）  : 遮音壁PB 27.36㎡（同 **+2.5%**）           face_cap=1 / span_cap=1
+  //     ・上限なし（実装前）  : 遮音壁PB 53.75㎡（同 +101.3%）             face_cap=1 / span_cap=0
+  //   差の中身は、辺長上限を先に適用すると面数上限の枠に空きが生まれ、上限内のセグメント
+  //   （LDK 遮@2500 = +6.80㎡）が採用される点。**この+6.80㎡は過大の上乗せ**であり、
+  //   Bを +2.5% → +27.9% に悪化させている。
+  //   それでも上記の一般原則を優先して現順序を採る（+2.5%になる逆順を選ぶのは、
+  //   特定タイプの正解値を見て順序を決める＝答え合わせになるため）。
+  //   なお「@2500が本物で@3070が偽」といった個別セグメントの真偽は判定していない
+  //   （どれが実在の戸境壁かは図面からの帰属が付かない＝レバー1第8段で確定した限界）。
+  const soundSpanCap = resolveSoundSpanCapMm(opts.outerDimensionsMm);
+  // 辺長上限を超えたため棄却した遮/G枠の件数（下で_warningsへ集約）。
+  // 判定は「セグメント長/面幅 > 上限」の厳密超過（等長は物理的にありうる＝住戸の全長に及ぶ戸境壁）
+  const isSoundSpanOver = (lenMm) => soundSpanCap.capMm !== null
+    && Number.isFinite(lenMm) && lenMm > soundSpanCap.capMm;
+  const soundSpanCapDropped = { count: 0, maxLenMm: 0 };
+  const noteSoundSpanDrop = (lenMm) => {
+    soundSpanCapDropped.count += 1;
+    if (lenMm > soundSpanCapDropped.maxLenMm) soundSpanCapDropped.maxLenMm = lenMm;
+  };
+
   const SOUND_FACE_CAP_PER_ROOM = 2;
   const SOUND_FACE_CAP_PER_DWELLING = 6;
   const soundFaceCap = (() => {
@@ -1228,6 +1344,8 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
           const len = pl?.wall_length_mm;
           if (!c || !Number.isFinite(len) || len <= 0) return;
           if (!(c.beppu === '遮' || c.beppu === 'G枠')) return;
+          // 辺長上限の超過分は本ループで先に棄却される＝面数上限の枠を消費させない（プール外）
+          if (isSoundSpanOver(len)) return;
           units.push({ key: `${roomIdx}|seg|${plIdx}`, roomIdx, len: len / 1000 });
         });
       }
@@ -1237,6 +1355,7 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (!c || !(c.beppu === '遮' || c.beppu === 'G枠')) return;
         if (!((face.width_mm || 0) > 0)) return;
         if (isFaceLabelConfused(room, face, c)) return;
+        if (isSoundSpanOver(face.width_mm || 0)) return; // 辺長上限の超過分はプール外（上記と同じ）
         units.push({ key: `${roomIdx}|face|${faceIdx}`, roomIdx, len: (face.width_mm || 0) / 1000 });
       });
     });
@@ -1459,7 +1578,14 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
             }
             continue;
           }
-          // 物理制約その3: 面数上限の超過分（soundFaceCap参照。カウンタはプレパスで確定済み）。
+          // 物理制約その3: 辺長の物理上限（住戸外形の最大辺）を超えるセグメントは住戸内に
+          // 存在し得ない＝図面上の別寸法を拾った帰属間違いとして棄却（resolveSoundSpanCapMm 参照）。
+          // 面数上限より先に判定する（単体で棄却できるものを先に落としてから集合を評価する
+          // 一般原則。順序の根拠と、この順序が別府Bを+2.5%→+27.9%に悪化させている測定事実は
+          // soundSpanCap 定義部の注記を参照）。
+          // 棄却の扱いはnonparty/面数上限と同じ「検出が無かった」扱い。
+          if (isSoundSpanOver(len)) { noteSoundSpanDrop(len); continue; }
+          // 物理制約その4: 面数上限の超過分（soundFaceCap参照。カウンタはプレパスで確定済み）。
           // 棄却＝セグメント不計上＋soundDeductByFace未登録＝nonparty棄却と同じ「検出が
           // 無かった」扱い（差し引かれなくなった幅は既定コードの壁として壁PB側に通常計上される）
           if (soundFaceCap.drop.has(`${roomIdx}|seg|${plIdx}`)) continue;
@@ -1817,7 +1943,17 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
         continue;
       }
-      // 物理制約その3: 面数上限の超過分（soundFaceCap参照・寄与の大きい順に上限まで採用した残り。
+      // 物理制約その3: 辺長の物理上限（住戸外形の最大辺）を超える面幅の戸境壁は住戸内に
+      // 存在し得ない＝帰属間違いとして棄却する（resolveSoundSpanCapMm 参照・セグメント経路と同一規則）。
+      // 面数上限より先に判定する（順序の根拠と残差は soundSpanCap 定義部の注記）。扱いは面ラベル混同と同じ
+      // 「丸ごと落とす」過少側（クロスのみ面の実仕上げとして拾う）。
+      // ※ 判定は生の width_mm で行う（w=面幅(m)からの×1000は浮動小数誤差で境界がぶれるため）
+      if (code.beppu && ['遮', 'G枠'].includes(code.beppu) && isSoundSpanOver(face.width_mm || 0)) {
+        noteSoundSpanDrop(face.width_mm || 0);
+        if (code.surf === 4 || code.surf === 5) t.cloth_sqm += net;
+        continue;
+      }
+      // 物理制約その4: 面数上限の超過分（soundFaceCap参照・寄与の大きい順に上限まで採用した残り。
       // カウンタはプレパスで確定済み）。棄却の扱いはNON_PARTY/面ラベル混同と同じ
       // 「丸ごと落とす」過少側（クロスのみ面の実仕上げとして拾う）。
       if (code.beppu && ['遮', 'G枠'].includes(code.beppu)
@@ -1960,6 +2096,9 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
   // 両面計上 → 壁1枚換算（XLSの拾い方に一致。検証: Gタイプ 77.6 vs XLS正解84.082 = −7.7%）
   t.majikiri_shitaji_m = majikiriDouble / 2;
 
+  // 辺長物理上限による棄却件数の確定（2026-07-28・両経路の合計。resolveSoundSpanCapMm 参照）
+  t.beppu_sound_span_cap_dropped = soundSpanCapDropped.count;
+
   // 下地高フォールバックの要確認warning（物件汎用化・2026-07-24）。
   // 下地高は物件ごとに違う（アルファ2.57/2.77 ↔ 別府2.72/2.82/2.86）ため、図面・入力から
   // 実値が取れず既定値を使った場合は「別物件なら数%ずれる」ことをユーザーに明示する。
@@ -2093,6 +2232,25 @@ export function computeElevationTakeoff(elevations, doorSchedule = [], opts = {}
         + `（部屋上限超過${soundFaceCap.roomDropped}面・住戸上限超過${soundFaceCap.dwellingDropped}面）を`
         + '同一壁の重複転記・誤読とみなして除外しました。'
         + '戸境壁が実際に多い特殊な間取りの場合は手動で追加してください（要確認）',
+      before: null, after: null,
+    });
+  }
+
+  // 辺長物理上限による棄却の明示（2026-07-28・resolveSoundSpanCapMm 参照）。
+  // 住戸の外形（通り芯）の最大辺より長い壁は住戸内に物理的に存在し得ない。実測では
+  // 別府BのLDKに 遮@9700mm（B自身の最大辺8500を超過・9700は他タイプの奥行き＝建物の
+  // 通り芯グリッド値）が読まれ、1本で約26㎡＝正解総量に匹敵する過大を生んでいた。
+  // 「値は図面に実在するが帰属が間違い」の典型なので、黙って消さず件数と最大長を可視化する。
+  // 外形寸法が渡されない/不正な場合は上限を課さない＝この警告も出ない。
+  if (t.beppu_sound_span_cap_dropped > 0) {
+    t._warnings.push({
+      field: 'sound_wall_span_cap',
+      message: `戸境二重壁（遮 / G枠）の読み取り${t.beppu_sound_span_cap_dropped}件`
+        + `（最長${soundSpanCapDropped.maxLenMm}mm）が、この住戸の外形寸法の最大辺`
+        + `${soundSpanCap.capMm}mmを超えていたため棄却しました。`
+        + '住戸の外形より長い壁は住戸内に存在しないため、図面上の別の寸法（他住戸・通り芯など）を'
+        + 'その壁の長さとして読み取った誤りとみなしています。'
+        + '該当部屋の戸境壁は長さを確認のうえ手動で追加してください（要確認）',
       before: null, after: null,
     });
   }

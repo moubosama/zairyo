@@ -50,8 +50,8 @@ const OVERRIDES = {
 // エンジン変更でここがズレたら✗（exit 1）。意図した変更なら差分を明記してこの表を更新する。
 // takeoff: true=展開図実測置換済み / false=推定パス値（E・Fは展開図が記録に無い=API失敗の記録
 //   をそのまま再生するため、遮音壁PBはアルファ実績の固定13㎡[推定]が出る。0㎡ではない点に注意）。
-// counters: [nonparty, face_label, face_cap, wet_rerouted, closet_excluded]
-//   （戸境壁フィルタ3種の棄却数 + 部位スコープ整合2件のカウンタ。時点の指紋になる）
+// counters: [nonparty, face_label, face_cap, span_cap, wet_rerouted, closet_excluded]
+//   （戸境壁フィルタ4種の棄却数 + 部位スコープ整合2件のカウンタ。時点の指紋になる）
 // soundWet: takeoff.sound_wall_waterproof_pb_sqm（②振替バケット・表示スコープ外の㎡。資材行なし）
 //
 // 【2026-07-26 部位スコープ整合2件での更新（変化理由の部位単位内訳）】
@@ -67,11 +67,37 @@ const OVERRIDES = {
 //     nonpartyカウンタ A1→0 / B1→0 / D3→0（D内訳: 洗面+トイレ→wet 2件・WCL→①closet除外1室）。
 //     壁PB・遮音壁PBの数値は②では1バイトも動かない（棄却時も計上していなかったため）。
 //     soundWet= A6.35 / B6.20 / D8.45㎡（正解23.7〜35.2㎡に対し-72〜-82%の過少=AI検出限界を受容）
+//
+// 【2026-07-28 戸境壁セグメントの辺長物理上限（span_cap）での更新（Bのみ変化・変化理由）】
+//   上限＝住戸外形（通り芯）の最大辺。記録の outer_dimensions_mm を opts.outerDimensionsMm へ
+//   渡すようにした（本番 /calculate は未配線＝本番は従来どおり上限なし。将来配線の先取り）。
+//   ・B のみ変化: 遮音壁PB 53.75→**34.16㎡**（+101.3%→+27.9%）。内訳（±0.01㎡まで一致）:
+//       −26.38㎡ … LDKの 遮@9700mm を棄却（B自身の最大辺8500を1200mm超過＝物理的に存在し得ない。
+//                  9700はA/D/E/Fの奥行き＝建物の通り芯グリッド値をAIが拾った帰属間違い）
+//       +6.80㎡ … 上限内のセグメント 遮@2500（LDK）が新たに採用される。辺長上限を面数上限より
+//                  先に適用する結果、面数上限（1部屋2面）の枠に空きが生まれるため。
+//                  **この+6.80㎡は過大の上乗せ**（下記の順序トレードオフを参照）
+//     → face_cap カウンタ 1→0 / span_cap 0→1 はこの枠の空きによる。
+//     壁PB（42枚）・天井PB（34枚）・耐水振替・収納除外は不変（棄却＝「検出が無かった」扱いで
+//     soundDeductByFace 未登録＝壁PB側の計上経路に触れないため）。
+//
+//   【正直な残差＝採用した順序はBを正解から遠ざけている（測定事実）】
+//     ・現実装（辺長→面数）: 34.16㎡（正解26.704㎡比 **+27.9%**）face_cap=0 / span_cap=1
+//     ・逆順（面数→辺長）  : 27.36㎡（同 **+2.5%**）             face_cap=1 / span_cap=1
+//     ・上限なし（実装前）  : 53.75㎡（同 +101.3%）               face_cap=1 / span_cap=0
+//     逆順の方が正解に近いが、順序は「単体で棄却できるものを先に落としてから集合を評価する」
+//     という正解値に依存しない一般原則で決めている（buildupCalculator.js soundSpanCap の注記）。
+//     +2.5%になる逆順を選ぶのは、特定タイプの正解値を見て順序を決める＝答え合わせになるため
+//     採らない。なお「@2500が本物で@3070が偽」といった個別セグメントの真偽は判定していない。
+//     また本上限は「住戸の最大辺」＝実質かなり緩い上限であり（真の上限は隣戸接触辺の長さだが
+//     どの辺が接触面かは図面から特定できない＝レバー1第8段）、遮音PBの過大を削り切ってはいない。
+//   ・A/C/D/E/F は完全不変: A(最大辺9700・セグメント最長3250)・D(9700・最長5550)は全て上限内、
+//     C は記録に外形が無く上限なし、E/F は展開図が無い（推定パス）。
 const SNAPSHOT = {
-  A: { wall: 55, sound: 29.92, ceil: 51, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0, 1, 2], soundWet: 6.35 },
-  B: { wall: 42, sound: 53.75, ceil: 34, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 1, 1, 1], soundWet: 6.20 },
-  C: { wall: 41, sound: 35.36, ceil: 42, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0, 0, 2], soundWet: 0 },
-  D: { wall: 23, sound: 44.88, ceil: 41, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 5, 5, 2, 1], soundWet: 8.45 },
+  A: { wall: 55, sound: 29.92, ceil: 51, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0, 0, 1, 2], soundWet: 6.35 },
+  B: { wall: 42, sound: 34.16, ceil: 34, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0, 1, 1, 1], soundWet: 6.20 },
+  C: { wall: 41, sound: 35.36, ceil: 42, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 0, 0, 0, 0, 2], soundWet: 0 },
+  D: { wall: 23, sound: 44.88, ceil: 41, wallTakeoff: true,  soundTakeoff: true,  counters: [0, 5, 5, 0, 2, 1], soundWet: 8.45 },
   E: { wall: 76, sound: 13,    ceil: 41, wallTakeoff: false, soundTakeoff: false, counters: null, soundWet: null },
   F: { wall: 79, sound: 13,    ceil: 43, wallTakeoff: false, soundTakeoff: false, counters: null, soundWet: null },
 };
@@ -115,6 +141,12 @@ for (const T of ['A', 'B', 'C', 'D', 'E', 'F']) {
       //   非成立のため pairs:[] でも未指定でも数値は完全一致（実測済み）だが、将来の再読みで
       //   LDK↔洋室(1)幅1450±80mmの面が現れると本番とreplayの遮音値が割れる（+約12.85㎡）。
       soundWallRule: { pairs: [] },
+      // 戸境二重壁セグメントの辺長物理上限（2026-07-28・resolveSoundSpanCapMm）。
+      // 住戸の外形（通り芯）の最大辺を超える遮/G枠は住戸内に存在し得ない＝帰属間違いとして棄却。
+      // ※ 本番 /calculate への配線は本サイクルのスコープ外（未配線）。ここでは
+      //   parsedData.outer_dimensions_mm をそのまま渡す＝将来の本番配線と同じ値の与え方を
+      //   先取りして効果を測る（記録に外形が無いタイプ=C は null → 上限なし＝棄却ゼロ）。
+      outerDimensionsMm: rec.outer_dimensions_mm,
     });
     const sanity = validateTakeoffSanity(takeoff, {
       // ※AREASフォールバックは本番に無い（本番は記録の値をそのまま渡す＝欠落時undefined）。
@@ -153,6 +185,7 @@ for (const T of ['A', 'B', 'C', 'D', 'E', 'F']) {
     console.log(`  フィルタ棄却: nonparty=${takeoff.beppu_sound_nonparty_dropped}`
       + ` / face_label=${takeoff.beppu_sound_face_label_dropped}`
       + ` / face_cap=${takeoff.beppu_sound_face_cap_dropped}`
+      + ` / span_cap=${takeoff.beppu_sound_span_cap_dropped}`
       + ` / 耐水振替=${takeoff.beppu_sound_wet_rerouted}件`
       + ` / 収納除外=${takeoff.beppu_closet_rooms_excluded}室`
       + ` / 警告${(result._warnings || []).length}件（表示のみ・判定外）`);
@@ -173,6 +206,7 @@ for (const T of ['A', 'B', 'C', 'D', 'E', 'F']) {
   if (!!sound?.takeoff !== snap.soundTakeoff) errs.push(`遮音壁PB takeoff ${!!sound?.takeoff} ≠ snap ${snap.soundTakeoff}`);
   const gotCounters = takeoff
     ? [takeoff.beppu_sound_nonparty_dropped, takeoff.beppu_sound_face_label_dropped, takeoff.beppu_sound_face_cap_dropped,
+       takeoff.beppu_sound_span_cap_dropped,
        takeoff.beppu_sound_wet_rerouted, takeoff.beppu_closet_rooms_excluded]
     : null;
   if (JSON.stringify(gotCounters) !== JSON.stringify(snap.counters)) {

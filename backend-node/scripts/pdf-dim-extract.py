@@ -4,8 +4,11 @@
 #   別府PDFはJWW出力でテキスト層が実在（寸法は全角数字'２,２００'等・座標付き）。
 #   アルファPDFはテキスト層ゼロのため対象外（本スクリプトは別府型専用）。
 #
-# 実行: python -X utf8 scripts/pdf-dim-extract.py [ページ番号...]（既定: 36 37 = 別府Aタイプ平面詳細図/展開図）
-# 出力: scripts/out-pdf-dims-beppu-a.json（正解との一致率測定は verify-pdf-dims-beppu-a.mjs が別途行う。
+# 実行: python -X utf8 scripts/pdf-dim-extract.py [ページ番号...] [--out=ファイル名]
+#       （既定: 36 37 = 別府Aタイプ平面詳細図/展開図・出力 out-pdf-dims-beppu-a.json）
+#       ページ番号は**1始まり**（PDFビューア表示と同じ。実装側で doc[pn-1] に変換）。
+#       別府タイプ別の平面詳細図: A=36 B=38 C=40 D=42 E=44 F=46 G=48 H=50 I=54（CLAUDE.md記録）
+# 出力: scripts/out-pdf-dims-beppu-a.json（--out で切替。正解との一致率測定は verify-*.mjs が別途行う。
 #        本スクリプトは正解JSONを一切読まない＝抽出ロジックに正解値が混入しない構造的保証）
 #
 # 流儀: scripts/conv-pdf-to-png.py と同じPyMuPDF(fitz)直叩き。pipは壊れているため新規パッケージ不可。
@@ -155,7 +158,16 @@ def room_neighborhood(rooms, dims, radius=120.0):
 
 
 def main():
-    pages = [int(a) for a in sys.argv[1:]] or [36, 37]
+    # --out=... は出力先の切替のみ（第9段で別府B/C/Dを個別JSONに抽出するため追加。既定値・抽出ロジックは不変）
+    args = sys.argv[1:]
+    out_path = OUT
+    pages = []
+    for a in args:
+        if a.startswith('--out='):
+            out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), a[len('--out='):])
+        else:
+            pages.append(int(a))
+    pages = pages or [36, 37]
     doc = fitz.open(PDF)
     result = {'pdf': PDF, 'extracted_pages': {}}
     thick_freq, legend_all = {}, []
@@ -203,9 +215,9 @@ def main():
     }
     print('壁厚候補（機械導出）:', result['thickness_candidates']['values'],
           '（頻度由来', freq_vals, '/ 凡例由来', legend_vals, '）')
-    with open(OUT, 'w', encoding='utf-8') as f:
+    with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=1)
-    print(f'saved: {OUT}')
+    print(f'saved: {out_path}')
 
 
 if __name__ == '__main__':
